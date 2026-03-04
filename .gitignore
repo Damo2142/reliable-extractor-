@@ -1,0 +1,8 @@
+venv/
+wineprefix/
+__pycache__/
+*.pyc
+.pfg_lock
+Drops/
+output/
+assets/
