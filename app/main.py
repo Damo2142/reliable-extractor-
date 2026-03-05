@@ -5,6 +5,7 @@ FastAPI backend — serves the web UI and REST API for DFA integration
 
 import asyncio
 import json
+import mimetypes
 import os
 import uuid
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Optional
 import logging
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -222,6 +223,110 @@ async def remove_category(key: str):
         engine.cfg.CATEGORIES.pop(k, None)
     engine.cfg.custom_categories_file.write_text(json.dumps(custom, indent=2))
     return {"status": "removed", "key": key}
+
+
+# ─── File Serving ─────────────────────────────────────────────────────────────
+
+@app.get("/api/files/assets/{category}/{variant_id}")
+async def list_asset_files(category: str, variant_id: str):
+    """List all graphics/asset files for a variant."""
+    asset_dir = engine.cfg.assets_root / category / variant_id
+    if not asset_dir.exists():
+        return {"files": []}
+    files = []
+    for f in sorted(asset_dir.iterdir()):
+        if f.is_file():
+            mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+            files.append({
+                "name": f.name,
+                "size": f.stat().st_size,
+                "mime": mime,
+                "is_image": mime.startswith("image/"),
+                "url": f"/api/files/assets/{category}/{variant_id}/{f.name}",
+            })
+    return {"files": files, "count": len(files)}
+
+
+@app.get("/api/files/assets/{category}/{variant_id}/{filename}")
+async def serve_asset_file(category: str, variant_id: str, filename: str):
+    """Serve a single asset file (image, etc.)."""
+    file_path = engine.cfg.assets_root / category / variant_id / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(404, "File not found")
+    return FileResponse(file_path)
+
+
+@app.get("/api/files/source/{category}/{variant_id}")
+async def list_source_files(category: str, variant_id: str):
+    """List original source files (.pan, .bas, .pdf, etc.) for a variant."""
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+    if not cat_dir.exists():
+        return {"files": []}
+
+    files = []
+    # Find the variant's source directory
+    for src in cat_dir.rglob(f"{variant_id}.*"):
+        if src.is_file():
+            mime = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+            files.append({
+                "name": src.name,
+                "size": src.stat().st_size,
+                "mime": mime,
+                "is_image": mime.startswith("image/"),
+                "url": f"/api/files/source/{category}/{variant_id}/{src.name}",
+            })
+
+    # Also find .bas files and other files in the same directory
+    for pattern in [f"{variant_id}*.bas", f"{variant_id}*.pdf", f"{variant_id}*.txt", f"{variant_id}*.doc*"]:
+        for src in cat_dir.rglob(pattern):
+            if src.is_file() and not any(f["name"] == src.name for f in files):
+                mime = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+                files.append({
+                    "name": src.name,
+                    "size": src.stat().st_size,
+                    "mime": mime,
+                    "url": f"/api/files/source/{category}/{variant_id}/{src.name}",
+                })
+
+    # Check the variant's parent folder for any extra files
+    for panx in cat_dir.rglob(f"{variant_id}.panx"):
+        parent = panx.parent
+        for f in parent.iterdir():
+            if f.is_file() and not any(ef["name"] == f.name for ef in files):
+                mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+                files.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "mime": mime,
+                    "url": f"/api/files/source/{category}/{variant_id}/{f.name}",
+                })
+
+    for pan in cat_dir.rglob(f"{variant_id}.pan"):
+        parent = pan.parent
+        for f in parent.iterdir():
+            if f.is_file() and not any(ef["name"] == f.name for ef in files):
+                mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+                files.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "mime": mime,
+                    "url": f"/api/files/source/{category}/{variant_id}/{f.name}",
+                })
+
+    return {"files": files, "count": len(files)}
+
+
+@app.get("/api/files/source/{category}/{variant_id}/{filename}")
+async def serve_source_file(category: str, variant_id: str, filename: str):
+    """Serve a source file."""
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+    # Search for the file
+    for f in cat_dir.rglob(filename):
+        if f.is_file():
+            return FileResponse(f, filename=filename)
+    raise HTTPException(404, "File not found")
 
 
 @app.post("/api/library/{category}/{variant_id}/save")

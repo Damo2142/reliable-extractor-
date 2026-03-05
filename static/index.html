@@ -177,6 +177,20 @@
   .sidebar-items.collapsed { display: none; }
   .monospace { font-family: var(--mono); }
   .no-wrap { white-space: nowrap; }
+
+  /* ── File cards ── */
+  .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-top: 12px; }
+  .file-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; cursor: pointer; transition: border-color 0.15s; }
+  .file-card:hover { border-color: var(--amber); }
+  .file-card img { width: 100%; height: 100px; object-fit: contain; background: var(--bg); padding: 4px; }
+  .file-card-name { padding: 6px 8px; font-family: var(--mono); font-size: 9px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-card-size { padding: 0 8px 6px; font-family: var(--mono); font-size: 8px; color: var(--text3); }
+  .file-list-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .file-list-item:hover { background: var(--bg3); }
+  .file-list-item:last-child { border-bottom: none; }
+  .file-icon { font-size: 18px; width: 28px; text-align: center; }
+  .file-dl { color: var(--amber); text-decoration: none; font-family: var(--mono); font-size: 10px; }
+  .file-dl:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -539,6 +553,8 @@ function renderDetail(container, data) {
   const basSource = data.bas_source || '';
   if (Object.keys(basFiles).length > 0) activeSections.push('BAS_FILES');
   else if (basSource) activeSections.push('BAS_SOURCE');
+  // Always add FILES tab at the end
+  activeSections.push('FILES');
 
   container.innerHTML = `
     <div id="save-bar" class="save-bar" style="display:none">
@@ -569,6 +585,9 @@ function renderDetail(container, data) {
 }
 
 function renderSection(type, items, basFiles, basSource) {
+  if (type === 'FILES') {
+    return `<div id="files-panel" style="font-family:var(--mono);font-size:11px;color:var(--text3)">Loading files…</div>`;
+  }
   if (type === 'BAS_FILES') {
     return Object.entries(basFiles).map(([name, code]) => `
       <div class="program-card">
@@ -751,6 +770,122 @@ function switchSection(name, tab) {
   document.querySelectorAll('.section-content').forEach(c => c.classList.remove('active'));
   tab.classList.add('active');
   document.getElementById('sec-' + name).classList.add('active');
+  if (name === 'FILES' && activeVariantData) loadFilesTab(activeVariantData.category, activeVariantData.id);
+}
+
+async function loadFilesTab(cat, vid) {
+  const panel = document.getElementById('files-panel');
+  if (!panel) return;
+  panel.innerHTML = '<div class="spinner"></div> Loading files…';
+
+  try {
+    const [assetsR, sourceR] = await Promise.all([
+      fetch(`/api/files/assets/${cat}/${vid}`),
+      fetch(`/api/files/source/${cat}/${vid}`)
+    ]);
+    const assets = await assetsR.json();
+    const source = await sourceR.json();
+
+    let html = '';
+
+    // Source files section
+    if (source.files && source.files.length) {
+      html += `<div style="margin-bottom:20px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">
+          Source Files (${source.count})
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;overflow:hidden;">
+          ${source.files.map(f => `
+            <div class="file-list-item">
+              <span class="file-icon">${fileIcon(f.name)}</span>
+              <span style="flex:1;font-family:var(--mono);font-size:11px;color:var(--text)">${escHtml(f.name)}</span>
+              <span style="font-family:var(--mono);font-size:9px;color:var(--text3)">${formatSize(f.size)}</span>
+              <a class="file-dl" href="${f.url}" download title="Download">↓ Download</a>
+              ${f.name.endsWith('.bas') ? `<a class="file-dl" href="#" onclick="viewBas('${f.url}');return false;">View</a>` : ''}
+            </div>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    // Graphics section
+    const images = (assets.files || []).filter(f => f.is_image);
+    const otherAssets = (assets.files || []).filter(f => !f.is_image);
+
+    if (images.length) {
+      html += `<div style="margin-bottom:20px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">
+          Graphics (${images.length})
+        </div>
+        <div class="files-grid">
+          ${images.map(f => `
+            <div class="file-card" onclick="window.open('${f.url}','_blank')" title="${escHtml(f.name)}">
+              <img src="${f.url}" alt="${escHtml(f.name)}" loading="lazy">
+              <div class="file-card-name">${escHtml(f.name)}</div>
+              <div class="file-card-size">${formatSize(f.size)}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    if (otherAssets.length) {
+      html += `<div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">
+          Other Assets (${otherAssets.length})
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;overflow:hidden;">
+          ${otherAssets.map(f => `
+            <div class="file-list-item">
+              <span class="file-icon">${fileIcon(f.name)}</span>
+              <span style="flex:1;font-family:var(--mono);font-size:11px;color:var(--text)">${escHtml(f.name)}</span>
+              <span style="font-family:var(--mono);font-size:9px;color:var(--text3)">${formatSize(f.size)}</span>
+              <a class="file-dl" href="${f.url}" download>↓ Download</a>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    if (!html) html = '<div class="empty-state">No files found for this variant</div>';
+    panel.innerHTML = html;
+
+  } catch(e) {
+    panel.innerHTML = `<div class="empty-state" style="color:var(--red)">Error loading files: ${e.message}</div>`;
+  }
+}
+
+async function viewBas(url) {
+  try {
+    const r = await fetch(url);
+    const text = await r.text();
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:100;display:flex;align-items:center;justify-content:center;padding:40px;';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;width:100%;max-width:800px;max-height:80vh;overflow:auto;padding:16px;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-family:var(--mono);font-size:12px;color:var(--amber)">${url.split('/').pop()}</span>
+        <span style="cursor:pointer;color:var(--text3);font-size:18px" onclick="this.closest('div[style*=fixed]').remove()">✕</span>
+      </div>
+      <pre class="code-block" style="max-height:none">${escHtml(text)}</pre>
+    </div>`;
+    document.body.appendChild(modal);
+  } catch(e) { alert('Failed to load file: ' + e.message); }
+}
+
+function fileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  if (['png','jpg','jpeg','gif','svg','bmp'].includes(ext)) return '🖼';
+  if (['pan','panx'].includes(ext)) return '📦';
+  if (ext === 'bas') return '📝';
+  if (ext === 'pdf') return '📄';
+  if (ext === 'json') return '{}';
+  if (['xlsx','xls','csv'].includes(ext)) return '📊';
+  if (['doc','docx','txt'].includes(ext)) return '📃';
+  return '📎';
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(1) + ' MB';
 }
 
 function toggleProgram(header) {
