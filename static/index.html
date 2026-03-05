@@ -191,6 +191,7 @@
       <button class="btn btn-ghost btn-sm" onclick="showView('dashboard')">Dashboard</button>
       <button class="btn btn-ghost btn-sm" onclick="showView('compare')">Compare</button>
       <button class="btn btn-ghost btn-sm" onclick="showView('process')">Process</button>
+      <button class="btn btn-ghost btn-sm" onclick="showView('settings');loadSettings()">Settings</button>
     </div>
   </div>
 
@@ -265,6 +266,53 @@
             </div>
           </div>
           <div id="compare-content"></div>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="view" id="view-settings">
+        <div style="padding:20px;">
+          <div class="dash-title">Settings</div>
+          <div class="dash-subtitle">Manage category folder mappings</div>
+
+          <div style="margin-top:20px;">
+            <div class="dash-table-wrap">
+              <div class="dash-table-title">
+                <span>Category Folders</span>
+                <span style="font-size:9px;color:var(--text3)" id="settings-upload-root"></span>
+              </div>
+              <table class="data-table" id="settings-cat-table">
+                <thead><tr><th>Folder Name</th><th>Key</th><th>Type</th><th>Has Files</th><th></th></tr></thead>
+                <tbody id="settings-cat-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style="margin-top:20px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:16px;">
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:12px;">Add Custom Category</div>
+            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <label style="font-family:var(--mono);font-size:9px;color:var(--text3)">FOLDER NAME</label>
+                <input type="text" id="new-cat-folder" placeholder="e.g. SBS Custom AHU" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:3px;width:250px;">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <label style="font-family:var(--mono);font-size:9px;color:var(--text3)">SHORT KEY</label>
+                <input type="text" id="new-cat-key" placeholder="e.g. SBS_AHU" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:3px;width:150px;" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9_]/g,'')">
+              </div>
+              <button class="btn btn-amber btn-sm" onclick="addCategory()">+ Add Category</button>
+            </div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:8px;">
+              This creates a folder in the uploads directory. Drop .panx or .pan files in it, then process.
+            </div>
+          </div>
+
+          <div style="margin-top:20px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:16px;">
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Unlinked Folders</div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-bottom:12px;">
+              Folders in uploads/ that aren't linked to a category yet:
+            </div>
+            <div id="unlinked-folders"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -877,6 +925,92 @@ function clearLog() {
 }
 
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ═══════════════════════════════════════════════════════════════════
+// Settings
+// ═══════════════════════════════════════════════════════════════════
+async function loadSettings() {
+  try {
+    const r = await fetch('/api/settings/categories');
+    const data = await r.json();
+    document.getElementById('settings-upload-root').textContent = data.upload_root;
+
+    const body = document.getElementById('settings-cat-body');
+    const allKeys = new Set(Object.values(data.all));
+    const customKeys = new Set(Object.values(data.custom || {}));
+    const linkedFolders = new Set(Object.keys(data.all));
+
+    body.innerHTML = Object.entries(data.all).map(([folder, key]) => {
+      const isCustom = customKeys.has(key) && (data.custom||{})[folder] === key;
+      const exists = data.existing_folders.includes(folder);
+      return `<tr>
+        <td style="color:var(--amber)">${escHtml(folder)}</td>
+        <td><span class="cat-pill cat-${key}">${key}</span></td>
+        <td style="color:var(--text3)">${isCustom ? 'Custom' : 'Built-in'}</td>
+        <td>${exists ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">—</span>'}</td>
+        <td>${isCustom ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:var(--red)" onclick="removeCategory('${key}')">Remove</button>` : ''}</td>
+      </tr>`;
+    }).join('');
+
+    // Show unlinked folders
+    const unlinked = data.existing_folders.filter(f => !linkedFolders.has(f));
+    const ul = document.getElementById('unlinked-folders');
+    if (unlinked.length === 0) {
+      ul.innerHTML = '<span style="font-family:var(--mono);font-size:10px;color:var(--text3)">None — all folders are linked</span>';
+    } else {
+      ul.innerHTML = unlinked.map(f => `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+          <span style="font-family:var(--mono);font-size:11px;color:var(--amber)">${escHtml(f)}</span>
+          <button class="btn btn-ghost btn-sm" onclick="quickLink('${escHtml(f)}')">Link</button>
+        </div>`).join('');
+    }
+  } catch(e) {
+    console.error('Settings load failed:', e);
+  }
+}
+
+async function addCategory() {
+  const folder = document.getElementById('new-cat-folder').value.trim();
+  const key = document.getElementById('new-cat-key').value.trim().toUpperCase();
+  if (!folder || !key) { alert('Enter both folder name and short key'); return; }
+  try {
+    const r = await fetch('/api/settings/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder, key })
+    });
+    const data = await r.json();
+    if (r.ok) {
+      document.getElementById('new-cat-folder').value = '';
+      document.getElementById('new-cat-key').value = '';
+      logLine('ok', `Added category: ${folder} → ${key} (folder created at ${data.path})`);
+      loadSettings();
+      loadVariants();
+    } else {
+      alert(data.detail || 'Failed to add category');
+    }
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function removeCategory(key) {
+  if (!confirm(`Remove custom category "${key}"? The folder and files will NOT be deleted.`)) return;
+  try {
+    const r = await fetch(`/api/settings/categories/${key}`, { method: 'DELETE' });
+    if (r.ok) {
+      logLine('info', `Removed custom category: ${key}`);
+      loadSettings();
+      loadVariants();
+    }
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+function quickLink(folder) {
+  document.getElementById('new-cat-folder').value = folder;
+  // Auto-generate a key from folder name
+  const key = folder.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase().replace(/_+/g, '_').replace(/^_|_$/g, '');
+  document.getElementById('new-cat-key').value = key;
+  document.getElementById('new-cat-folder').focus();
+}
 
 init();
 </script>

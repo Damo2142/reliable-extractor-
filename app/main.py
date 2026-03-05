@@ -142,6 +142,88 @@ async def export_library():
     return engine.full_library_export()
 
 
+# ─── Settings / Categories ────────────────────────────────────────────────────
+
+@app.get("/api/settings/categories")
+async def get_categories():
+    """Get all category folder mappings (built-in + custom)."""
+    # Separate built-in from custom
+    builtin = {
+        "RC VAV Programming": "VAV", "RC RTU Programming": "RTU",
+        "RC FCU Programming": "FCU", "RC AHU Programming": "AHU",
+        "RC G36AHU Programming": "G36AHU", "RC G36VAV Programming": "G36VAV",
+        "RC UH Programming": "UH", "RC VVT Programming": "VVT",
+        "RC WSHP Programming": "WSHP",
+    }
+    custom = {}
+    if engine.cfg.custom_categories_file.exists():
+        try:
+            custom = json.loads(engine.cfg.custom_categories_file.read_text())
+        except Exception:
+            pass
+    # List existing folders in upload root
+    existing_folders = []
+    if engine.cfg.upload_root.exists():
+        for d in sorted(engine.cfg.upload_root.iterdir()):
+            if d.is_dir():
+                existing_folders.append(d.name)
+    return {
+        "builtin": builtin,
+        "custom": custom,
+        "all": engine.cfg.CATEGORIES,
+        "upload_root": str(engine.cfg.upload_root),
+        "existing_folders": existing_folders,
+    }
+
+
+@app.post("/api/settings/categories")
+async def add_category(body: dict = None):
+    """Add a custom category mapping. Body: { "folder": "My Custom AHU", "key": "CUSTOM_AHU" }"""
+    if not body or "folder" not in body or "key" not in body:
+        raise HTTPException(400, "Must provide 'folder' and 'key'")
+    folder = body["folder"].strip()
+    key = body["key"].strip().upper()
+    if not folder or not key:
+        raise HTTPException(400, "Folder and key cannot be empty")
+
+    # Create the folder if it doesn't exist
+    folder_path = engine.cfg.upload_root / folder
+    folder_path.mkdir(parents=True, exist_ok=True)
+
+    # Load existing custom categories and add new one
+    custom = {}
+    if engine.cfg.custom_categories_file.exists():
+        try:
+            custom = json.loads(engine.cfg.custom_categories_file.read_text())
+        except Exception:
+            pass
+    custom[folder] = key
+    engine.cfg.save_custom_categories(custom)
+
+    return {"status": "added", "folder": folder, "key": key, "path": str(folder_path)}
+
+
+@app.delete("/api/settings/categories/{key}")
+async def remove_category(key: str):
+    """Remove a custom category mapping by key."""
+    custom = {}
+    if engine.cfg.custom_categories_file.exists():
+        try:
+            custom = json.loads(engine.cfg.custom_categories_file.read_text())
+        except Exception:
+            pass
+    # Find and remove by key
+    to_remove = [k for k, v in custom.items() if v == key.upper()]
+    if not to_remove:
+        raise HTTPException(404, f"Custom category '{key}' not found")
+    for k in to_remove:
+        del custom[k]
+        # Also remove from live config
+        engine.cfg.CATEGORIES.pop(k, None)
+    engine.cfg.custom_categories_file.write_text(json.dumps(custom, indent=2))
+    return {"status": "removed", "key": key}
+
+
 @app.post("/api/library/{category}/{variant_id}/save")
 async def save_variant(category: str, variant_id: str, body: dict = None):
     """Save edits to a library entry (point names, code, trend toggles, etc.)."""
