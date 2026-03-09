@@ -166,6 +166,34 @@
   .diff-lower { color: var(--red); }
   .diff-same { color: var(--text2); }
 
+  /* ── Composer ── */
+  .comp-prog-item { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
+  .comp-prog-item:hover { background: var(--bg3); }
+  .comp-prog-header { display: flex; align-items: center; gap: 8px; }
+  .comp-prog-name { font-family: var(--mono); font-size: 11px; color: var(--amber); flex: 1; }
+  .comp-prog-source { font-family: var(--mono); font-size: 9px; color: var(--text3); }
+  .comp-prog-deps { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .comp-dep-chip { font-family: var(--mono); font-size: 9px; padding: 1px 6px; border-radius: 2px; background: var(--bg4); border: 1px solid var(--border); color: var(--text2); }
+  .comp-dep-chip.dep-AI { border-color: rgba(91,138,245,0.3); color: var(--blue); }
+  .comp-dep-chip.dep-AO { border-color: rgba(61,220,132,0.3); color: var(--green); }
+  .comp-dep-chip.dep-AV { border-color: rgba(167,139,250,0.3); color: var(--purple); }
+  .comp-dep-chip.dep-BI { border-color: rgba(255,85,85,0.3); color: var(--red); }
+  .comp-dep-chip.dep-BO { border-color: rgba(45,212,191,0.3); color: var(--teal); }
+  .comp-dep-chip.dep-BV { border-color: rgba(245,166,35,0.3); color: var(--amber); }
+  .comp-dep-chip.dep-LOOP { border-color: rgba(61,220,132,0.4); color: var(--green); }
+  .comp-dep-chip.dep-SCHED { border-color: rgba(91,138,245,0.4); color: var(--blue); }
+  .comp-add-btn { background: rgba(61,220,132,0.15); border: 1px solid rgba(61,220,132,0.3); color: var(--green); font-family: var(--mono); font-size: 10px; padding: 2px 8px; border-radius: 2px; cursor: pointer; flex-shrink: 0; }
+  .comp-add-btn:hover { background: rgba(61,220,132,0.25); }
+  .comp-remove-btn { background: rgba(255,85,85,0.15); border: 1px solid rgba(255,85,85,0.3); color: var(--red); font-family: var(--mono); font-size: 10px; padding: 2px 8px; border-radius: 2px; cursor: pointer; flex-shrink: 0; }
+  .comp-remove-btn:hover { background: rgba(255,85,85,0.25); }
+  .comp-wb-item { padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .comp-wb-item:hover { background: var(--bg3); }
+  .comp-summary-chip { font-family: var(--mono); font-size: 11px; padding: 4px 10px; border-radius: 3px; background: var(--bg3); border: 1px solid var(--border); }
+  .comp-summary-chip .val { color: var(--teal); font-weight: 600; }
+  .comp-code-preview { font-family: var(--mono); font-size: 10px; color: var(--text3); margin-top: 4px; white-space: pre-wrap; max-height: 60px; overflow: hidden; padding: 4px 8px; background: var(--bg); border-radius: 2px; line-height: 1.4; }
+  .comp-saved-item { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .comp-saved-item:hover { background: var(--bg3); }
+
   /* ── Misc ── */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -205,6 +233,7 @@
       <button class="btn btn-ghost btn-sm" onclick="showView('dashboard')">Dashboard</button>
       <button class="btn btn-ghost btn-sm" onclick="showView('compare')">Compare</button>
       <button class="btn btn-ghost btn-sm" onclick="showView('process')">Process</button>
+      <button class="btn btn-ghost btn-sm" onclick="showView('composer');loadComposer()">Composer</button>
       <button class="btn btn-ghost btn-sm" onclick="showView('settings');loadSettings()">Settings</button>
     </div>
   </div>
@@ -280,6 +309,91 @@
             </div>
           </div>
           <div id="compare-content"></div>
+        </div>
+      </div>
+
+      <!-- Composer -->
+      <div class="view" id="view-composer">
+        <div style="padding:20px;">
+          <div class="dash-title">Controller Composer</div>
+          <div class="dash-subtitle">Mix and match programs from any variant to build custom controllers</div>
+
+          <!-- Search and filter bar -->
+          <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="composer-search" placeholder="Search programs…" oninput="filterComposerPrograms(this.value)"
+              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:3px;width:300px;">
+            <select id="composer-cat-filter" onchange="filterComposerPrograms(document.getElementById('composer-search').value)"
+              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:3px;">
+              <option value="">All Categories</option>
+            </select>
+            <span style="font-family:var(--mono);font-size:10px;color:var(--text3)" id="composer-prog-count">0 programs</span>
+          </div>
+
+          <!-- Two-panel layout: program list on left, workbench on right -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;min-height:500px;">
+
+            <!-- Program Library Panel -->
+            <div>
+              <div class="dash-table-wrap" style="height:100%;display:flex;flex-direction:column;">
+                <div class="dash-table-title">
+                  <span>Program Library</span>
+                  <span style="font-size:9px;color:var(--text3)">Click + to add to workbench</span>
+                </div>
+                <div id="composer-program-list" style="flex:1;overflow-y:auto;max-height:600px;"></div>
+              </div>
+            </div>
+
+            <!-- Workbench Panel -->
+            <div>
+              <div class="dash-table-wrap" style="height:100%;display:flex;flex-direction:column;">
+                <div class="dash-table-title">
+                  <span>Workbench</span>
+                  <div style="display:flex;gap:6px;">
+                    <button class="btn btn-ghost btn-sm" onclick="clearWorkbench()">Clear</button>
+                    <button class="btn btn-amber btn-sm" onclick="composeController()">Compose</button>
+                  </div>
+                </div>
+                <div id="composer-workbench" style="flex:1;overflow-y:auto;max-height:300px;">
+                  <div class="empty-state" style="padding:40px 20px;">Add programs from the library to start building</div>
+                </div>
+
+                <!-- Compose Result -->
+                <div id="composer-result" style="display:none;border-top:1px solid var(--border);">
+                  <div style="padding:12px;border-bottom:1px solid var(--border);">
+                    <div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Composed Controller Summary</div>
+                    <div id="composer-summary" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+                  </div>
+                  <div style="padding:12px;">
+                    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+                      <div style="display:flex;flex-direction:column;gap:4px;">
+                        <label style="font-family:var(--mono);font-size:9px;color:var(--text3)">COMPOSITION NAME</label>
+                        <input type="text" id="composer-save-name" placeholder="e.g. Custom-VAV-Econ"
+                          style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:3px;width:200px;">
+                      </div>
+                      <div style="display:flex;flex-direction:column;gap:4px;">
+                        <label style="font-family:var(--mono);font-size:9px;color:var(--text3)">DEVICE ID</label>
+                        <input type="text" id="composer-device-id" placeholder="900" value="900"
+                          style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:3px;width:80px;">
+                      </div>
+                      <button class="btn btn-green btn-sm" onclick="saveComposition()">Save</button>
+                      <button class="btn btn-ghost btn-sm" onclick="downloadCompositionXml()">Download XML</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Saved Compositions -->
+              <div class="dash-table-wrap" style="margin-top:16px;">
+                <div class="dash-table-title">
+                  <span>Saved Compositions</span>
+                  <button class="btn btn-ghost btn-sm" onclick="loadCompositions()">Refresh</button>
+                </div>
+                <div id="composer-saved-list">
+                  <div style="padding:12px;font-family:var(--mono);font-size:11px;color:var(--text3);">Loading…</div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1145,6 +1259,276 @@ function quickLink(folder) {
   const key = folder.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase().replace(/_+/g, '_').replace(/^_|_$/g, '');
   document.getElementById('new-cat-key').value = key;
   document.getElementById('new-cat-folder').focus();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Composer
+// ═══════════════════════════════════════════════════════════════════
+let composerPrograms = [];
+let composerWorkbench = [];  // [{category, variant_id, program_instance, name, source, deps}]
+let composerResult = null;
+
+async function loadComposer() {
+  try {
+    const r = await fetch('/api/composer/programs');
+    composerPrograms = await r.json();
+    document.getElementById('composer-prog-count').textContent = composerPrograms.length + ' programs';
+
+    // Populate category filter
+    const cats = [...new Set(composerPrograms.map(p => p.source_category))].sort();
+    const select = document.getElementById('composer-cat-filter');
+    select.innerHTML = '<option value="">All Categories</option>' +
+      cats.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    renderComposerPrograms(composerPrograms);
+    loadCompositions();
+  } catch(e) { console.error('Failed to load composer:', e); }
+}
+
+function filterComposerPrograms(search) {
+  const catFilter = document.getElementById('composer-cat-filter').value;
+  let filtered = composerPrograms;
+  if (catFilter) {
+    filtered = filtered.filter(p => p.source_category === catFilter);
+  }
+  if (search) {
+    const s = search.toLowerCase();
+    filtered = filtered.filter(p =>
+      p.program_name.toLowerCase().includes(s) ||
+      p.source_variant.toLowerCase().includes(s) ||
+      p.source_category.toLowerCase().includes(s) ||
+      (p.code_preview || '').toLowerCase().includes(s)
+    );
+  }
+  document.getElementById('composer-prog-count').textContent = filtered.length + ' programs';
+  renderComposerPrograms(filtered);
+}
+
+function renderComposerPrograms(programs) {
+  const el = document.getElementById('composer-program-list');
+  if (!programs.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:40px 20px;">No programs match your filter</div>';
+    return;
+  }
+
+  // Group by category/variant
+  const grouped = {};
+  for (const p of programs) {
+    const key = `${p.source_category}/${p.source_variant}`;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(p);
+  }
+
+  let html = '';
+  for (const [key, progs] of Object.entries(grouped)) {
+    html += `<div style="padding:6px 12px;background:var(--bg3);border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:0.06em;">
+      <span class="cat-pill cat-${progs[0].source_category}">${progs[0].source_category}</span> ${progs[0].source_variant}
+      ${progs[0].source_description ? '<span style="color:var(--text3);margin-left:8px;">' + escHtml(progs[0].source_description) + '</span>' : ''}
+    </div>`;
+
+    for (const p of progs) {
+      const inWb = composerWorkbench.some(w =>
+        w.category === p.source_category &&
+        w.variant_id === p.source_variant &&
+        w.program_instance === p.program_instance
+      );
+
+      const deps = Object.entries(p.dependencies || {});
+      html += `<div class="comp-prog-item">
+        <div class="comp-prog-header">
+          <span class="comp-prog-name">PRG${p.program_instance}: ${escHtml(p.program_name)}</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3)">${p.code_lines} lines</span>
+          ${inWb
+            ? '<span style="font-family:var(--mono);font-size:9px;color:var(--green);">ADDED</span>'
+            : `<button class="comp-add-btn" onclick="addToWorkbench('${p.source_category}','${p.source_variant}','${p.program_instance}','${escHtml(p.program_name)}')">+ Add</button>`
+          }
+        </div>
+        ${deps.length ? `<div class="comp-prog-deps">
+          ${deps.map(([t, insts]) => `<span class="comp-dep-chip dep-${t}">${t}: ${insts.join(',')}</span>`).join('')}
+        </div>` : ''}
+        ${p.code_preview ? `<div class="comp-code-preview">${escHtml(p.code_preview.substring(0, 150))}…</div>` : ''}
+      </div>`;
+    }
+  }
+  el.innerHTML = html;
+}
+
+function addToWorkbench(category, variant_id, program_instance, name) {
+  // Don't add duplicates
+  if (composerWorkbench.some(w => w.category === category && w.variant_id === variant_id && w.program_instance === program_instance)) return;
+
+  composerWorkbench.push({ category, variant_id, program_instance, name });
+  renderWorkbench();
+  // Re-render program list to show "ADDED" state
+  filterComposerPrograms(document.getElementById('composer-search').value);
+  // Hide result when workbench changes
+  composerResult = null;
+  document.getElementById('composer-result').style.display = 'none';
+}
+
+function removeFromWorkbench(index) {
+  composerWorkbench.splice(index, 1);
+  renderWorkbench();
+  filterComposerPrograms(document.getElementById('composer-search').value);
+  composerResult = null;
+  document.getElementById('composer-result').style.display = 'none';
+}
+
+function clearWorkbench() {
+  composerWorkbench = [];
+  renderWorkbench();
+  filterComposerPrograms(document.getElementById('composer-search').value);
+  composerResult = null;
+  document.getElementById('composer-result').style.display = 'none';
+}
+
+function renderWorkbench() {
+  const el = document.getElementById('composer-workbench');
+  if (!composerWorkbench.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:40px 20px;">Add programs from the library to start building</div>';
+    return;
+  }
+
+  el.innerHTML = composerWorkbench.map((w, i) => `
+    <div class="comp-wb-item">
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text3);width:20px;">${i+1}.</span>
+      <span class="cat-pill cat-${w.category}" style="font-size:8px">${w.category}</span>
+      <span style="font-family:var(--mono);font-size:11px;color:var(--text);flex:1;">PRG${w.program_instance}: ${escHtml(w.name)}</span>
+      <span style="font-family:var(--mono);font-size:9px;color:var(--text3)">${w.variant_id}</span>
+      <button class="comp-remove-btn" onclick="removeFromWorkbench(${i})">Remove</button>
+    </div>
+  `).join('');
+}
+
+async function composeController() {
+  if (!composerWorkbench.length) return;
+
+  const deviceId = document.getElementById('composer-device-id').value || '900';
+
+  const body = {
+    selections: composerWorkbench.map(w => ({
+      category: w.category,
+      variant_id: w.variant_id,
+      program_instance: w.program_instance,
+    })),
+    device_name: '{device-name}',
+    device_id: deviceId,
+  };
+
+  try {
+    const r = await fetch('/api/composer/compose', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      alert('Compose failed: ' + (err.detail || JSON.stringify(err)));
+      return;
+    }
+    composerResult = await r.json();
+    showComposerResult(composerResult);
+  } catch(e) {
+    alert('Compose failed: ' + e.message);
+  }
+}
+
+function showComposerResult(result) {
+  document.getElementById('composer-result').style.display = 'block';
+  const counts = result.counts || {};
+  const summaryEl = document.getElementById('composer-summary');
+  summaryEl.innerHTML = Object.entries(counts).map(([type, count]) =>
+    `<div class="comp-summary-chip"><span class="val">${count}</span> ${type}</div>`
+  ).join('');
+}
+
+async function saveComposition() {
+  if (!composerResult) { alert('Compose first'); return; }
+  const name = document.getElementById('composer-save-name').value.trim();
+  if (!name) { alert('Enter a name for this composition'); return; }
+
+  try {
+    const r = await fetch('/api/composer/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, composition: composerResult }),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      alert('Save failed: ' + (err.detail || JSON.stringify(err)));
+      return;
+    }
+    loadCompositions();
+  } catch(e) { alert('Save failed: ' + e.message); }
+}
+
+async function downloadCompositionXml() {
+  if (!composerResult) { alert('Compose first'); return; }
+
+  try {
+    const r = await fetch('/api/composer/generate-xml', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(composerResult),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      alert('XML generation failed: ' + (err.detail || JSON.stringify(err)));
+      return;
+    }
+    const data = await r.json();
+    // Download as file
+    const blob = new Blob([data.xml], { type: 'application/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (document.getElementById('composer-save-name').value.trim() || 'composed') + '.xml';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) { alert('Download failed: ' + e.message); }
+}
+
+async function loadCompositions() {
+  try {
+    const r = await fetch('/api/composer/compositions');
+    const list = await r.json();
+    const el = document.getElementById('composer-saved-list');
+    if (!list.length) {
+      el.innerHTML = '<div style="padding:12px;font-family:var(--mono);font-size:11px;color:var(--text3);">No saved compositions yet</div>';
+      return;
+    }
+    el.innerHTML = list.map(c => {
+      const counts = Object.entries(c.counts || {}).map(([t,n]) => `${n} ${t}`).join(', ');
+      const sources = (c.sources || []).map(s => s.from).join(', ');
+      return `<div class="comp-saved-item">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--amber);flex:1;">${escHtml(c.id)}</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--text3);max-width:300px;overflow:hidden;text-overflow:ellipsis;">${counts}</span>
+        <button class="btn btn-ghost btn-sm" onclick="viewComposition('${escHtml(c.id)}')">View</button>
+        <button class="comp-remove-btn" onclick="deleteComposition('${escHtml(c.id)}')">Delete</button>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function viewComposition(name) {
+  try {
+    const r = await fetch('/api/composer/compositions/' + encodeURIComponent(name));
+    if (!r.ok) return;
+    const data = await r.json();
+    activeVariantKey = 'COMPOSED/' + name;
+    activeVariantData = data;
+    showView('detail');
+    const inner = document.getElementById('detail-inner');
+    renderDetail(inner, data);
+  } catch(e) { console.error(e); }
+}
+
+async function deleteComposition(name) {
+  if (!confirm('Delete composition "' + name + '"?')) return;
+  try {
+    await fetch('/api/composer/compositions/' + encodeURIComponent(name), { method: 'DELETE' });
+    loadCompositions();
+  } catch(e) { console.error(e); }
 }
 
 init();
