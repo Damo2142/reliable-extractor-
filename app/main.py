@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.extractor import ExtractionEngine
+from app.composer import Composer
 from app.config import Config
 
 logging.basicConfig(level=logging.INFO)
@@ -38,7 +39,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-engine = ExtractionEngine(Config())
+cfg = Config()
+engine = ExtractionEngine(cfg)
+composer = Composer(cfg)
 
 # In-memory job state
 jobs: dict[str, dict] = {}
@@ -347,6 +350,127 @@ async def save_variant(category: str, variant_id: str, body: dict = None):
 
     engine._save_library_entry(category, variant_id, existing)
     return {"status": "saved", "id": variant_id}
+
+
+# ─── Composer ────────────────────────────────────────────────────────────────
+
+@app.get("/api/composer/programs")
+async def composer_program_index():
+    """Get flat index of every program across the entire library with dependencies."""
+    return composer.build_program_index()
+
+
+@app.post("/api/composer/compose")
+async def composer_compose(body: dict = None):
+    """Compose a new controller from selected programs.
+
+    Body:
+    {
+        "selections": [
+            {"category": "VAV", "variant_id": "VAV-IS10001", "program_instance": "1"},
+            {"category": "RTU", "variant_id": "RTU-ISA11110E", "program_instance": "4"},
+            ...
+        ],
+        "device_name": "{device-name}",  (optional, default "{device-name}")
+        "device_id": "900"               (optional, default "900")
+    }
+    """
+    if not body or "selections" not in body:
+        raise HTTPException(400, "Must provide 'selections' list")
+
+    selections = body["selections"]
+    if not selections:
+        raise HTTPException(400, "Must select at least one program")
+
+    device_name = body.get("device_name", "{device-name}")
+    device_id = body.get("device_id", "900")
+
+    try:
+        result = composer.compose(selections, device_name, device_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.exception("Composition failed")
+        raise HTTPException(500, f"Composition failed: {e}")
+
+
+@app.post("/api/composer/save")
+async def composer_save(body: dict = None):
+    """Save a composed controller to the library.
+
+    Body:
+    {
+        "name": "My-Custom-VAV",
+        "composition": { ... composed controller JSON ... }
+    }
+    """
+    if not body or "name" not in body or "composition" not in body:
+        raise HTTPException(400, "Must provide 'name' and 'composition'")
+
+    try:
+        path = composer.save_composition(body["name"], body["composition"])
+        return {"status": "saved", "path": str(path), "id": body["name"]}
+    except Exception as e:
+        raise HTTPException(500, f"Save failed: {e}")
+
+
+@app.get("/api/composer/compositions")
+async def composer_list():
+    """List all saved compositions."""
+    return composer.list_compositions()
+
+
+@app.get("/api/composer/compositions/{name}")
+async def composer_get(name: str):
+    """Load a saved composition."""
+    data = composer.load_composition(name)
+    if data is None:
+        raise HTTPException(404, f"Composition '{name}' not found")
+    return data
+
+
+@app.delete("/api/composer/compositions/{name}")
+async def composer_delete(name: str):
+    """Delete a saved composition."""
+    if composer.delete_composition(name):
+        return {"status": "deleted", "id": name}
+    raise HTTPException(404, f"Composition '{name}' not found")
+
+
+@app.post("/api/composer/generate-xml")
+async def composer_generate_xml(body: dict = None):
+    """Generate PFG-compatible XML from a composed controller.
+
+    Body: the composed controller JSON (from /api/composer/compose or /api/composer/compositions/{name})
+    OR: {"name": "saved-composition-name"} to load from saved
+    """
+    from generator import generate_xml
+
+    if not body:
+        raise HTTPException(400, "Must provide composition data")
+
+    # If a name is provided, load the saved composition
+    if "name" in body and "objects" not in body:
+        data = composer.load_composition(body["name"])
+        if data is None:
+            raise HTTPException(404, f"Composition '{body['name']}' not found")
+    else:
+        data = body
+
+    device_id = data.get("meta", {}).get("device_id", "900")
+    device_name = data.get("meta", {}).get("device_name", "{device-name}")
+
+    try:
+        xml = generate_xml(data, device_id=device_id, device_name=device_name)
+        return JSONResponse(content={
+            "xml": xml,
+            "device_id": device_id,
+            "device_name": device_name,
+        })
+    except Exception as e:
+        logger.exception("XML generation failed")
+        raise HTTPException(500, f"XML generation failed: {e}")
 
 
 # ─── Background Task ─────────────────────────────────────────────────────────
