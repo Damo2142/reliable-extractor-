@@ -473,6 +473,38 @@ async def composer_generate_xml(body: dict = None):
         raise HTTPException(500, f"XML generation failed: {e}")
 
 
+@app.post("/api/composer/generate-panx")
+async def composer_generate_panx(body: dict = None):
+    """Generate a .panx file from a composed controller.
+
+    Body: the composed controller JSON or {"name": "saved-composition-name"}
+    Returns the .panx file as a download.
+    """
+    if not body:
+        raise HTTPException(400, "Must provide composition data")
+
+    if "name" in body and "objects" not in body:
+        data = composer.load_composition(body["name"])
+        if data is None:
+            raise HTTPException(404, f"Composition '{body['name']}' not found")
+    else:
+        data = body
+
+    try:
+        panx_path = await asyncio.get_event_loop().run_in_executor(
+            None, composer.generate_panx, data
+        )
+        comp_id = data.get("id", "composed")
+        return FileResponse(
+            panx_path,
+            filename=f"{comp_id}.panx",
+            media_type="application/octet-stream",
+        )
+    except Exception as e:
+        logger.exception("PANX generation failed")
+        raise HTTPException(500, f"PANX generation failed: {e}")
+
+
 # ─── Background Task ─────────────────────────────────────────────────────────
 
 async def run_extraction(job_id: str, category_filter: Optional[str], selected_keys: Optional[list]):

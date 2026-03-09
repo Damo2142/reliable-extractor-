@@ -17,6 +17,7 @@ applied when the template is mapped to real equipment.
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -171,20 +172,23 @@ class Composer:
 
         return index
 
-    def get_variant_objects(self, category: str, variant_id: str) -> Optional[dict]:
-        """Load a variant's full objects dict from the library."""
+    def get_variant_data(self, category: str, variant_id: str) -> Optional[dict]:
+        """Load a variant's full library record (objects, meta, graphics, etc.)."""
         lib_path = self.cfg.library_root / category / f"{variant_id}.json"
         if not lib_path.exists():
             return None
         try:
-            data = json.loads(lib_path.read_text())
-            return data.get("objects", {})
+            return json.loads(lib_path.read_text())
         except Exception:
             return None
 
     def compose(self, selections: list, device_name: str = "{device-name}",
                 device_id: str = "900") -> dict:
         """Compose a new controller from selected programs across variants.
+
+        Pulls programs + ALL their dependencies including points, loops,
+        schedules, calendars, trends, smartsensors, systemgroups, tables,
+        arrays, graphics, and meta.json data.
 
         Args:
             selections: list of dicts, each with:
@@ -199,40 +203,46 @@ class Composer:
         Returns:
             A library-format JSON dict ready for generator.py
         """
-        # Load all source variants we need
-        source_cache = {}
+        # Load all source variants (full records, not just objects)
+        source_cache = {}  # key -> full variant data
         for sel in selections:
             key = f"{sel['category']}/{sel['variant_id']}"
             if key not in source_cache:
-                objects = self.get_variant_objects(sel["category"], sel["variant_id"])
-                if objects is None:
+                data = self.get_variant_data(sel["category"], sel["variant_id"])
+                if data is None:
                     raise ValueError(f"Variant not found: {key}")
-                source_cache[key] = objects
+                source_cache[key] = data
 
         # Collect all programs and their dependencies
         collected = {
             "programs": [],
-            "points": {},     # type -> {instance -> point_obj}
-            "loops": {},      # instance -> loop_obj
+            "points": {},         # "TYPE:inst" -> point_obj
+            "loops": {},          # "LOOP:inst" -> loop_obj
             "trends": [],
-            "schedules": {},  # instance -> schedule_obj
-            "calendars": {},
-            "smartsensors": [],
-            "systemgroups": [],
-            "tables": {},     # instance -> table_obj
-            "arrays": {},     # instance -> array_obj
+            "schedules": {},      # "SCHED:inst" -> schedule_obj
+            "calendars": {},      # "CAL:inst" -> calendar_obj
+            "smartsensors": {},   # "SS:inst" -> smartsensor_obj
+            "systemgroups": {},   # "SG:inst" -> systemgroup_obj
+            "tables": {},         # "TBL:inst" -> table_obj
+            "arrays": {},         # "ARR:inst" -> array_obj
         }
+
+        # Merge graphics and meta from all source variants
+        all_graphics = []
+        all_meta = {}
+        all_graphics_sources = []  # track which variant each graphic came from
 
         for sel in selections:
             key = f"{sel['category']}/{sel['variant_id']}"
-            objects = source_cache[key]
+            data = source_cache[key]
+            objects = data.get("objects", {})
             prog_inst = str(sel["program_instance"])
 
             # Find the program
             program = None
             for p in objects.get("PROGRAM", []):
                 if str(p.get("instance", "")) == prog_inst:
-                    program = dict(p)  # copy
+                    program = dict(p)
                     program["_source"] = key
                     break
 
@@ -253,14 +263,12 @@ class Composer:
                     for inst in refs[ptype]:
                         pt_key = f"{ptype}:{inst}"
                         if pt_key not in collected["points"]:
-                            # Find the point in source variant
                             for obj in objects.get(ptype, []):
                                 if int(obj.get("instance", 0)) == inst:
                                     collected["points"][pt_key] = dict(obj)
                                     collected["points"][pt_key]["_source"] = key
                                     break
                             else:
-                                # Point referenced but not defined - create placeholder
                                 collected["points"][pt_key] = {
                                     "type": ptype,
                                     "instance": str(inst),
@@ -291,17 +299,78 @@ class Composer:
                                 collected["schedules"][sched_key]["_source"] = key
                                 break
 
-            # Pull trends that reference any of our collected points
+            # Pull ALL trends from source (filter to kept points later)
             for trend in objects.get("TREND", []):
                 trend_copy = dict(trend)
                 trend_copy["_source"] = key
                 collected["trends"].append(trend_copy)
 
+            # Pull ALL calendars, smartsensors, systemgroups, tables, arrays
+            # from each source variant (these are controller-level objects)
+            for cal in objects.get("CALENDAR", []):
+                cal_key = f"CAL:{cal.get('instance', '')}"
+                if cal_key not in collected["calendars"]:
+                    collected["calendars"][cal_key] = dict(cal)
+                    collected["calendars"][cal_key]["_source"] = key
+
+            for ss in objects.get("SMARTSENSOR", []):
+                ss_key = f"SS:{ss.get('instance', '')}"
+                if ss_key not in collected["smartsensors"]:
+                    collected["smartsensors"][ss_key] = dict(ss)
+                    collected["smartsensors"][ss_key]["_source"] = key
+
+            for sg in objects.get("SYSTEMGROUP", []):
+                sg_key = f"SG:{sg.get('instance', '')}"
+                if sg_key not in collected["systemgroups"]:
+                    collected["systemgroups"][sg_key] = dict(sg)
+                    collected["systemgroups"][sg_key]["_source"] = key
+
+            for tbl in objects.get("TABLE", []):
+                tbl_key = f"TBL:{tbl.get('instance', '')}"
+                if tbl_key not in collected["tables"]:
+                    collected["tables"][tbl_key] = dict(tbl)
+                    collected["tables"][tbl_key]["_source"] = key
+
+            for arr in objects.get("ARRAY", []):
+                arr_key = f"ARR:{arr.get('instance', '')}"
+                if arr_key not in collected["arrays"]:
+                    collected["arrays"][arr_key] = dict(arr)
+                    collected["arrays"][arr_key]["_source"] = key
+
+            # Collect graphics from source variant
+            for gfx in data.get("graphics", []):
+                if gfx not in all_graphics:
+                    all_graphics.append(gfx)
+                    all_graphics_sources.append({
+                        "file": gfx,
+                        "from_category": sel["category"],
+                        "from_variant": sel["variant_id"],
+                    })
+
+            # Merge meta from source variant
+            src_meta = data.get("meta", {})
+            if src_meta and key not in [s.get("_merged") for s in [all_meta]]:
+                # Merge GroupAssets, HardPointConfig, etc.
+                if "GroupAssets" in src_meta:
+                    all_meta.setdefault("GroupAssets", []).extend(src_meta["GroupAssets"])
+                if "HardPointConfig" in src_meta and "HardPointConfig" not in all_meta:
+                    all_meta["HardPointConfig"] = src_meta["HardPointConfig"]
+                if "Features" in src_meta:
+                    existing = set(all_meta.get("Features", []))
+                    for f in src_meta["Features"]:
+                        if f not in existing:
+                            all_meta.setdefault("Features", []).append(f)
+                            existing.add(f)
+
         # Now remap instances sequentially to avoid conflicts
-        return self._remap_and_assemble(collected, device_name, device_id)
+        return self._remap_and_assemble(
+            collected, device_name, device_id,
+            all_graphics, all_graphics_sources, all_meta
+        )
 
     def _remap_and_assemble(self, collected: dict, device_name: str,
-                            device_id: str) -> dict:
+                            device_id: str, graphics: list,
+                            graphics_sources: list, meta: dict) -> dict:
         """Remap all instance numbers sequentially and update cross-references."""
 
         # Build remapping tables
@@ -340,6 +409,31 @@ class Composer:
             remap[(source, "SCHEDULE", old_inst)] = i
             sched["instance"] = str(i)
 
+        # Remap calendars
+        calendars = list(collected["calendars"].values())
+        for i, cal in enumerate(calendars, 1):
+            cal["instance"] = str(i)
+
+        # Remap smartsensors
+        smartsensors = list(collected["smartsensors"].values())
+        for i, ss in enumerate(smartsensors, 1):
+            ss["instance"] = str(i)
+
+        # Remap systemgroups
+        systemgroups = list(collected["systemgroups"].values())
+        for i, sg in enumerate(systemgroups, 1):
+            sg["instance"] = str(i)
+
+        # Remap tables
+        tables = list(collected["tables"].values())
+        for i, tbl in enumerate(tables, 1):
+            tbl["instance"] = str(i)
+
+        # Remap arrays
+        arrays = list(collected["arrays"].values())
+        for i, arr in enumerate(arrays, 1):
+            arr["instance"] = str(i)
+
         # Remap programs
         programs = collected["programs"]
         for i, prog in enumerate(programs, 1):
@@ -364,7 +458,6 @@ class Composer:
             has_valid_ref = False
 
             for ref in old_refs:
-                # References look like "4194293AV1" - extract type+instance
                 m = re.match(r'\d+(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|SCHED)(\d+)', ref)
                 if m:
                     ref_type = m.group(1)
@@ -373,9 +466,6 @@ class Composer:
                     if new_inst is not None:
                         new_refs.append(f"{device_id}{ref_type}{new_inst}")
                         has_valid_ref = True
-                    else:
-                        # Point not in our composition, skip this reference
-                        pass
 
             if has_valid_ref:
                 trend_name = trend.get("name", "")
@@ -384,9 +474,12 @@ class Composer:
                     trend["references"] = new_refs
                     kept_trends.append(trend)
 
-        # Remap trend instances
         for i, trend in enumerate(kept_trends, 1):
             trend["instance"] = str(i)
+
+        # Strip internal _source keys from all objects
+        def clean(obj):
+            return {k: v for k, v in obj.items() if not k.startswith("_")}
 
         # Assemble final library-format JSON
         objects = {
@@ -399,37 +492,18 @@ class Composer:
         }
 
         for ptype in POINT_TYPES:
-            pts = points_by_type.get(ptype, [])
-            objects[ptype] = [
-                {k: v for k, v in pt.items() if not k.startswith("_")}
-                for pt in pts
-            ]
+            objects[ptype] = [clean(pt) for pt in points_by_type.get(ptype, [])]
 
-        objects["PROGRAM"] = [
-            {k: v for k, v in p.items() if not k.startswith("_")}
-            for p in programs
-        ]
+        objects["PROGRAM"] = [clean(p) for p in programs]
+        objects["LOOP"] = [clean(l) for l in loops]
+        objects["TREND"] = [clean(t) for t in kept_trends]
+        objects["SCHEDULE"] = [clean(s) for s in schedules]
+        objects["CALENDAR"] = [clean(c) for c in calendars]
+        objects["SMARTSENSOR"] = [clean(s) for s in smartsensors]
+        objects["SYSTEMGROUP"] = [clean(s) for s in systemgroups]
+        objects["TABLE"] = [clean(t) for t in tables]
+        objects["ARRAY"] = [clean(a) for a in arrays]
 
-        objects["LOOP"] = [
-            {k: v for k, v in l.items() if not k.startswith("_")}
-            for l in loops
-        ]
-
-        objects["TREND"] = [
-            {k: v for k, v in t.items() if not k.startswith("_")}
-            for t in kept_trends
-        ]
-
-        objects["SCHEDULE"] = [
-            {k: v for k, v in s.items() if not k.startswith("_")}
-            for s in schedules
-        ]
-
-        # Empty containers for types we don't compose yet
-        for obj_type in ["CALENDAR", "SMARTSENSOR", "SYSTEMGROUP", "TABLE", "ARRAY"]:
-            objects[obj_type] = []
-
-        # Build counts
         counts = {k: len(v) for k, v in objects.items() if isinstance(v, list) and v}
 
         # Build source manifest for traceability
@@ -440,18 +514,23 @@ class Composer:
                 "from": sel_prog.get("_source", ""),
             })
 
+        # Merge meta with device info
+        composed_meta = dict(meta)
+        composed_meta.update({
+            "composed": True,
+            "sources": sources,
+            "device_id": device_id,
+            "device_name": device_name,
+            "graphics_sources": graphics_sources,
+        })
+
         result = {
             "id": "composed",
             "category": "COMPOSED",
             "format": "composed",
-            "description": f"Custom composed controller",
-            "meta": {
-                "composed": True,
-                "sources": sources,
-                "device_id": device_id,
-                "device_name": device_name,
-            },
-            "graphics": [],
+            "description": "Custom composed controller",
+            "meta": composed_meta,
+            "graphics": graphics,
             "objects": objects,
             "bas_files": {},
             "counts": counts,
@@ -534,3 +613,177 @@ class Composer:
             save_path.unlink()
             return True
         return False
+
+    def generate_panx(self, composition: dict, output_dir: Path = None) -> Path:
+        """Generate a .panx file from a composed controller.
+
+        Pipeline:
+          1. Generate changes XML from composition
+          2. Run PFG with blank .pan + changes XML to produce a .pan
+          3. Build meta.json
+          4. Copy graphics from source variants
+          5. Package everything into a .panx (zip)
+
+        Returns path to the generated .panx file.
+        """
+        import fcntl
+        import shutil
+        import subprocess
+        import time
+        import zipfile
+        from app.extractor import PFG_WORK_DIR, PFG_LOCK_FILE, to_wine_path
+
+        # Import generator
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from generator import generate_xml
+
+        meta = composition.get("meta", {})
+        device_id = meta.get("device_id", "900")
+        device_name = meta.get("device_name", "{device-name}")
+        comp_id = composition.get("id", "composed")
+
+        if output_dir is None:
+            output_dir = self.cfg.library_root / "COMPOSED" / "_output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        work_dir = Path(f"/tmp/compose_{comp_id}_{int(time.time())}")
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Step 1: Generate changes XML
+            xml_content = generate_xml(composition, device_id=device_id,
+                                       device_name=device_name)
+            changes_xml = work_dir / "changes.xml"
+            changes_xml.write_text(xml_content)
+            logger.info(f"Generated changes XML: {len(xml_content)} chars")
+
+            # Step 2: Run PFG to create .pan from blank + changes
+            pan_output = work_dir / f"{comp_id}.pan"
+
+            PFG_LOCK_FILE.touch(exist_ok=True)
+            with open(PFG_LOCK_FILE, 'r') as lock_fd:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                try:
+                    pfg_dir = Path(PFG_WORK_DIR)
+
+                    # Snapshot existing files
+                    existing_pans = set(pfg_dir.glob("*.pan"))
+                    existing_xmls = set(pfg_dir.glob("*.xml"))
+
+                    cmd = [
+                        self.cfg.wine_bin,
+                        str(self.cfg.pfg_exe),
+                        "-c", to_wine_path(changes_xml),
+                        "-o", to_wine_path(pan_output),
+                        "-f", to_wine_path(work_dir / "pfg.log"),
+                    ]
+
+                    logger.info(f"PFG generate: {' '.join(cmd)}")
+                    env = {**os.environ, "WINEDEBUG": "-all"}
+
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        env=env, cwd=PFG_WORK_DIR,
+                    )
+
+                    deadline = time.time() + self.cfg.pfg_timeout
+                    while time.time() < deadline:
+                        time.sleep(0.5)
+                        # Check if output .pan was created
+                        if pan_output.exists() and pan_output.stat().st_size > 0:
+                            time.sleep(1.0)
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                            break
+                        # Also check PFG's CWD for new .pan files
+                        new_pans = set(pfg_dir.glob("*.pan")) - existing_pans
+                        if new_pans:
+                            time.sleep(1.0)
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                            # Move new .pan to our work dir
+                            for f in new_pans:
+                                if not pan_output.exists():
+                                    shutil.move(str(f), str(pan_output))
+                                else:
+                                    f.unlink()
+                            break
+                        if proc.poll() is not None:
+                            break
+
+                    if proc.poll() is None:
+                        try:
+                            proc.kill()
+                            proc.wait(timeout=5)
+                        except Exception:
+                            pass
+
+                    # Clean up any stray files PFG left
+                    for f in set(pfg_dir.glob("*.xml")) - existing_xmls:
+                        f.unlink(missing_ok=True)
+
+                finally:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+            if not pan_output.exists():
+                # If PFG didn't create the .pan, check log
+                log_content = ""
+                log_file = work_dir / "pfg.log"
+                if log_file.exists():
+                    log_content = log_file.read_text(errors="replace")
+                raise RuntimeError(
+                    f"PFG did not generate .pan file. Log: {log_content[:500]}"
+                )
+
+            # Step 3: Build meta.json for .panx package
+            panx_meta = {
+                "Device": int(device_id),
+                "Database": f"{device_id}.pan",
+            }
+            if meta.get("HardPointConfig"):
+                panx_meta["HardPointConfig"] = meta["HardPointConfig"]
+                panx_meta["Features"] = ["hardpoint_config"]
+            if meta.get("GroupAssets"):
+                panx_meta["GroupAssets"] = meta["GroupAssets"]
+                panx_meta.setdefault("Features", [])
+                if "group_assets" not in panx_meta["Features"]:
+                    panx_meta["Features"].append("group_assets")
+
+            meta_json = work_dir / "meta.json"
+            meta_json.write_text(json.dumps(panx_meta, indent=2))
+
+            # Step 4: Copy graphics from source variants
+            graphics_sources = meta.get("graphics_sources", [])
+            for gs in graphics_sources:
+                src_file = (self.cfg.assets_root / gs["from_category"]
+                            / gs["from_variant"] / gs["file"])
+                if src_file.exists():
+                    dest = work_dir / gs["file"]
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dest)
+
+            # Step 5: Package into .panx (zip)
+            panx_path = output_dir / f"{comp_id}.panx"
+            with zipfile.ZipFile(panx_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                # Add .pan file
+                zf.write(pan_output, f"{device_id}.pan")
+                # Add meta.json
+                zf.write(meta_json, "meta.json")
+                # Add changes XML for reference
+                zf.write(changes_xml, "changes.xml")
+                # Add graphics
+                for gs in graphics_sources:
+                    gfx_path = work_dir / gs["file"]
+                    if gfx_path.exists():
+                        zf.write(gfx_path, gs["file"])
+
+            logger.info(f"Generated .panx: {panx_path} ({panx_path.stat().st_size} bytes)")
+            return panx_path
+
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)

@@ -377,6 +377,7 @@
                       </div>
                       <button class="btn btn-green btn-sm" onclick="saveComposition()">Save</button>
                       <button class="btn btn-ghost btn-sm" onclick="downloadCompositionXml()">Download XML</button>
+                      <button class="btn btn-amber btn-sm" onclick="downloadCompositionPanx()">Generate .panx</button>
                     </div>
                   </div>
                 </div>
@@ -1486,6 +1487,40 @@ async function downloadCompositionXml() {
     a.click();
     URL.revokeObjectURL(url);
   } catch(e) { alert('Download failed: ' + e.message); }
+}
+
+async function downloadCompositionPanx() {
+  if (!composerResult) { alert('Compose first'); return; }
+
+  const btn = event.target;
+  const origText = btn.textContent;
+  btn.textContent = 'Generating…';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch('/api/composer/generate-panx', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(composerResult),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      alert('PANX generation failed: ' + (err.detail || JSON.stringify(err)));
+      return;
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (document.getElementById('composer-save-name').value.trim() || 'composed') + '.panx';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    alert('PANX generation failed: ' + e.message);
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
 }
 
 async function loadCompositions() {
