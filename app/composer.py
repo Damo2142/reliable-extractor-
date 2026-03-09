@@ -614,26 +614,162 @@ class Composer:
             return True
         return False
 
-    def generate_panx(self, composition: dict, output_dir: Path = None) -> Path:
-        """Generate a .panx file from a composed controller.
+    def list_blank_panels(self) -> list:
+        """List available blank controller .panx files for generation."""
+        blanks_dir = Path("/srv/dfa/shared/files/vendors/reliable/blanks")
+        if not blanks_dir.exists():
+            return []
+        result = []
+        for d in sorted(blanks_dir.iterdir()):
+            if d.is_dir():
+                panx_files = list(d.glob("*.panx"))
+                if panx_files:
+                    result.append({
+                        "model": d.name,
+                        "panx": panx_files[0].name,
+                        "path": str(panx_files[0]),
+                    })
+        return result
 
-        Pipeline:
-          1. Generate changes XML from composition
-          2. Run PFG with blank .pan + changes XML to produce a .pan
-          3. Build meta.json
-          4. Copy graphics from source variants
-          5. Package everything into a .panx (zip)
+    def _extract_blank_pan(self, blank_panx: Path, work_dir: Path) -> Path:
+        """Extract the .pan file from a blank .panx template."""
+        import shutil
+        import zipfile
 
-        Returns path to the generated .panx file.
+        tmp_zip = work_dir / "blank.zip"
+        shutil.copy2(blank_panx, tmp_zip)
+
+        try:
+            with zipfile.ZipFile(tmp_zip, "r") as z:
+                z.extractall(work_dir / "blank_contents")
+        except zipfile.BadZipFile:
+            raise ValueError(f"{blank_panx.name} is not a valid ZIP archive")
+        finally:
+            tmp_zip.unlink(missing_ok=True)
+
+        pan_files = list((work_dir / "blank_contents").rglob("*.pan"))
+        if not pan_files:
+            raise ValueError(f"No .pan found inside {blank_panx.name}")
+        return pan_files[0]
+
+    def _run_pfg_generate(self, input_pan: Path, changes_xml: Path,
+                          output_pan: Path, work_dir: Path,
+                          device_id: str = None, device_name: str = None) -> Path:
+        """Run PFG to merge changes XML into a .pan file.
+
+        PFG command:
+          wine PanelFileGenerator.exe -i input.pan -o output.pan -c changes.xml
+            [-b BACnet_ID] [-n PanelName]
         """
         import fcntl
         import shutil
         import subprocess
         import time
-        import zipfile
         from app.extractor import PFG_WORK_DIR, PFG_LOCK_FILE, to_wine_path
 
-        # Import generator
+        PFG_LOCK_FILE.touch(exist_ok=True)
+        with open(PFG_LOCK_FILE, 'r') as lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                pfg_dir = Path(PFG_WORK_DIR)
+                existing_pans = set(pfg_dir.glob("*.pan"))
+                existing_xmls = set(pfg_dir.glob("*.xml"))
+
+                cmd = [
+                    self.cfg.wine_bin,
+                    str(self.cfg.pfg_exe),
+                    "-i", to_wine_path(input_pan),
+                    "-o", to_wine_path(output_pan),
+                    "-c", to_wine_path(changes_xml),
+                    "-f", to_wine_path(work_dir / "pfg.log"),
+                ]
+                if device_id:
+                    cmd.extend(["-b", str(device_id)])
+                if device_name and device_name != "{device-name}":
+                    cmd.extend(["-n", device_name])
+
+                logger.info(f"PFG generate: {' '.join(cmd)}")
+                env = {**os.environ, "WINEDEBUG": "-all"}
+
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    env=env, cwd=PFG_WORK_DIR,
+                )
+
+                deadline = time.time() + self.cfg.pfg_timeout
+                while time.time() < deadline:
+                    time.sleep(0.5)
+                    if output_pan.exists() and output_pan.stat().st_size > 0:
+                        time.sleep(1.0)
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        break
+                    new_pans = set(pfg_dir.glob("*.pan")) - existing_pans
+                    if new_pans:
+                        time.sleep(1.0)
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        for f in new_pans:
+                            if not output_pan.exists():
+                                shutil.move(str(f), str(output_pan))
+                            else:
+                                f.unlink()
+                        break
+                    if proc.poll() is not None:
+                        # Process ended, check one more time
+                        new_pans = set(pfg_dir.glob("*.pan")) - existing_pans
+                        for f in new_pans:
+                            if not output_pan.exists():
+                                shutil.move(str(f), str(output_pan))
+                        break
+
+                if proc.poll() is None:
+                    try:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
+
+                # Clean up stray files PFG left in its CWD
+                for f in set(pfg_dir.glob("*.xml")) - existing_xmls:
+                    f.unlink(missing_ok=True)
+
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+        if not output_pan.exists():
+            log_content = ""
+            log_file = work_dir / "pfg.log"
+            if log_file.exists():
+                log_content = log_file.read_text(errors="replace")
+            raise RuntimeError(
+                f"PFG did not generate .pan file. Log: {log_content[:500]}"
+            )
+
+        return output_pan
+
+    def generate_pan(self, composition: dict, blank_model: str = None) -> Path:
+        """Generate a .pan file from a composed controller.
+
+        Pipeline:
+          1. Generate changes XML from composition
+          2. Extract blank .pan from the specified controller model template
+          3. Run PFG: blank .pan + changes XML -> output .pan
+
+        Args:
+            composition: composed controller JSON
+            blank_model: controller model name (e.g. "RC-FLEXair-34-A-F")
+                         Must match a folder in blanks/
+
+        Returns path to generated .pan in _output dir.
+        """
+        import shutil
+        import time
+
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent))
         from generator import generate_xml
@@ -643,8 +779,7 @@ class Composer:
         device_name = meta.get("device_name", "{device-name}")
         comp_id = composition.get("id", "composed")
 
-        if output_dir is None:
-            output_dir = self.cfg.library_root / "COMPOSED" / "_output"
+        output_dir = self.cfg.library_root / "COMPOSED" / "_output"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         work_dir = Path(f"/tmp/compose_{comp_id}_{int(time.time())}")
@@ -653,137 +788,150 @@ class Composer:
         try:
             # Step 1: Generate changes XML
             xml_content = generate_xml(composition, device_id=device_id,
-                                       device_name=device_name)
+                                       device_name=device_name, pfg_safe=True)
             changes_xml = work_dir / "changes.xml"
             changes_xml.write_text(xml_content)
             logger.info(f"Generated changes XML: {len(xml_content)} chars")
 
-            # Step 2: Run PFG to create .pan from blank + changes
-            pan_output = work_dir / f"{comp_id}.pan"
+            # Step 2: Get blank .pan
+            blanks_dir = Path("/srv/dfa/shared/files/vendors/reliable/blanks")
+            if not blank_model:
+                # Try to find from HardPointConfig
+                hpc = meta.get("HardPointConfig", "")
+                # Match blanks by HardPointConfig suffix
+                for d in blanks_dir.iterdir():
+                    if d.is_dir() and hpc and hpc in d.name:
+                        blank_model = d.name
+                        break
+                if not blank_model:
+                    # Default to first available
+                    available = self.list_blank_panels()
+                    if not available:
+                        raise ValueError("No blank controller templates found")
+                    blank_model = available[0]["model"]
+                    logger.warning(f"No blank_model specified, using default: {blank_model}")
 
-            PFG_LOCK_FILE.touch(exist_ok=True)
-            with open(PFG_LOCK_FILE, 'r') as lock_fd:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
-                try:
-                    pfg_dir = Path(PFG_WORK_DIR)
+            blank_panx = blanks_dir / blank_model
+            panx_files = list(blank_panx.glob("*.panx"))
+            if not panx_files:
+                raise ValueError(f"No .panx found in blanks/{blank_model}")
 
-                    # Snapshot existing files
-                    existing_pans = set(pfg_dir.glob("*.pan"))
-                    existing_xmls = set(pfg_dir.glob("*.xml"))
+            input_pan = self._extract_blank_pan(panx_files[0], work_dir)
+            logger.info(f"Using blank template: {blank_model} -> {input_pan.name}")
 
-                    cmd = [
-                        self.cfg.wine_bin,
-                        str(self.cfg.pfg_exe),
-                        "-c", to_wine_path(changes_xml),
-                        "-o", to_wine_path(pan_output),
-                        "-f", to_wine_path(work_dir / "pfg.log"),
-                    ]
+            # Step 3: Run PFG
+            output_pan = work_dir / f"{comp_id}.pan"
+            self._run_pfg_generate(input_pan, changes_xml, output_pan,
+                                   work_dir, device_id, device_name)
 
-                    logger.info(f"PFG generate: {' '.join(cmd)}")
-                    env = {**os.environ, "WINEDEBUG": "-all"}
+            # Copy to output dir
+            final_pan = output_dir / f"{comp_id}.pan"
+            shutil.copy2(output_pan, final_pan)
+            logger.info(f"Generated .pan: {final_pan}")
+            return final_pan
 
-                    proc = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                        env=env, cwd=PFG_WORK_DIR,
-                    )
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
-                    deadline = time.time() + self.cfg.pfg_timeout
-                    while time.time() < deadline:
-                        time.sleep(0.5)
-                        # Check if output .pan was created
-                        if pan_output.exists() and pan_output.stat().st_size > 0:
-                            time.sleep(1.0)
-                            try:
-                                proc.kill()
-                            except Exception:
-                                pass
-                            break
-                        # Also check PFG's CWD for new .pan files
-                        new_pans = set(pfg_dir.glob("*.pan")) - existing_pans
-                        if new_pans:
-                            time.sleep(1.0)
-                            try:
-                                proc.kill()
-                            except Exception:
-                                pass
-                            # Move new .pan to our work dir
-                            for f in new_pans:
-                                if not pan_output.exists():
-                                    shutil.move(str(f), str(pan_output))
-                                else:
-                                    f.unlink()
-                            break
-                        if proc.poll() is not None:
-                            break
+    def generate_panx(self, composition: dict, blank_model: str = None) -> Path:
+        """Generate a .panx file from a composed controller.
 
-                    if proc.poll() is None:
-                        try:
-                            proc.kill()
-                            proc.wait(timeout=5)
-                        except Exception:
-                            pass
+        Pipeline:
+          1. Generate .pan via generate_pan()
+          2. Build meta.json with GroupAssets, HardPointConfig, Features
+          3. Copy ALL graphics from source variant asset folders
+          4. Package .pan + meta.json + graphics into .panx (zip)
 
-                    # Clean up any stray files PFG left
-                    for f in set(pfg_dir.glob("*.xml")) - existing_xmls:
-                        f.unlink(missing_ok=True)
+        Returns path to generated .panx file.
+        """
+        import shutil
+        import time
+        import zipfile
 
-                finally:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        meta = composition.get("meta", {})
+        device_id = meta.get("device_id", "900")
+        comp_id = composition.get("id", "composed")
 
-            if not pan_output.exists():
-                # If PFG didn't create the .pan, check log
-                log_content = ""
-                log_file = work_dir / "pfg.log"
-                if log_file.exists():
-                    log_content = log_file.read_text(errors="replace")
-                raise RuntimeError(
-                    f"PFG did not generate .pan file. Log: {log_content[:500]}"
-                )
+        output_dir = self.cfg.library_root / "COMPOSED" / "_output"
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Step 3: Build meta.json for .panx package
+        work_dir = Path(f"/tmp/panx_{comp_id}_{int(time.time())}")
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Step 1: Generate .pan
+            pan_path = self.generate_pan(composition, blank_model)
+
+            # Step 2: Build meta.json
             panx_meta = {
                 "Device": int(device_id),
                 "Database": f"{device_id}.pan",
             }
+            features = []
             if meta.get("HardPointConfig"):
                 panx_meta["HardPointConfig"] = meta["HardPointConfig"]
-                panx_meta["Features"] = ["hardpoint_config"]
+                features.append("hardpoint_config")
             if meta.get("GroupAssets"):
                 panx_meta["GroupAssets"] = meta["GroupAssets"]
-                panx_meta.setdefault("Features", [])
-                if "group_assets" not in panx_meta["Features"]:
-                    panx_meta["Features"].append("group_assets")
+                features.append("group_assets")
+            if features:
+                panx_meta["Features"] = features
 
             meta_json = work_dir / "meta.json"
             meta_json.write_text(json.dumps(panx_meta, indent=2))
 
-            # Step 4: Copy graphics from source variants
+            # Step 3: Copy ALL graphics from source variant asset folders
+            # Each source variant has an asset dir with all its graphics
+            graphics_dir = work_dir / "group_assets" / "pic"
+            graphics_dir.mkdir(parents=True, exist_ok=True)
+
             graphics_sources = meta.get("graphics_sources", [])
+            copied_files = set()
             for gs in graphics_sources:
                 src_file = (self.cfg.assets_root / gs["from_category"]
                             / gs["from_variant"] / gs["file"])
-                if src_file.exists():
-                    dest = work_dir / gs["file"]
+                if src_file.exists() and gs["file"] not in copied_files:
+                    dest = graphics_dir / gs["file"]
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src_file, dest)
+                    copied_files.add(gs["file"])
 
-            # Step 5: Package into .panx (zip)
+            # Also copy ALL files from each source variant's asset folder
+            seen_variants = set()
+            for gs in graphics_sources:
+                vkey = f"{gs['from_category']}/{gs['from_variant']}"
+                if vkey in seen_variants:
+                    continue
+                seen_variants.add(vkey)
+                asset_dir = (self.cfg.assets_root / gs["from_category"]
+                             / gs["from_variant"])
+                if asset_dir.exists():
+                    for f in asset_dir.iterdir():
+                        if f.is_file() and f.name not in copied_files:
+                            dest = graphics_dir / f.name
+                            shutil.copy2(f, dest)
+                            copied_files.add(f.name)
+
+            # Step 4: Package into .panx
             panx_path = output_dir / f"{comp_id}.panx"
             with zipfile.ZipFile(panx_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 # Add .pan file
-                zf.write(pan_output, f"{device_id}.pan")
+                zf.write(pan_path, f"{device_id}.pan")
                 # Add meta.json
                 zf.write(meta_json, "meta.json")
-                # Add changes XML for reference
-                zf.write(changes_xml, "changes.xml")
-                # Add graphics
-                for gs in graphics_sources:
-                    gfx_path = work_dir / gs["file"]
-                    if gfx_path.exists():
-                        zf.write(gfx_path, gs["file"])
+                # Add all graphics with proper paths for GroupAssets
+                for root_path, dirs, files in os.walk(work_dir / "group_assets"):
+                    for fname in files:
+                        full = Path(root_path) / fname
+                        arc_name = str(full.relative_to(work_dir))
+                        zf.write(full, arc_name)
 
             logger.info(f"Generated .panx: {panx_path} ({panx_path.stat().st_size} bytes)")
             return panx_path
 
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
+            # Clean up the intermediate .pan from _output
+            intermediate_pan = output_dir / f"{comp_id}.pan"
+            if intermediate_pan.exists():
+                intermediate_pan.unlink()

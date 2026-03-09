@@ -473,26 +473,72 @@ async def composer_generate_xml(body: dict = None):
         raise HTTPException(500, f"XML generation failed: {e}")
 
 
+@app.get("/api/composer/blanks")
+async def composer_list_blanks():
+    """List available blank controller model templates for .pan/.panx generation."""
+    return composer.list_blank_panels()
+
+
+def _resolve_composition(body: dict) -> dict:
+    """Helper: resolve body to composition data (load by name if needed)."""
+    if "name" in body and "objects" not in body:
+        data = composer.load_composition(body["name"])
+        if data is None:
+            raise HTTPException(404, f"Composition '{body['name']}' not found")
+        return data
+    return body
+
+
+@app.post("/api/composer/generate-pan")
+async def composer_generate_pan(body: dict = None):
+    """Generate a .pan file from a composed controller.
+
+    Body: {
+        ...composition data or {"name": "saved-name"},
+        "blank_model": "RC-FLEXair-34-A-F"  (optional, selects controller template)
+    }
+    Returns the .pan file as a download.
+    """
+    if not body:
+        raise HTTPException(400, "Must provide composition data")
+
+    blank_model = body.pop("blank_model", None)
+    data = _resolve_composition(body)
+
+    try:
+        pan_path = await asyncio.get_event_loop().run_in_executor(
+            None, composer.generate_pan, data, blank_model
+        )
+        comp_id = data.get("id", "composed")
+        return FileResponse(
+            pan_path,
+            filename=f"{comp_id}.pan",
+            media_type="application/octet-stream",
+        )
+    except Exception as e:
+        logger.exception("PAN generation failed")
+        raise HTTPException(500, f"PAN generation failed: {e}")
+
+
 @app.post("/api/composer/generate-panx")
 async def composer_generate_panx(body: dict = None):
     """Generate a .panx file from a composed controller.
 
-    Body: the composed controller JSON or {"name": "saved-composition-name"}
+    Body: {
+        ...composition data or {"name": "saved-name"},
+        "blank_model": "RC-FLEXair-34-A-F"  (optional, selects controller template)
+    }
     Returns the .panx file as a download.
     """
     if not body:
         raise HTTPException(400, "Must provide composition data")
 
-    if "name" in body and "objects" not in body:
-        data = composer.load_composition(body["name"])
-        if data is None:
-            raise HTTPException(404, f"Composition '{body['name']}' not found")
-    else:
-        data = body
+    blank_model = body.pop("blank_model", None)
+    data = _resolve_composition(body)
 
     try:
         panx_path = await asyncio.get_event_loop().run_in_executor(
-            None, composer.generate_panx, data
+            None, composer.generate_panx, data, blank_model
         )
         comp_id = data.get("id", "composed")
         return FileResponse(

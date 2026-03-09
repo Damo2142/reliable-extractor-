@@ -72,7 +72,7 @@ def build_point_attrs(point, device_name, device_id=None):
     return " ".join(attrs)
 
 
-def generate_xml(library_data, device_id=None, device_name=None):
+def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False):
     """Generate PFG-compatible changes XML from library data.
 
     Args:
@@ -80,6 +80,9 @@ def generate_xml(library_data, device_id=None, device_name=None):
         device_id: BACnet device instance (e.g., "900"). If None, uses original.
         device_name: Device name for replacing {device-name} placeholders.
                      If None, leaves {device-name} in place.
+        pfg_safe: If True, exclude object types that crash PFG:
+                  DEVICE (use -b/-n flags), TREND (reference validation),
+                  SMARTSENSOR/SYSTEMGROUP (GRP JSON dependencies)
     """
     objects = library_data.get("objects", {})
 
@@ -87,21 +90,24 @@ def generate_xml(library_data, device_id=None, device_name=None):
         device_name = "{device-name}"
 
     lines = [
-        '<?xml version="1.0" encoding="utf-8" standalone="yes"?>',
+        '<?xml version="1.0" encoding="UTF-8"?>',
         '<points>',
     ]
 
     # ─── DEVICE ───
-    for d in objects.get("DEVICE", []):
-        did = device_id or d.get("instance", "")
-        dname = device_name if device_name != "{device-name}" else d.get("name", "")
-        dloc = d.get("location", "")
-        lines.append(
-            f'\t<point type="DEVICE" instance="{escape_xml_attr(did)}" '
-            f'objectName="{escape_xml_attr(dname)}" '
-            f'description="{escape_xml_attr(d.get("description", ""))}" '
-            f'location="{escape_xml_attr(dloc)}"/>'
-        )
+    # NOTE: PFG crashes if DEVICE type is included in changes XML.
+    # Use -b (BACnet ID) and -n (PanelName) command-line flags instead.
+    if not pfg_safe:
+        for d in objects.get("DEVICE", []):
+            did = device_id or d.get("instance", "")
+            dname = device_name if device_name != "{device-name}" else d.get("name", "")
+            dloc = d.get("location", "")
+            lines.append(
+                f'\t<!-- DEVICE instance="{escape_xml_attr(did)}" '
+                f'objectName="{escape_xml_attr(dname)}" '
+                f'description="{escape_xml_attr(d.get("description", ""))}" '
+                f'location="{escape_xml_attr(dloc)}" -->'
+            )
 
     # ─── ANALOG / BINARY / MULTISTATE POINTS ───
     for ptype in ["AI", "AO", "AV", "BI", "BO", "BV", "MO", "MV"]:
@@ -218,75 +224,81 @@ def generate_xml(library_data, device_id=None, device_name=None):
         lines.append(f'\t<point {" ".join(attrs)}/>')
 
     # ─── TRENDS ───
-    for trend in objects.get("TREND", []):
-        name = replace_device_name(trend.get("name", ""), device_name)
-        ttype = trend.get("type", "SINGLETREND")
+    # NOTE: PFG crashes on TREND objects when device ID in references doesn't
+    # match the input .pan's device ID. Exclude in pfg_safe mode.
+    if not pfg_safe:
+        for trend in objects.get("TREND", []):
+            name = replace_device_name(trend.get("name", ""), device_name)
+            ttype = trend.get("type", "SINGLETREND")
 
-        attrs = [
-            f'type="{escape_xml_attr(ttype)}"',
-            f'instance="{escape_xml_attr(trend.get("instance", ""))}"',
-        ]
+            attrs = [
+                f'type="{escape_xml_attr(ttype)}"',
+                f'instance="{escape_xml_attr(trend.get("instance", ""))}"',
+            ]
 
-        # NOTE: Do NOT include "log enabled" attribute.
-        # PFG writes "log enabled" (with a space) in its XML output, which is
-        # invalid XML. PFG cannot read this attribute back — it causes
-        # "error line 0 column 0". PFG defaults trends to enabled=true anyway.
+            # NOTE: Do NOT include "log enabled" attribute.
+            # PFG writes "log enabled" (with a space) in its XML output, which is
+            # invalid XML. PFG cannot read this attribute back — it causes
+            # "error line 0 column 0". PFG defaults trends to enabled=true anyway.
 
-        if name:
-            attrs.append(f'objectName="{escape_xml_attr(name)}"')
-        attrs.append(f'description="{escape_xml_attr(trend.get("description", ""))}"')
-        if trend.get("interval"):
-            attrs.append(f'interval="{escape_xml_attr(trend["interval"])}"')
+            if name:
+                attrs.append(f'objectName="{escape_xml_attr(name)}"')
+            attrs.append(f'description="{escape_xml_attr(trend.get("description", ""))}"')
+            if trend.get("interval"):
+                attrs.append(f'interval="{escape_xml_attr(trend["interval"])}"')
 
-        # Point references — replace device ID prefix if changing device
-        refs = trend.get("references", [])
-        for i, ref in enumerate(refs, 1):
-            if ref:
-                # References look like "4194293AI4" — replace old device ID
-                if device_id:
-                    # Strip old device ID prefix and rebuild
-                    import re
-                    m = re.match(r'\d+(.*)', ref)
-                    if m:
-                        ref = device_id + m.group(1)
-                attrs.append(f'point{i}="{escape_xml_attr(ref)}"')
+            # Point references — replace device ID prefix if changing device
+            refs = trend.get("references", [])
+            for i, ref in enumerate(refs, 1):
+                if ref:
+                    # References look like "4194293AI4" — replace old device ID
+                    if device_id:
+                        import re
+                        m = re.match(r'\d+(.*)', ref)
+                        if m:
+                            ref = device_id + m.group(1)
+                    attrs.append(f'point{i}="{escape_xml_attr(ref)}"')
 
-        if trend.get("logtype"):
-            attrs.append(f'logtype="{escape_xml_attr(trend["logtype"])}"')
+            if trend.get("logtype"):
+                attrs.append(f'logtype="{escape_xml_attr(trend["logtype"])}"')
 
-        lines.append(f'\t<point {" ".join(attrs)}/>')
+            lines.append(f'\t<point {" ".join(attrs)}/>')
 
     # ─── SMARTSENSORS ───
-    for ss in objects.get("SMARTSENSOR", []):
-        name = replace_device_name(ss.get("name", ""), device_name)
-        attrs = [
-            f'type="SMARTSENSOR"',
-            f'instance="{escape_xml_attr(ss.get("instance", ""))}"',
-        ]
-        if name:
-            attrs.append(f'objectName="{escape_xml_attr(name)}"')
-        attrs.append(f'description="{escape_xml_attr(ss.get("description", ""))}"')
+    # NOTE: PFG crashes on SMARTSENSOR — tries to open GRP JSON files. Exclude in pfg_safe mode.
+    if not pfg_safe:
+        for ss in objects.get("SMARTSENSOR", []):
+            name = replace_device_name(ss.get("name", ""), device_name)
+            attrs = [
+                f'type="SMARTSENSOR"',
+                f'instance="{escape_xml_attr(ss.get("instance", ""))}"',
+            ]
+            if name:
+                attrs.append(f'objectName="{escape_xml_attr(name)}"')
+            attrs.append(f'description="{escape_xml_attr(ss.get("description", ""))}"')
 
-        lines.append(f'\t<point {" ".join(attrs)}/>')
+            lines.append(f'\t<point {" ".join(attrs)}/>')
 
     # ─── SYSTEMGROUPS ───
-    for sg in objects.get("SYSTEMGROUP", []):
-        name = replace_device_name(sg.get("name", ""), device_name)
-        attrs = [
-            f'type="SYSTEMGROUP"',
-            f'instance="{escape_xml_attr(sg.get("instance", ""))}"',
-        ]
-        if name:
-            attrs.append(f'objectName="{escape_xml_attr(name)}"')
-        attrs.append(f'description="{escape_xml_attr(sg.get("description", ""))}"')
-        if sg.get("groupgraphic"):
-            attrs.append(f'groupgraphic="{escape_xml_attr(sg["groupgraphic"])}"')
-        if sg.get("jsonpath"):
-            attrs.append(f'jsonpath="{escape_xml_attr(sg["jsonpath"])}"')
-        if sg.get("autoupdate"):
-            attrs.append(f'autoupdate="{escape_xml_attr(sg["autoupdate"])}"')
+    # NOTE: PFG crashes on SYSTEMGROUP — tries to open GRP JSON files. Exclude in pfg_safe mode.
+    if not pfg_safe:
+        for sg in objects.get("SYSTEMGROUP", []):
+            name = replace_device_name(sg.get("name", ""), device_name)
+            attrs = [
+                f'type="SYSTEMGROUP"',
+                f'instance="{escape_xml_attr(sg.get("instance", ""))}"',
+            ]
+            if name:
+                attrs.append(f'objectName="{escape_xml_attr(name)}"')
+            attrs.append(f'description="{escape_xml_attr(sg.get("description", ""))}"')
+            if sg.get("groupgraphic"):
+                attrs.append(f'groupgraphic="{escape_xml_attr(sg["groupgraphic"])}"')
+            if sg.get("jsonpath"):
+                attrs.append(f'jsonpath="{escape_xml_attr(sg["jsonpath"])}"')
+            if sg.get("autoupdate"):
+                attrs.append(f'autoupdate="{escape_xml_attr(sg["autoupdate"])}"')
 
-        lines.append(f'\t<point {" ".join(attrs)}/>')
+            lines.append(f'\t<point {" ".join(attrs)}/>')
 
     lines.append('</points>')
 

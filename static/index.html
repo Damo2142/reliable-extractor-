@@ -377,6 +377,16 @@
                       </div>
                       <button class="btn btn-green btn-sm" onclick="saveComposition()">Save</button>
                       <button class="btn btn-ghost btn-sm" onclick="downloadCompositionXml()">Download XML</button>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+                      <div style="display:flex;flex-direction:column;gap:4px;">
+                        <label style="font-family:var(--mono);font-size:9px;color:var(--text3)">CONTROLLER MODEL</label>
+                        <select id="composer-blank-model"
+                          style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:3px;min-width:200px;">
+                          <option value="">Loading models…</option>
+                        </select>
+                      </div>
+                      <button class="btn btn-amber btn-sm" onclick="downloadCompositionPan()">Generate .pan</button>
                       <button class="btn btn-amber btn-sm" onclick="downloadCompositionPanx()">Generate .panx</button>
                     </div>
                   </div>
@@ -1271,8 +1281,13 @@ let composerResult = null;
 
 async function loadComposer() {
   try {
-    const r = await fetch('/api/composer/programs');
-    composerPrograms = await r.json();
+    const [progRes, blanksRes] = await Promise.all([
+      fetch('/api/composer/programs'),
+      fetch('/api/composer/blanks'),
+    ]);
+    composerPrograms = await progRes.json();
+    const blanks = await blanksRes.json();
+
     document.getElementById('composer-prog-count').textContent = composerPrograms.length + ' programs';
 
     // Populate category filter
@@ -1280,6 +1295,12 @@ async function loadComposer() {
     const select = document.getElementById('composer-cat-filter');
     select.innerHTML = '<option value="">All Categories</option>' +
       cats.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    // Populate blank model selector
+    const modelSelect = document.getElementById('composer-blank-model');
+    modelSelect.innerHTML = blanks.map(b =>
+      `<option value="${b.model}">${b.model}</option>`
+    ).join('');
 
     renderComposerPrograms(composerPrograms);
     loadCompositions();
@@ -1489,8 +1510,11 @@ async function downloadCompositionXml() {
   } catch(e) { alert('Download failed: ' + e.message); }
 }
 
-async function downloadCompositionPanx() {
+async function downloadCompositionPan() {
   if (!composerResult) { alert('Compose first'); return; }
+
+  const blankModel = document.getElementById('composer-blank-model').value;
+  if (!blankModel) { alert('Select a controller model'); return; }
 
   const btn = event.target;
   const origText = btn.textContent;
@@ -1498,10 +1522,49 @@ async function downloadCompositionPanx() {
   btn.disabled = true;
 
   try {
+    const payload = { ...composerResult, blank_model: blankModel };
+    const r = await fetch('/api/composer/generate-pan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      alert('PAN generation failed: ' + (err.detail || JSON.stringify(err)));
+      return;
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (document.getElementById('composer-save-name').value.trim() || 'composed') + '.pan';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    alert('PAN generation failed: ' + e.message);
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+}
+
+async function downloadCompositionPanx() {
+  if (!composerResult) { alert('Compose first'); return; }
+
+  const blankModel = document.getElementById('composer-blank-model').value;
+  if (!blankModel) { alert('Select a controller model'); return; }
+
+  const btn = event.target;
+  const origText = btn.textContent;
+  btn.textContent = 'Generating…';
+  btn.disabled = true;
+
+  try {
+    const payload = { ...composerResult, blank_model: blankModel };
     const r = await fetch('/api/composer/generate-panx', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(composerResult),
+      body: JSON.stringify(payload),
     });
     if (!r.ok) {
       const err = await r.json();

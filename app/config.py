@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Config:
     upload_root: Path = Path("/srv/dfa/shared/files/vendors/reliable/uploads")
-    library_root: Path = Path("/srv/dfa/shared/files/vendors/reliable/library")
+    library_root: Path = Path("/srv/dfa/shared/files/vendors/reliable/library-dev")
     assets_root: Path = Path("/srv/dfa/shared/files/vendors/reliable/assets")
     master_descriptions: Path = Path("/srv/dfa/shared/files/vendors/reliable/master_descriptions.json")
     custom_categories_file: Path = Path("/srv/dfa/shared/files/vendors/reliable/custom_categories.json")
