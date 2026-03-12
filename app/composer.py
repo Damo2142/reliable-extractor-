@@ -172,6 +172,133 @@ class Composer:
 
         return index
 
+    def build_variant_descriptions(self) -> dict:
+        """Auto-generate human-readable descriptions for every variant by
+        analyzing program names and AO/BO dependencies on reheat programs.
+
+        Returns dict: { variant_id: description_string }
+        """
+        if not self.cfg.library_root.exists():
+            return {}
+
+        # First pass: collect per-variant program info
+        variant_info = {}
+        for cat_dir in sorted(self.cfg.library_root.iterdir()):
+            if not cat_dir.is_dir() or cat_dir.name.startswith("_"):
+                continue
+            category = cat_dir.name
+            for jf in sorted(cat_dir.glob("*.json")):
+                try:
+                    data = json.loads(jf.read_text())
+                except Exception:
+                    continue
+                variant_id = data.get("id", jf.stem)
+                objects = data.get("objects", {})
+                programs = objects.get("PROGRAM", [])
+
+                info = {"category": category, "programs": [], "has_ao_reheat": False, "has_bo_reheat": False,
+                        "has_fan": False, "fan_type": "", "has_xdmp": False, "xdmp_type": ""}
+                for prog in programs:
+                    pname = prog.get("name", "")
+                    code = prog.get("code", "")
+                    refs = parse_code_references(code)
+                    info["programs"].append(pname)
+
+                    # Check reheat programs for AO vs BO
+                    is_reheat = any(kw in pname.upper() for kw in ["RH-", "RHT-", "RHV-", "REHEAT", "-RH-PRG", "FLOAT-RHT", "1STG-REHEAT"])
+                    is_xdmp = "XDMP" in pname.upper()
+                    is_fan = any(kw in pname.upper() for kw in ["FAN-", "PFAN-"])
+
+                    if is_reheat:
+                        if refs.get("AO"):
+                            info["has_ao_reheat"] = True
+                        if refs.get("BO"):
+                            info["has_bo_reheat"] = True
+                    if is_xdmp:
+                        info["has_xdmp"] = True
+                        if refs.get("AO"):
+                            info["xdmp_type"] = "Modulating"
+                        elif refs.get("BO"):
+                            info["xdmp_type"] = "Floating"
+                    if is_fan:
+                        info["has_fan"] = True
+                        if "PFAN" in pname.upper():
+                            info["fan_type"] = "Parallel"
+                        else:
+                            info["fan_type"] = "Series"
+
+                variant_info[variant_id] = info
+
+        # Second pass: build descriptions
+        descs = {}
+        for vid, info in variant_info.items():
+            cat = info["category"]
+            parts = []
+
+            if cat == "VAV":
+                # Duct type
+                if "IS2" in vid or "IT2" in vid:
+                    parts.append("Dual Duct")
+                else:
+                    parts.append("Single Duct")
+
+                # Fan — use variant ID to determine type (P=parallel, S=series)
+                has_fan_prog = info["has_fan"]
+                # Check variant ID for fan position markers
+                vid_upper = vid.upper()
+                is_parallel = "0P0" in vid_upper or "0P01" in vid_upper or "0P02" in vid_upper or "FP0" in vid_upper
+                is_series = "0S0" in vid_upper or "0S02" in vid_upper or "FS0" in vid_upper
+                if is_parallel:
+                    parts.append("Parallel Fan")
+                elif is_series or (has_fan_prog and not is_parallel):
+                    parts.append("Series Fan")
+
+                # Reheat valve type
+                has_reheat = any(kw in ' '.join(info["programs"]).upper() for kw in ["RH-", "RHT-", "RHV-", "REHEAT"])
+                if not has_reheat:
+                    parts.append("Cooling Only")
+                elif info["has_ao_reheat"] and not info["has_bo_reheat"]:
+                    parts.append("Modulating HW Reheat")
+                elif info["has_bo_reheat"] and not info["has_ao_reheat"]:
+                    parts.append("Floating HW Reheat")
+                elif info["has_ao_reheat"] and info["has_bo_reheat"]:
+                    parts.append("Floating+Mod HW Reheat")
+                else:
+                    parts.append("HW Reheat")
+
+                # Crossover damper
+                if info["has_xdmp"]:
+                    parts.append(f"{info['xdmp_type']} Crossover Dmpr")
+
+                # Sensor type
+                if "-E-" in vid:
+                    parts.append("External SMART-Net")
+                elif "IS" in vid:
+                    parts.append("Internal SMART-Net")
+                elif "IT" in vid:
+                    parts.append("Internal Thermistor")
+
+            else:
+                # Non-VAV: use program count and point count as basic description
+                n_progs = len(info["programs"])
+                parts.append(f"{cat} variant ({n_progs} programs)")
+
+            descs[vid] = ", ".join(parts)
+
+        # Load overrides from master_descriptions.json (non-VAV types keep manual descriptions)
+        override_path = Path("/srv/dfa/shared/files/vendors/reliable/master_descriptions.json")
+        if override_path.exists():
+            try:
+                overrides = json.loads(override_path.read_text())
+                # For non-VAV, prefer manual overrides if they exist
+                for k, v in overrides.items():
+                    if k not in descs or not k.startswith("VAV"):
+                        descs[k] = v
+            except Exception:
+                pass
+
+        return descs
+
     def get_variant_data(self, category: str, variant_id: str) -> Optional[dict]:
         """Load a variant's full library record (objects, meta, graphics, etc.)."""
         lib_path = self.cfg.library_root / category / f"{variant_id}.json"
@@ -182,13 +309,53 @@ class Composer:
         except Exception:
             return None
 
+    def _get_mnemonic(self, point_obj: dict) -> str:
+        """Extract mnemonic from a point's object name.
+
+        The mnemonic is the functional identifier — e.g. 'FLO-SP', 'RMT-ACT'.
+        Object names follow the pattern '{device-name}-MNEMONIC'.
+        """
+        name = point_obj.get("name", "")
+        if name.startswith("{device-name}-"):
+            return name[len("{device-name}-"):]
+        return name
+
+    def _build_instance_to_mnemonic_map(self, objects: dict) -> dict:
+        """Build a lookup: (type, instance) -> mnemonic for a variant's objects.
+
+        E.g. {("AV", 38): "FLO-SP-MIN-HTG", ("AI", 1): "DMP-POS", ...}
+        """
+        mapping = {}
+        for ptype in POINT_TYPES:
+            for obj in objects.get(ptype, []):
+                inst = int(obj.get("instance", 0))
+                mnemonic = self._get_mnemonic(obj)
+                if mnemonic:
+                    mapping[(ptype, inst)] = mnemonic
+        for obj in objects.get("LOOP", []):
+            inst = int(obj.get("instance", 0))
+            mnemonic = self._get_mnemonic(obj)
+            if mnemonic:
+                mapping[("LOOP", inst)] = mnemonic
+        for obj in objects.get("SCHEDULE", []):
+            inst = int(obj.get("instance", 0))
+            mnemonic = self._get_mnemonic(obj)
+            if mnemonic:
+                mapping[("SCHED", inst)] = mnemonic
+        return mapping
+
     def compose(self, selections: list, device_name: str = "{device-name}",
                 device_id: str = "900") -> dict:
         """Compose a new controller from selected programs across variants.
 
-        Pulls programs + ALL their dependencies including points, loops,
-        schedules, calendars, trends, smartsensors, systemgroups, tables,
-        arrays, graphics, and meta.json data.
+        Mnemonic-based composition:
+          1. For each selected program, parse code to find referenced instances
+          2. Look up the mnemonic (functional name) for each reference from the
+             source variant's objects
+          3. Merge points by mnemonic — if two programs both reference 'FLO-SP'
+             (even at different instances in their source), they share ONE point
+          4. Assign fresh sequential instances per type
+          5. Rewrite ALL program code with new instance numbers
 
         Args:
             selections: list of dicts, each with:
@@ -203,8 +370,8 @@ class Composer:
         Returns:
             A library-format JSON dict ready for generator.py
         """
-        # Load all source variants (full records, not just objects)
-        source_cache = {}  # key -> full variant data
+        # Load all source variants
+        source_cache = {}
         for sel in selections:
             key = f"{sel['category']}/{sel['variant_id']}"
             if key not in source_cache:
@@ -213,30 +380,40 @@ class Composer:
                     raise ValueError(f"Variant not found: {key}")
                 source_cache[key] = data
 
-        # Collect all programs and their dependencies
-        collected = {
-            "programs": [],
-            "points": {},         # "TYPE:inst" -> point_obj
-            "loops": {},          # "LOOP:inst" -> loop_obj
-            "trends": [],
-            "schedules": {},      # "SCHED:inst" -> schedule_obj
-            "calendars": {},      # "CAL:inst" -> calendar_obj
-            "smartsensors": {},   # "SS:inst" -> smartsensor_obj
-            "systemgroups": {},   # "SG:inst" -> systemgroup_obj
-            "tables": {},         # "TBL:inst" -> table_obj
-            "arrays": {},         # "ARR:inst" -> array_obj
-        }
+        # ── Phase 1: Collect programs and build per-variant mnemonic maps ──
+        programs = []  # list of (program_obj, source_key, inst_to_mnemonic_map)
 
-        # Merge graphics and meta from all source variants
+        # Mnemonic registry: "TYPE:MNEMONIC" -> point_obj (first one wins,
+        # later programs with same mnemonic share the same point)
+        mnemonic_points = {}    # "AV:FLO-SP" -> point_obj (with _mnemonic set)
+        mnemonic_loops = {}     # "LOOP:FLO-CTRL-LOOP" -> loop_obj
+        mnemonic_scheds = {}    # "SCHED:LOCAL-SCHED" -> schedule_obj
+
+        # Per-program remap: maps (program_index, type, old_instance) -> mnemonic_key
+        # This lets us rewrite code references later
+        program_ref_map = {}
+
+        # Also collect trends, calendars, etc.
+        all_trends = []
+        all_calendars = {}
+        all_smartsensors = {}
+        all_systemgroups = {}
+        all_tables = {}
+        all_arrays = {}
+
+        # Graphics and meta
         all_graphics = []
         all_meta = {}
-        all_graphics_sources = []  # track which variant each graphic came from
+        all_graphics_sources = []
 
-        for sel in selections:
+        for sel_idx, sel in enumerate(selections):
             key = f"{sel['category']}/{sel['variant_id']}"
             data = source_cache[key]
             objects = data.get("objects", {})
             prog_inst = str(sel["program_instance"])
+
+            # Build mnemonic lookup for this variant
+            inst_to_mnemonic = self._build_instance_to_mnemonic_map(objects)
 
             # Find the program
             program = None
@@ -251,93 +428,138 @@ class Composer:
                     f"Program instance {prog_inst} not found in {key}"
                 )
 
-            collected["programs"].append(program)
+            programs.append((program, key, inst_to_mnemonic))
 
-            # Parse code references to find dependencies
+            # Parse code references
             code = program.get("code", "")
             refs = parse_code_references(code)
 
-            # Collect dependent points
+            # ── Collect points by mnemonic ──
             for ptype in POINT_TYPES:
-                if ptype in refs:
-                    for inst in refs[ptype]:
-                        pt_key = f"{ptype}:{inst}"
-                        if pt_key not in collected["points"]:
-                            for obj in objects.get(ptype, []):
-                                if int(obj.get("instance", 0)) == inst:
-                                    collected["points"][pt_key] = dict(obj)
-                                    collected["points"][pt_key]["_source"] = key
-                                    break
-                            else:
-                                collected["points"][pt_key] = {
-                                    "type": ptype,
-                                    "instance": str(inst),
-                                    "name": f"{{device-name}}-{ptype}{inst}",
-                                    "description": f"[auto-created: referenced in program from {key}]",
-                                    "_source": key,
-                                }
+                if ptype not in refs:
+                    continue
+                for inst in refs[ptype]:
+                    mnemonic = inst_to_mnemonic.get((ptype, inst))
+                    if not mnemonic:
+                        # No mnemonic found — use type+instance as fallback
+                        mnemonic = f"{ptype}{inst}"
 
-            # Collect dependent loops
+                    mnem_key = f"{ptype}:{mnemonic}"
+                    program_ref_map[(sel_idx, ptype, inst)] = mnem_key
+
+                    if mnem_key not in mnemonic_points:
+                        # Find the full point object from source variant
+                        pt_obj = None
+                        for obj in objects.get(ptype, []):
+                            if int(obj.get("instance", 0)) == inst:
+                                pt_obj = dict(obj)
+                                pt_obj["_source"] = key
+                                pt_obj["_mnemonic"] = mnemonic
+                                break
+
+                        if pt_obj is None:
+                            # Auto-create placeholder with type-specific defaults
+                            # Defaults based on BACnet conventions and RC library norms
+                            _defaults = {
+                                "AV": {"present_value": "0", "range": "45", "unit": "45", "increment": "0.100000"},
+                                "AI": {"present_value": "0", "range": "3",  "unit": "2",  "increment": "0.200000"},
+                                "AO": {"present_value": "0", "range": "15", "unit": "15", "increment": "0.100000"},
+                                "BI": {"present_value": "0", "range": "0",  "unit": "",   "increment": ""},
+                                "BO": {"present_value": "0", "range": "7",  "unit": "",   "increment": ""},
+                                "BV": {"present_value": "0", "range": "7",  "unit": "",   "increment": ""},
+                                "MO": {"present_value": "1", "range": "0",  "unit": "",   "increment": ""},
+                                "MV": {"present_value": "1", "range": "0",  "unit": "",   "increment": ""},
+                            }
+                            defs = _defaults.get(ptype, {"present_value": "0", "range": "0", "unit": "", "increment": ""})
+                            pt_obj = {
+                                "type": ptype,
+                                "instance": str(inst),
+                                "name": f"{{device-name}}-{mnemonic}",
+                                "description": f"[auto-created: referenced in program from {key}]",
+                                "present_value": defs["present_value"],
+                                "range": defs["range"],
+                                "unit": defs["unit"],
+                                "increment": defs["increment"],
+                                "_source": key,
+                                "_mnemonic": mnemonic,
+                            }
+
+                        mnemonic_points[mnem_key] = pt_obj
+
+            # ── Collect loops by mnemonic ──
             if "LOOP" in refs:
                 for inst in refs["LOOP"]:
-                    loop_key = f"LOOP:{inst}"
-                    if loop_key not in collected["loops"]:
+                    mnemonic = inst_to_mnemonic.get(("LOOP", inst))
+                    if not mnemonic:
+                        mnemonic = f"LOOP{inst}"
+                    mnem_key = f"LOOP:{mnemonic}"
+                    program_ref_map[(sel_idx, "LOOP", inst)] = mnem_key
+
+                    if mnem_key not in mnemonic_loops:
                         for obj in objects.get("LOOP", []):
                             if int(obj.get("instance", 0)) == inst:
-                                collected["loops"][loop_key] = dict(obj)
-                                collected["loops"][loop_key]["_source"] = key
+                                loop_obj = dict(obj)
+                                loop_obj["_source"] = key
+                                loop_obj["_mnemonic"] = mnemonic
+                                mnemonic_loops[mnem_key] = loop_obj
                                 break
 
-            # Collect dependent schedules
+            # ── Collect schedules by mnemonic ──
             if "SCHED" in refs:
                 for inst in refs["SCHED"]:
-                    sched_key = f"SCHED:{inst}"
-                    if sched_key not in collected["schedules"]:
+                    mnemonic = inst_to_mnemonic.get(("SCHED", inst))
+                    if not mnemonic:
+                        mnemonic = f"SCHED{inst}"
+                    mnem_key = f"SCHED:{mnemonic}"
+                    program_ref_map[(sel_idx, "SCHED", inst)] = mnem_key
+
+                    if mnem_key not in mnemonic_scheds:
                         for obj in objects.get("SCHEDULE", []):
                             if int(obj.get("instance", 0)) == inst:
-                                collected["schedules"][sched_key] = dict(obj)
-                                collected["schedules"][sched_key]["_source"] = key
+                                sched_obj = dict(obj)
+                                sched_obj["_source"] = key
+                                sched_obj["_mnemonic"] = mnemonic
+                                mnemonic_scheds[mnem_key] = sched_obj
                                 break
 
-            # Pull ALL trends from source (filter to kept points later)
+            # Pull ALL trends from source
             for trend in objects.get("TREND", []):
                 trend_copy = dict(trend)
                 trend_copy["_source"] = key
-                collected["trends"].append(trend_copy)
+                all_trends.append(trend_copy)
 
-            # Pull ALL calendars, smartsensors, systemgroups, tables, arrays
-            # from each source variant (these are controller-level objects)
+            # Pull calendars, smartsensors, etc. (controller-level objects)
             for cal in objects.get("CALENDAR", []):
                 cal_key = f"CAL:{cal.get('instance', '')}"
-                if cal_key not in collected["calendars"]:
-                    collected["calendars"][cal_key] = dict(cal)
-                    collected["calendars"][cal_key]["_source"] = key
+                if cal_key not in all_calendars:
+                    all_calendars[cal_key] = dict(cal)
+                    all_calendars[cal_key]["_source"] = key
 
             for ss in objects.get("SMARTSENSOR", []):
                 ss_key = f"SS:{ss.get('instance', '')}"
-                if ss_key not in collected["smartsensors"]:
-                    collected["smartsensors"][ss_key] = dict(ss)
-                    collected["smartsensors"][ss_key]["_source"] = key
+                if ss_key not in all_smartsensors:
+                    all_smartsensors[ss_key] = dict(ss)
+                    all_smartsensors[ss_key]["_source"] = key
 
             for sg in objects.get("SYSTEMGROUP", []):
                 sg_key = f"SG:{sg.get('instance', '')}"
-                if sg_key not in collected["systemgroups"]:
-                    collected["systemgroups"][sg_key] = dict(sg)
-                    collected["systemgroups"][sg_key]["_source"] = key
+                if sg_key not in all_systemgroups:
+                    all_systemgroups[sg_key] = dict(sg)
+                    all_systemgroups[sg_key]["_source"] = key
 
             for tbl in objects.get("TABLE", []):
                 tbl_key = f"TBL:{tbl.get('instance', '')}"
-                if tbl_key not in collected["tables"]:
-                    collected["tables"][tbl_key] = dict(tbl)
-                    collected["tables"][tbl_key]["_source"] = key
+                if tbl_key not in all_tables:
+                    all_tables[tbl_key] = dict(tbl)
+                    all_tables[tbl_key]["_source"] = key
 
             for arr in objects.get("ARRAY", []):
                 arr_key = f"ARR:{arr.get('instance', '')}"
-                if arr_key not in collected["arrays"]:
-                    collected["arrays"][arr_key] = dict(arr)
-                    collected["arrays"][arr_key]["_source"] = key
+                if arr_key not in all_arrays:
+                    all_arrays[arr_key] = dict(arr)
+                    all_arrays[arr_key]["_source"] = key
 
-            # Collect graphics from source variant
+            # Collect graphics
             for gfx in data.get("graphics", []):
                 if gfx not in all_graphics:
                     all_graphics.append(gfx)
@@ -347,12 +569,15 @@ class Composer:
                         "from_variant": sel["variant_id"],
                     })
 
-            # Merge meta from source variant
+            # Merge meta
             src_meta = data.get("meta", {})
-            if src_meta and key not in [s.get("_merged") for s in [all_meta]]:
-                # Merge GroupAssets, HardPointConfig, etc.
+            if src_meta:
                 if "GroupAssets" in src_meta:
                     all_meta.setdefault("GroupAssets", []).extend(src_meta["GroupAssets"])
+                if "ViewAssets" in src_meta:
+                    all_meta.setdefault("ViewAssets", []).extend(src_meta["ViewAssets"])
+                if "Model" in src_meta and "Model" not in all_meta:
+                    all_meta["Model"] = src_meta["Model"]
                 if "HardPointConfig" in src_meta and "HardPointConfig" not in all_meta:
                     all_meta["HardPointConfig"] = src_meta["HardPointConfig"]
                 if "Features" in src_meta:
@@ -362,96 +587,138 @@ class Composer:
                             all_meta.setdefault("Features", []).append(f)
                             existing.add(f)
 
-        # Now remap instances sequentially to avoid conflicts
-        return self._remap_and_assemble(
-            collected, device_name, device_id,
-            all_graphics, all_graphics_sources, all_meta
-        )
+        # ── Phase 2: Assign instances ──
+        #
+        # PRESERVE original instance numbers from source variants.
+        # The original programmers chose instance numbers that work with
+        # the target hardware (avoiding firmware-reserved slots).
+        # Renumbering sequentially causes conflicts with PFG blanks.
+        #
+        # Strategy:
+        # - Each point keeps its original instance from the source variant
+        # - When merging across variants, if two different mnemonics have
+        #   the same (type, instance), the second one gets bumped to the
+        #   next available instance above all used instances for that type
 
-    def _remap_and_assemble(self, collected: dict, device_name: str,
-                            device_id: str, graphics: list,
-                            graphics_sources: list, meta: dict) -> dict:
-        """Remap all instance numbers sequentially and update cross-references."""
+        mnem_to_new_inst = {}
 
-        # Build remapping tables
-        # Key: (source_key, type, old_instance) -> new_instance
-        remap = {}
-
-        # Group points by type
+        # Group mnemonic points by type
         points_by_type = {}
-        for pt_key, pt in collected["points"].items():
+        for mnem_key, pt in mnemonic_points.items():
             ptype = pt["type"]
-            points_by_type.setdefault(ptype, []).append(pt)
+            points_by_type.setdefault(ptype, []).append((mnem_key, pt))
 
-        # Assign new sequential instances per type
+        # Assign instances: preserve originals, resolve conflicts
         for ptype in POINT_TYPES:
             pts = points_by_type.get(ptype, [])
-            for i, pt in enumerate(pts, 1):
-                source = pt.get("_source", "")
-                old_inst = int(pt.get("instance", 0))
-                remap[(source, ptype, old_inst)] = i
-                pt["instance"] = str(i)
+            if not pts:
+                continue
 
-        # Remap loops
-        loops = list(collected["loops"].values())
-        for i, loop in enumerate(loops, 1):
-            source = loop.get("_source", "")
-            old_inst = int(loop.get("instance", 0))
-            remap[(source, "LOOP", old_inst)] = i
+            # First pass: assign original instances, track conflicts
+            used_instances = {}  # instance -> mnem_key (first to claim it)
+            deferred = []  # points that need a new instance due to conflict
+
+            for mnem_key, pt in pts:
+                orig_inst = int(pt.get("instance", 0))
+                if orig_inst not in used_instances:
+                    used_instances[orig_inst] = mnem_key
+                    mnem_to_new_inst[mnem_key] = orig_inst
+                    pt["instance"] = str(orig_inst)
+                else:
+                    deferred.append((mnem_key, pt))
+
+            # Second pass: assign deferred points to next available instances
+            if deferred:
+                max_used = max(used_instances.keys()) if used_instances else 0
+                next_inst = max_used + 1
+                for mnem_key, pt in deferred:
+                    while next_inst in used_instances:
+                        next_inst += 1
+                    used_instances[next_inst] = mnem_key
+                    mnem_to_new_inst[mnem_key] = next_inst
+                    pt["instance"] = str(next_inst)
+                    next_inst += 1
+
+            # Sort by instance for clean output
+            points_by_type[ptype].sort(key=lambda x: int(x[1].get("instance", 0)))
+
+        # Assign loop instances
+        loops_list = list(mnemonic_loops.items())
+        for i, (mnem_key, loop) in enumerate(loops_list, 1):
+            mnem_to_new_inst[mnem_key] = i
             loop["instance"] = str(i)
 
-        # Remap schedules
-        schedules = list(collected["schedules"].values())
-        for i, sched in enumerate(schedules, 1):
-            source = sched.get("_source", "")
-            old_inst = int(sched.get("instance", 0))
-            remap[(source, "SCHED", old_inst)] = i
-            remap[(source, "SCHEDULE", old_inst)] = i
+        # Assign schedule instances
+        scheds_list = list(mnemonic_scheds.items())
+        for i, (mnem_key, sched) in enumerate(scheds_list, 1):
+            mnem_to_new_inst[mnem_key] = i
             sched["instance"] = str(i)
 
-        # Remap calendars
-        calendars = list(collected["calendars"].values())
+        # Renumber calendars, smartsensors, etc.
+        calendars = list(all_calendars.values())
         for i, cal in enumerate(calendars, 1):
             cal["instance"] = str(i)
 
-        # Remap smartsensors
-        smartsensors = list(collected["smartsensors"].values())
+        smartsensors = list(all_smartsensors.values())
         for i, ss in enumerate(smartsensors, 1):
             ss["instance"] = str(i)
 
-        # Remap systemgroups
-        systemgroups = list(collected["systemgroups"].values())
+        systemgroups = list(all_systemgroups.values())
         for i, sg in enumerate(systemgroups, 1):
             sg["instance"] = str(i)
 
-        # Remap tables
-        tables = list(collected["tables"].values())
+        tables = list(all_tables.values())
         for i, tbl in enumerate(tables, 1):
             tbl["instance"] = str(i)
 
-        # Remap arrays
-        arrays = list(collected["arrays"].values())
+        arrays = list(all_arrays.values())
         for i, arr in enumerate(arrays, 1):
             arr["instance"] = str(i)
 
-        # Remap programs
-        programs = collected["programs"]
-        for i, prog in enumerate(programs, 1):
-            source = prog.get("_source", "")
-            old_inst = int(prog.get("instance", 0))
-            remap[(source, "PROGRAM", old_inst)] = i
-            prog["instance"] = str(i)
+        # ── Phase 3: Rewrite program code with new instance numbers ──
+        # Build per-program remap: (old_type, old_inst) -> new_inst
+        for sel_idx, (program, source_key, inst_to_mnemonic) in enumerate(programs):
+            # Build this program's remap table
+            code_remap = {}  # (type, old_inst) -> new_inst
+            code = program.get("code", "")
+            refs = parse_code_references(code)
 
-            # Remap point references in program code
-            code = prog.get("code", "")
-            code = self._remap_code_references(code, source, remap)
-            prog["code"] = code
+            for ptype_key in list(refs.keys()):
+                for old_inst in refs[ptype_key]:
+                    mnem_key = program_ref_map.get((sel_idx, ptype_key, old_inst))
+                    if mnem_key and mnem_key in mnem_to_new_inst:
+                        code_remap[(ptype_key, old_inst)] = mnem_to_new_inst[mnem_key]
 
-        # Filter trends to only those referencing points we kept
-        # and remap their references
+            # Apply remap to code
+            def make_replacer(remap_table, program_code):
+                def replace_ref(match):
+                    start = match.start()
+                    if start > 0 and program_code[start - 1].isdigit():
+                        return match.group(0)  # network ref, don't remap
+                    ptype = match.group(1)
+                    old_inst = int(match.group(2))
+                    new_inst = remap_table.get((ptype, old_inst))
+                    if new_inst is not None:
+                        return f"{ptype}{new_inst}"
+                    return match.group(0)
+                return replace_ref
+
+            program["code"] = POINT_REF_PATTERN.sub(
+                make_replacer(code_remap, code), code
+            )
+            program["instance"] = str(sel_idx + 1)
+
+        # ── Phase 4: Remap trend references ──
+        # Build a flat remap for trends: (source, type, old_inst) -> new_inst
+        trend_remap = {}
+        for (sel_idx, ptype, old_inst), mnem_key in program_ref_map.items():
+            source_key = programs[sel_idx][1]
+            if mnem_key in mnem_to_new_inst:
+                trend_remap[(source_key, ptype, old_inst)] = mnem_to_new_inst[mnem_key]
+
         kept_trends = []
         seen_trend_names = set()
-        for trend in collected["trends"]:
+        for trend in all_trends:
             source = trend.get("_source", "")
             old_refs = trend.get("references", [])
             new_refs = []
@@ -462,7 +729,7 @@ class Composer:
                 if m:
                     ref_type = m.group(1)
                     ref_inst = int(m.group(2))
-                    new_inst = remap.get((source, ref_type, ref_inst))
+                    new_inst = trend_remap.get((source, ref_type, ref_inst))
                     if new_inst is not None:
                         new_refs.append(f"{device_id}{ref_type}{new_inst}")
                         has_valid_ref = True
@@ -477,11 +744,10 @@ class Composer:
         for i, trend in enumerate(kept_trends, 1):
             trend["instance"] = str(i)
 
-        # Strip internal _source keys from all objects
+        # ── Phase 5: Assemble final library-format JSON ──
         def clean(obj):
             return {k: v for k, v in obj.items() if not k.startswith("_")}
 
-        # Assemble final library-format JSON
         objects = {
             "DEVICE": [{
                 "instance": device_id,
@@ -492,12 +758,12 @@ class Composer:
         }
 
         for ptype in POINT_TYPES:
-            objects[ptype] = [clean(pt) for pt in points_by_type.get(ptype, [])]
+            objects[ptype] = [clean(pt) for _, pt in points_by_type.get(ptype, [])]
 
-        objects["PROGRAM"] = [clean(p) for p in programs]
-        objects["LOOP"] = [clean(l) for l in loops]
+        objects["PROGRAM"] = [clean(p) for p, _, _ in programs]
+        objects["LOOP"] = [clean(l) for _, l in loops_list]
         objects["TREND"] = [clean(t) for t in kept_trends]
-        objects["SCHEDULE"] = [clean(s) for s in schedules]
+        objects["SCHEDULE"] = [clean(s) for _, s in scheds_list]
         objects["CALENDAR"] = [clean(c) for c in calendars]
         objects["SMARTSENSOR"] = [clean(s) for s in smartsensors]
         objects["SYSTEMGROUP"] = [clean(s) for s in systemgroups]
@@ -508,20 +774,19 @@ class Composer:
 
         # Build source manifest for traceability
         sources = []
-        for sel_prog in programs:
+        for prog, src, _ in programs:
             sources.append({
-                "program": sel_prog.get("name", ""),
-                "from": sel_prog.get("_source", ""),
+                "program": prog.get("name", ""),
+                "from": src,
             })
 
-        # Merge meta with device info
-        composed_meta = dict(meta)
+        composed_meta = dict(all_meta)
         composed_meta.update({
             "composed": True,
             "sources": sources,
             "device_id": device_id,
             "device_name": device_name,
-            "graphics_sources": graphics_sources,
+            "graphics_sources": all_graphics_sources,
         })
 
         result = {
@@ -530,36 +795,19 @@ class Composer:
             "format": "composed",
             "description": "Custom composed controller",
             "meta": composed_meta,
-            "graphics": graphics,
+            "graphics": all_graphics,
             "objects": objects,
             "bas_files": {},
             "counts": counts,
         }
 
+        logger.info(
+            f"Composed {len(programs)} programs, "
+            f"{sum(len(v) for v in objects.values() if isinstance(v, list))} objects, "
+            f"{len(mnemonic_points)} unique points by mnemonic"
+        )
+
         return result
-
-    def _remap_code_references(self, code: str, source: str,
-                               remap: dict) -> str:
-        """Remap point references in Control-BASIC code.
-
-        Replaces AV7 -> AV3 (etc.) based on the remap table.
-        Must be careful not to remap network references like 1001BI1.
-        """
-
-        def replace_ref(match):
-            # Check if preceded by a digit (network reference) - don't remap
-            start = match.start()
-            if start > 0 and code[start - 1].isdigit():
-                return match.group(0)
-
-            ptype = match.group(1)
-            old_inst = int(match.group(2))
-            new_inst = remap.get((source, ptype, old_inst))
-            if new_inst is not None:
-                return f"{ptype}{new_inst}"
-            return match.group(0)  # No mapping, keep original
-
-        return POINT_REF_PATTERN.sub(replace_ref, code)
 
     def save_composition(self, name: str, composition: dict) -> Path:
         """Save a composed controller to the library under COMPOSED category."""
@@ -872,45 +1120,54 @@ class Composer:
                 panx_meta["HardPointConfig"] = meta["HardPointConfig"]
                 features.append("hardpoint_config")
             if meta.get("GroupAssets"):
-                panx_meta["GroupAssets"] = meta["GroupAssets"]
+                # Deduplicate GroupAssets by Asset path
+                seen_assets = set()
+                deduped = []
+                for ga in meta["GroupAssets"]:
+                    key = ga.get("Asset", "")
+                    if key not in seen_assets:
+                        seen_assets.add(key)
+                        deduped.append(ga)
+                panx_meta["GroupAssets"] = deduped
                 features.append("group_assets")
+            panx_meta["ViewAssets"] = meta.get("ViewAssets", [])
             if features:
                 panx_meta["Features"] = features
 
             meta_json = work_dir / "meta.json"
             meta_json.write_text(json.dumps(panx_meta, indent=2))
 
-            # Step 3: Copy ALL graphics from source variant asset folders
-            # Each source variant has an asset dir with all its graphics
-            graphics_dir = work_dir / "group_assets" / "pic"
+            # Step 3: Copy graphics from source variant asset folders
+            # AND build the Animation subdirectory structure from GroupAssets
+            ga_dir = work_dir / "group_assets"
+            ga_dir.mkdir(parents=True, exist_ok=True)
+            graphics_dir = ga_dir / "pic"
             graphics_dir.mkdir(parents=True, exist_ok=True)
 
+            # Build a set of all source variant asset dirs
             graphics_sources = meta.get("graphics_sources", [])
-            copied_files = set()
-            for gs in graphics_sources:
-                src_file = (self.cfg.assets_root / gs["from_category"]
-                            / gs["from_variant"] / gs["file"])
-                if src_file.exists() and gs["file"] not in copied_files:
-                    dest = graphics_dir / gs["file"]
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_file, dest)
-                    copied_files.add(gs["file"])
-
-            # Also copy ALL files from each source variant's asset folder
             seen_variants = set()
+            asset_dirs = []
             for gs in graphics_sources:
                 vkey = f"{gs['from_category']}/{gs['from_variant']}"
-                if vkey in seen_variants:
-                    continue
-                seen_variants.add(vkey)
-                asset_dir = (self.cfg.assets_root / gs["from_category"]
-                             / gs["from_variant"])
-                if asset_dir.exists():
-                    for f in asset_dir.iterdir():
-                        if f.is_file() and f.name not in copied_files:
-                            dest = graphics_dir / f.name
-                            shutil.copy2(f, dest)
-                            copied_files.add(f.name)
+                if vkey not in seen_variants:
+                    seen_variants.add(vkey)
+                    d = self.cfg.assets_root / gs["from_category"] / gs["from_variant"]
+                    if d.exists():
+                        asset_dirs.append(d)
+
+            # Copy ALL files from asset dirs (flat + subdirectories) into group_assets/pic/
+            copied_paths = set()
+            for asset_dir in asset_dirs:
+                for root, dirs, files in os.walk(asset_dir):
+                    for fname in files:
+                        src = Path(root) / fname
+                        rel = src.relative_to(asset_dir)
+                        dest = graphics_dir / rel
+                        if str(rel) not in copied_paths:
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(src, dest)
+                            copied_paths.add(str(rel))
 
             # Step 4: Package into .panx
             panx_path = output_dir / f"{comp_id}.panx"

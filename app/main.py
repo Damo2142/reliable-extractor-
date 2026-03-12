@@ -473,6 +473,14 @@ async def composer_generate_xml(body: dict = None):
         raise HTTPException(500, f"XML generation failed: {e}")
 
 
+@app.get("/api/composer/descriptions")
+async def composer_variant_descriptions():
+    """Get auto-generated human-readable descriptions for all variant IDs.
+    Analyzes program code dependencies (AO vs BO on reheat) to determine
+    floating vs modulating control. Non-VAV types use manual overrides."""
+    return composer.build_variant_descriptions()
+
+
 @app.get("/api/composer/blanks")
 async def composer_list_blanks():
     """List available blank controller model templates for .pan/.panx generation."""

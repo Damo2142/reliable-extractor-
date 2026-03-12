@@ -38,7 +38,11 @@ def replace_device_name(name, device_name):
     """Replace {device-name} placeholder with actual device name."""
     if not name:
         return name
-    return name.replace("{device-name}", device_name)
+    name = name.replace("{device-name}", device_name)
+    # Sanitize: PFG crashes on forward slashes and trailing spaces in object names
+    name = name.strip()
+    name = name.replace("/", "-")
+    return name
 
 
 def build_point_attrs(point, device_name, device_id=None):
@@ -125,17 +129,17 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
                 f'type="{full_type}"',
                 f'instance="{escape_xml_attr(point.get("instance", ""))}"',
             ]
-            if point.get("present_value"):
-                attrs.append(f'presentValue="{escape_xml_attr(point["present_value"])}"')
+            if point.get("present_value") is not None:
+                attrs.append(f'presentValue="{escape_xml_attr(str(point["present_value"]))}"')
             if name:
                 attrs.append(f'objectName="{escape_xml_attr(name)}"')
             attrs.append(f'description="{escape_xml_attr(point.get("description", ""))}"')
-            if point.get("range"):
-                attrs.append(f'range="{escape_xml_attr(point["range"])}"')
-            if point.get("increment"):
-                attrs.append(f'increment="{escape_xml_attr(point["increment"])}"')
-            if point.get("unit"):
-                attrs.append(f'unit="{escape_xml_attr(point["unit"])}"')
+            if point.get("range") is not None and point.get("range") != "":
+                attrs.append(f'range="{escape_xml_attr(str(point["range"]))}"')
+            if point.get("increment") is not None and point.get("increment") != "":
+                attrs.append(f'increment="{escape_xml_attr(str(point["increment"]))}"')
+            if point.get("unit") is not None and point.get("unit") != "":
+                attrs.append(f'unit="{escape_xml_attr(str(point["unit"]))}"')
 
             lines.append(f'\t<point {" ".join(attrs)}/>')
 
@@ -146,8 +150,8 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
             f'type="LOOP"',
             f'instance="{escape_xml_attr(loop.get("instance", ""))}"',
         ]
-        if loop.get("present_value"):
-            attrs.append(f'presentValue="{escape_xml_attr(loop["present_value"])}"')
+        if loop.get("present_value") is not None:
+            attrs.append(f'presentValue="{escape_xml_attr(str(loop["present_value"]))}"')
         if name:
             attrs.append(f'objectName="{escape_xml_attr(name)}"')
         attrs.append(f'description=""')
