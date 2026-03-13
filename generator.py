@@ -150,8 +150,9 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
             f'type="LOOP"',
             f'instance="{escape_xml_attr(loop.get("instance", ""))}"',
         ]
-        if loop.get("present_value") is not None:
-            attrs.append(f'presentValue="{escape_xml_attr(str(loop["present_value"]))}"')
+        # Always include presentValue (default 0 = loop active with 0% output)
+        pv = loop.get("present_value", "0")
+        attrs.append(f'presentValue="{escape_xml_attr(str(pv))}"')
         if name:
             attrs.append(f'objectName="{escape_xml_attr(name)}"')
         attrs.append(f'description=""')
@@ -181,6 +182,9 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
             f'type="PROGRAM"',
             f'instance="{escape_xml_attr(prog.get("instance", ""))}"',
         ]
+        # presentValue="1" means program is enabled (PFG defaults to disabled without this)
+        pv = prog.get("present_value", "1")
+        attrs.append(f'presentValue="{escape_xml_attr(str(pv))}"')
         if name:
             attrs.append(f'objectName="{escape_xml_attr(name)}"')
         attrs.append(f'description="{escape_xml_attr(prog.get("description", ""))}"')
@@ -202,8 +206,9 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
             f'type="SCHEDULE"',
             f'instance="{escape_xml_attr(sched.get("instance", ""))}"',
         ]
-        if sched.get("present_value"):
-            attrs.append(f'presentValue="{escape_xml_attr(sched["present_value"])}"')
+        # Default presentValue="1" (enabled)
+        pv = sched.get("present_value", "1")
+        attrs.append(f'presentValue="{escape_xml_attr(str(pv))}"')
         if name:
             attrs.append(f'objectName="{escape_xml_attr(name)}"')
         attrs.append(f'description="{escape_xml_attr(sched.get("description", ""))}"')

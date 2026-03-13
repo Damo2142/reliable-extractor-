@@ -518,10 +518,16 @@ async def composer_generate_pan(body: dict = None):
             None, composer.generate_pan, data, blank_model
         )
         comp_id = data.get("id", "composed")
+        # Check if values document was generated alongside
+        values_path = pan_path.parent / f"{comp_id}_values.txt"
+        headers = {}
+        if values_path.exists():
+            headers["X-Values-Document"] = "true"
         return FileResponse(
             pan_path,
             filename=f"{comp_id}.pan",
             media_type="application/octet-stream",
+            headers=headers,
         )
     except Exception as e:
         logger.exception("PAN generation failed")
@@ -557,6 +563,25 @@ async def composer_generate_panx(body: dict = None):
     except Exception as e:
         logger.exception("PANX generation failed")
         raise HTTPException(500, f"PANX generation failed: {e}")
+
+
+@app.get("/api/composer/values-document/{comp_id}")
+async def composer_values_document(comp_id: str):
+    """Download the companion values reference document for a generated controller.
+
+    This text file lists all configured values (present values, PID settings,
+    ranges, units) from the source library — useful for verifying or manually
+    entering values that PFG may not preserve in the .pan binary.
+    """
+    output_dir = config.library_root / "COMPOSED" / "_output"
+    values_path = output_dir / f"{comp_id}_values.txt"
+    if not values_path.exists():
+        raise HTTPException(404, f"Values document not found for '{comp_id}'")
+    return FileResponse(
+        values_path,
+        filename=f"{comp_id}_values.txt",
+        media_type="text/plain",
+    )
 
 
 # ─── Background Task ─────────────────────────────────────────────────────────

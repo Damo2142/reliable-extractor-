@@ -879,6 +879,130 @@ class Composer:
                     })
         return result
 
+    def _generate_values_document(self, composition: dict, output_path: Path):
+        """Generate a companion text document listing all configured values.
+
+        PFG may not preserve presentValue and loop PID settings in the .pan
+        binary. This document provides a complete reference of all values
+        from the source library for manual verification or entry.
+        """
+        meta = composition.get("meta", {})
+        device_name = meta.get("device_name", "{device-name}")
+        device_id = meta.get("device_id", "900")
+        objects = composition.get("objects", {})
+
+        lines = []
+        lines.append(f"Controller Values Reference")
+        lines.append(f"{'=' * 60}")
+        lines.append(f"Device Name: {device_name}")
+        lines.append(f"Device ID:   {device_id}")
+        lines.append(f"Generated:   {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        lines.append("")
+
+        # ── Points ──
+        type_labels = {
+            "AV": "Analog Values", "AI": "Analog Inputs", "AO": "Analog Outputs",
+            "BV": "Binary Values", "BI": "Binary Inputs", "BO": "Binary Outputs",
+            "MV": "Multistate Values", "MO": "Multistate Outputs",
+        }
+        for ptype in ["AV", "AI", "AO", "BV", "BI", "BO", "MV", "MO"]:
+            pts = objects.get(ptype, [])
+            if not pts:
+                continue
+            lines.append(f"--- {type_labels.get(ptype, ptype)} ---")
+            lines.append(f"{'Inst':>5}  {'Name':<35}  {'Value':>12}  {'Range':>6}  {'Unit':>6}")
+            lines.append(f"{'-'*5}  {'-'*35}  {'-'*12}  {'-'*6}  {'-'*6}")
+            for p in sorted(pts, key=lambda x: int(x.get("instance", 0))):
+                name = p.get("name", "").replace("{device-name}", device_name)
+                pv = p.get("present_value", "")
+                rng = p.get("range", "")
+                unit = p.get("unit", "")
+                inst = p.get("instance", "")
+                lines.append(f"{inst:>5}  {name:<35}  {str(pv):>12}  {str(rng):>6}  {str(unit):>6}")
+            lines.append("")
+
+        # ── Loops ──
+        loops = objects.get("LOOP", [])
+        if loops:
+            lines.append(f"--- Loops (PID Settings) ---")
+            lines.append(f"{'Inst':>5}  {'Name':<30}  {'P':>8}  {'I':>8}  {'D':>8}  {'Bias':>8}  {'DB':>8}  {'Action':>8}  {'I-Units':>8}")
+            lines.append(f"{'-'*5}  {'-'*30}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}")
+            for l in sorted(loops, key=lambda x: int(x.get("instance", 0))):
+                name = l.get("name", "").replace("{device-name}", device_name)
+                lines.append(
+                    f"{l.get('instance',''):>5}  {name:<30}  "
+                    f"{l.get('proportional',''):>8}  {l.get('integral',''):>8}  "
+                    f"{l.get('derivative',''):>8}  {l.get('bias',''):>8}  "
+                    f"{l.get('deadband',''):>8}  {l.get('action',''):>8}  "
+                    f"{l.get('integralunits',''):>8}"
+                )
+            lines.append("")
+
+        # ── Programs ──
+        progs = objects.get("PROGRAM", [])
+        if progs:
+            lines.append(f"--- Programs ---")
+            lines.append(f"{'Inst':>5}  {'Name':<35}  {'Enabled':>8}")
+            lines.append(f"{'-'*5}  {'-'*35}  {'-'*8}")
+            for p in sorted(progs, key=lambda x: int(x.get("instance", 0))):
+                name = p.get("name", "").replace("{device-name}", device_name)
+                pv = p.get("present_value", "1")
+                enabled = "Yes" if str(pv) == "1" else "No"
+                lines.append(f"{p.get('instance',''):>5}  {name:<35}  {enabled:>8}")
+            lines.append("")
+
+        # ── Schedules ──
+        scheds = objects.get("SCHEDULE", [])
+        if scheds:
+            lines.append(f"--- Schedules ---")
+            lines.append(f"{'Inst':>5}  {'Name':<35}  {'Enabled':>8}  {'Range':>6}")
+            lines.append(f"{'-'*5}  {'-'*35}  {'-'*8}  {'-'*6}")
+            for s in sorted(scheds, key=lambda x: int(x.get("instance", 0))):
+                name = s.get("name", "").replace("{device-name}", device_name)
+                pv = s.get("present_value", "1")
+                enabled = "Yes" if str(pv) == "1" else "No"
+                lines.append(f"{s.get('instance',''):>5}  {name:<35}  {enabled:>8}  {s.get('range',''):>6}")
+            lines.append("")
+
+        # ── Trends ──
+        trends = objects.get("TREND", [])
+        if trends:
+            lines.append(f"--- Trends ---")
+            lines.append(f"{'Inst':>5}  {'Name':<35}  {'Type':<15}  {'Interval':>10}  {'References'}")
+            lines.append(f"{'-'*5}  {'-'*35}  {'-'*15}  {'-'*10}  {'-'*20}")
+            for t in sorted(trends, key=lambda x: int(x.get("instance", 0))):
+                name = t.get("name", "").replace("{device-name}", device_name)
+                refs = ", ".join(r for r in t.get("references", []) if r)
+                lines.append(
+                    f"{t.get('instance',''):>5}  {name:<35}  "
+                    f"{t.get('type','SINGLETREND'):<15}  "
+                    f"{t.get('interval',''):>10}  {refs}"
+                )
+            lines.append("")
+
+        # ── SmartSensors ──
+        sensors = objects.get("SMARTSENSOR", [])
+        if sensors:
+            lines.append(f"--- SMART-Net Sensors ---")
+            for s in sorted(sensors, key=lambda x: int(x.get("instance", 0))):
+                name = s.get("name", "").replace("{device-name}", device_name)
+                lines.append(f"  {s.get('instance',''):>3}  {name}")
+            lines.append("")
+
+        # ── SystemGroups ──
+        sgroups = objects.get("SYSTEMGROUP", [])
+        if sgroups:
+            lines.append(f"--- System Groups ---")
+            for sg in sorted(sgroups, key=lambda x: int(x.get("instance", 0))):
+                name = sg.get("name", "").replace("{device-name}", device_name)
+                lines.append(f"  {sg.get('instance',''):>3}  {name}  graphic={sg.get('groupgraphic','')}  json={sg.get('jsonpath','')}")
+            lines.append("")
+
+        content = "\n".join(lines)
+        output_path.write_text(content)
+        logger.info(f"Generated values document: {output_path} ({len(lines)} lines)")
+        return output_path
+
     def _extract_blank_pan(self, blank_panx: Path, work_dir: Path) -> Path:
         """Extract the .pan file from a blank .panx template."""
         import shutil
@@ -1034,7 +1158,9 @@ class Composer:
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Step 1: Generate changes XML
+            # Step 1: Generate changes XML (pfg_safe=True for PFG compatibility)
+            # PFG crashes on DEVICE, TREND, SMARTSENSOR, SYSTEMGROUP in changes XML.
+            # These are handled separately in .panx generation.
             xml_content = generate_xml(composition, device_id=device_id,
                                        device_name=device_name, pfg_safe=True)
             changes_xml = work_dir / "changes.xml"
@@ -1067,15 +1193,39 @@ class Composer:
             input_pan = self._extract_blank_pan(panx_files[0], work_dir)
             logger.info(f"Using blank template: {blank_model} -> {input_pan.name}")
 
-            # Step 3: Run PFG
+            # Step 3: Run PFG (safe objects only — points, programs, loops, schedules, calendars)
             output_pan = work_dir / f"{comp_id}.pan"
             self._run_pfg_generate(input_pan, changes_xml, output_pan,
                                    work_dir, device_id, device_name)
+
+            # Step 3b: Try to add TRENDs in a second PFG pass
+            # PFG may handle trends if device ID matches the blank
+            trend_objects = composition.get("objects", {}).get("TREND", [])
+            if trend_objects:
+                trend_comp = {"objects": {"TREND": trend_objects}, "meta": {}}
+                trend_xml = generate_xml(trend_comp, device_id=device_id,
+                                         device_name=device_name, pfg_safe=False)
+                trend_changes = work_dir / "changes_trends.xml"
+                trend_changes.write_text(trend_xml)
+                trend_output = work_dir / f"{comp_id}_with_trends.pan"
+                try:
+                    self._run_pfg_generate(output_pan, trend_changes, trend_output,
+                                           work_dir, device_id, device_name)
+                    # Success — use the version with trends
+                    shutil.copy2(trend_output, output_pan)
+                    logger.info(f"Added {len(trend_objects)} trends to .pan via second PFG pass")
+                except Exception as e:
+                    logger.warning(f"Could not add trends to .pan (PFG error): {e}")
 
             # Copy to output dir
             final_pan = output_dir / f"{comp_id}.pan"
             shutil.copy2(output_pan, final_pan)
             logger.info(f"Generated .pan: {final_pan}")
+
+            # Generate companion values document
+            values_doc = output_dir / f"{comp_id}_values.txt"
+            self._generate_values_document(composition, values_doc)
+
             return final_pan
 
         finally:
@@ -1169,13 +1319,23 @@ class Composer:
                             shutil.copy2(src, dest)
                             copied_paths.add(str(rel))
 
-            # Step 4: Package into .panx
+            # Step 4: Generate companion values document
+            values_doc = work_dir / f"{comp_id}_values.txt"
+            self._generate_values_document(composition, values_doc)
+            # Also save a copy alongside the .panx
+            values_output = output_dir / f"{comp_id}_values.txt"
+            import shutil as _sh
+            _sh.copy2(values_doc, values_output)
+
+            # Step 5: Package into .panx
             panx_path = output_dir / f"{comp_id}.panx"
             with zipfile.ZipFile(panx_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 # Add .pan file
                 zf.write(pan_path, f"{device_id}.pan")
                 # Add meta.json
                 zf.write(meta_json, "meta.json")
+                # Add values reference document
+                zf.write(values_doc, f"{comp_id}_values.txt")
                 # Add all graphics with proper paths for GroupAssets
                 for root_path, dirs, files in os.walk(work_dir / "group_assets"):
                     for fname in files:
