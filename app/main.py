@@ -573,7 +573,7 @@ async def composer_values_document(comp_id: str):
     ranges, units) from the source library — useful for verifying or manually
     entering values that PFG may not preserve in the .pan binary.
     """
-    output_dir = config.library_root / "COMPOSED" / "_output"
+    output_dir = cfg.library_root / "COMPOSED" / "_output"
     values_path = output_dir / f"{comp_id}_values.txt"
     if not values_path.exists():
         raise HTTPException(404, f"Values document not found for '{comp_id}'")

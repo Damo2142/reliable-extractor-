@@ -155,6 +155,16 @@ class ExtractionEngine:
                     for bas in sorted(parent.glob("*.bas")):
                         bas_files[bas.stem] = bas.read_text(errors="replace")
 
+            # Save GRP JSON files alongside library entry
+            grp_files = {}
+            for grp_json in sorted(work_dir.glob("*GRP*.json")):
+                try:
+                    grp_data = json.loads(grp_json.read_text(errors="replace"))
+                    grp_files[grp_json.stem] = grp_data
+                    logger.info(f"Saved GRP JSON: {grp_json.name}")
+                except Exception as e:
+                    logger.warning(f"Could not parse GRP JSON {grp_json.name}: {e}")
+
             record = {
                 "id": vid,
                 "category": category,
@@ -164,6 +174,7 @@ class ExtractionEngine:
                 "graphics": graphics,
                 "objects": parsed,
                 "bas_files": bas_files,
+                "grp_files": grp_files,
                 "counts": self._count_objects(parsed),
             }
 

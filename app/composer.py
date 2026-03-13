@@ -401,10 +401,11 @@ class Composer:
         all_tables = {}
         all_arrays = {}
 
-        # Graphics and meta
+        # Graphics, meta, and GRP JSONs
         all_graphics = []
         all_meta = {}
         all_graphics_sources = []
+        all_grp_files = {}  # "1000GRP1" -> json data
 
         for sel_idx, sel in enumerate(selections):
             key = f"{sel['category']}/{sel['variant_id']}"
@@ -546,6 +547,11 @@ class Composer:
                 if sg_key not in all_systemgroups:
                     all_systemgroups[sg_key] = dict(sg)
                     all_systemgroups[sg_key]["_source"] = key
+
+            # Collect GRP JSON files from source variant
+            for grp_name, grp_data in data.get("grp_files", {}).items():
+                if grp_name not in all_grp_files:
+                    all_grp_files[grp_name] = grp_data
 
             for tbl in objects.get("TABLE", []):
                 tbl_key = f"TBL:{tbl.get('instance', '')}"
@@ -798,6 +804,7 @@ class Composer:
             "graphics": all_graphics,
             "objects": objects,
             "bas_files": {},
+            "grp_files": all_grp_files,
             "counts": counts,
         }
 
@@ -1158,9 +1165,41 @@ class Composer:
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Step 1: Generate changes XML (pfg_safe=True for PFG compatibility)
-            # PFG crashes on DEVICE, TREND, SMARTSENSOR, SYSTEMGROUP in changes XML.
-            # These are handled separately in .panx generation.
+            # Step 1: Place GRP JSON files for SYSTEMGROUP support
+            # PFG needs these files to exist at the jsonpath when processing SYSTEMGROUP
+            grp_files = composition.get("grp_files", {})
+            grp_dir = work_dir / "grp"
+            grp_dir.mkdir(parents=True, exist_ok=True)
+            grp_wine_paths = {}  # "1000GRP1" -> "Z:\\tmp\\...\\grp\\1000GRP1.json"
+
+            for grp_name, grp_data in grp_files.items():
+                grp_path = grp_dir / f"{grp_name}.json"
+                # Update device ID in GRP JSON point references
+                grp_text = json.dumps(grp_data, indent=2)
+                if device_id:
+                    # GRP JSONs have BACnet_device fields — update them
+                    grp_text = re.sub(
+                        r'"BACnet_device"\s*:\s*\d+',
+                        f'"BACnet_device": {device_id}',
+                        grp_text
+                    )
+                grp_path.write_text(grp_text)
+                from app.extractor import to_wine_path
+                grp_wine_paths[grp_name] = to_wine_path(grp_path)
+                logger.info(f"Placed GRP JSON: {grp_name} -> {grp_wine_paths[grp_name]}")
+
+            # Update SYSTEMGROUP jsonpath to point to our GRP files
+            for sg in composition.get("objects", {}).get("SYSTEMGROUP", []):
+                old_path = sg.get("jsonpath", "")
+                # Extract GRP filename from old path (e.g., "1000GRP1" from "Z:\tmp\...\1000GRP1.json")
+                import re as _re
+                m = _re.search(r'(\d+GRP\d+)', old_path)
+                if m and m.group(1) in grp_wine_paths:
+                    sg["jsonpath"] = grp_wine_paths[m.group(1)]
+
+            # Step 1b: Generate changes XML
+            # pfg_safe=True excludes DEVICE and TREND (which still crash PFG)
+            # but SYSTEMGROUP and SMARTSENSOR are now always included
             xml_content = generate_xml(composition, device_id=device_id,
                                        device_name=device_name, pfg_safe=True)
             changes_xml = work_dir / "changes.xml"

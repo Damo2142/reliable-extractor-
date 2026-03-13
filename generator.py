@@ -85,8 +85,7 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
         device_name: Device name for replacing {device-name} placeholders.
                      If None, leaves {device-name} in place.
         pfg_safe: If True, exclude object types that crash PFG:
-                  DEVICE (use -b/-n flags), TREND (reference validation),
-                  SMARTSENSOR/SYSTEMGROUP (GRP JSON dependencies)
+                  DEVICE (use -b/-n flags), TREND (reference validation)
     """
     objects = library_data.get("objects", {})
 
@@ -274,40 +273,57 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
             lines.append(f'\t<point {" ".join(attrs)}/>')
 
     # ─── SMARTSENSORS ───
-    # NOTE: PFG crashes on SMARTSENSOR — tries to open GRP JSON files. Exclude in pfg_safe mode.
-    if not pfg_safe:
-        for ss in objects.get("SMARTSENSOR", []):
-            name = replace_device_name(ss.get("name", ""), device_name)
-            attrs = [
-                f'type="SMARTSENSOR"',
-                f'instance="{escape_xml_attr(ss.get("instance", ""))}"',
-            ]
-            if name:
-                attrs.append(f'objectName="{escape_xml_attr(name)}"')
-            attrs.append(f'description="{escape_xml_attr(ss.get("description", ""))}"')
+    for ss in objects.get("SMARTSENSOR", []):
+        name = replace_device_name(ss.get("name", ""), device_name)
+        attrs = [
+            f'type="SMARTSENSOR"',
+            f'instance="{escape_xml_attr(ss.get("instance", ""))}"',
+        ]
+        if name:
+            attrs.append(f'objectName="{escape_xml_attr(name)}"')
+        attrs.append(f'description="{escape_xml_attr(ss.get("description", ""))}"')
 
+        rows = ss.get("rows", [])
+        if rows:
+            lines.append(f'\t<point {" ".join(attrs)}>')
+            for row in rows:
+                row_attrs = [f'rownumber="{escape_xml_attr(row.get("rownumber", ""))}"']
+                # Update device ID in point references
+                point_ref = row.get("point", "")
+                if point_ref and device_id:
+                    import re as _re
+                    m = _re.match(r'\d+(.*)', point_ref)
+                    if m:
+                        point_ref = device_id + m.group(1)
+                row_attrs.append(f'point="{escape_xml_attr(point_ref)}"')
+                for rk in ["type", "range", "unit-icon", "useredit", "tag"]:
+                    rv = row.get(rk, "")
+                    if rv:
+                        row_attrs.append(f'{rk}="{escape_xml_attr(rv)}"')
+                lines.append(f'\t\t<row {" ".join(row_attrs)}/>')
+            lines.append(f'\t</point>')
+        else:
             lines.append(f'\t<point {" ".join(attrs)}/>')
 
     # ─── SYSTEMGROUPS ───
-    # NOTE: PFG crashes on SYSTEMGROUP — tries to open GRP JSON files. Exclude in pfg_safe mode.
-    if not pfg_safe:
-        for sg in objects.get("SYSTEMGROUP", []):
-            name = replace_device_name(sg.get("name", ""), device_name)
-            attrs = [
-                f'type="SYSTEMGROUP"',
-                f'instance="{escape_xml_attr(sg.get("instance", ""))}"',
-            ]
-            if name:
-                attrs.append(f'objectName="{escape_xml_attr(name)}"')
-            attrs.append(f'description="{escape_xml_attr(sg.get("description", ""))}"')
-            if sg.get("groupgraphic"):
-                attrs.append(f'groupgraphic="{escape_xml_attr(sg["groupgraphic"])}"')
-            if sg.get("jsonpath"):
-                attrs.append(f'jsonpath="{escape_xml_attr(sg["jsonpath"])}"')
-            if sg.get("autoupdate"):
-                attrs.append(f'autoupdate="{escape_xml_attr(sg["autoupdate"])}"')
+    for sg in objects.get("SYSTEMGROUP", []):
+        name = replace_device_name(sg.get("name", ""), device_name)
+        attrs = [
+            f'type="SYSTEMGROUP"',
+            f'instance="{escape_xml_attr(sg.get("instance", ""))}"',
+        ]
+        if name:
+            attrs.append(f'objectName="{escape_xml_attr(name)}"')
+        attrs.append(f'description="{escape_xml_attr(sg.get("description", ""))}"')
+        if sg.get("groupgraphic"):
+            attrs.append(f'groupgraphic="{escape_xml_attr(sg["groupgraphic"])}"')
+        # jsonpath must point to where GRP JSONs will be placed
+        jsonpath = sg.get("jsonpath", "")
+        if jsonpath:
+            attrs.append(f'jsonpath="{escape_xml_attr(jsonpath)}"')
+        attrs.append(f'autoupdate="{escape_xml_attr(sg.get("autoupdate", "false"))}"')
 
-            lines.append(f'\t<point {" ".join(attrs)}/>')
+        lines.append(f'\t<point {" ".join(attrs)}/>')
 
     lines.append('</points>')
 
