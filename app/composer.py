@@ -1198,24 +1198,8 @@ class Composer:
             self._run_pfg_generate(input_pan, changes_xml, output_pan,
                                    work_dir, device_id, device_name)
 
-            # Step 3b: Try to add TRENDs in a second PFG pass
-            # PFG may handle trends if device ID matches the blank
-            trend_objects = composition.get("objects", {}).get("TREND", [])
-            if trend_objects:
-                trend_comp = {"objects": {"TREND": trend_objects}, "meta": {}}
-                trend_xml = generate_xml(trend_comp, device_id=device_id,
-                                         device_name=device_name, pfg_safe=False)
-                trend_changes = work_dir / "changes_trends.xml"
-                trend_changes.write_text(trend_xml)
-                trend_output = work_dir / f"{comp_id}_with_trends.pan"
-                try:
-                    self._run_pfg_generate(output_pan, trend_changes, trend_output,
-                                           work_dir, device_id, device_name)
-                    # Success — use the version with trends
-                    shutil.copy2(trend_output, output_pan)
-                    logger.info(f"Added {len(trend_objects)} trends to .pan via second PFG pass")
-                except Exception as e:
-                    logger.warning(f"Could not add trends to .pan (PFG error): {e}")
+            # NOTE: TRENDs, SMARTSENSOR, SYSTEMGROUP excluded from PFG (crashes).
+            # These are listed in the companion values document for reference.
 
             # Copy to output dir
             final_pan = output_dir / f"{comp_id}.pan"
