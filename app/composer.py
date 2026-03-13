@@ -929,9 +929,40 @@ class Composer:
             lines.append("")
 
         # ── Loops ──
+        # Build a name lookup for suggesting input/setpoint
+        all_points = {}
+        for ptype in ["AV", "AI", "AO", "BV", "BI", "BO", "MV", "MO"]:
+            for p in objects.get(ptype, []):
+                pname = p.get("name", "").replace("{device-name}", device_name)
+                all_points[pname] = f"{ptype}{p.get('instance','')}"
+
+        # Common loop-to-point mappings by mnemonic suffix
+        _loop_bindings = {
+            "FLO-CTRL-LOOP": {"input": "FLO", "setpoint": "FLO-SP"},
+            "FLO-LOOP":      {"input": "FLO", "setpoint": "FLO-SP"},
+            "RH-LOOP":       {"input": "RMT-ACT", "setpoint": "HTG-SP"},
+            "RHT-LOOP":      {"input": "RMT-ACT", "setpoint": "HTG-SP"},
+            "RHV-LOOP":      {"input": "RMT-ACT", "setpoint": "HTG-SP"},
+            "CLG-LOOP":      {"input": "SAT", "setpoint": "CLG-SAT-SP"},
+            "HTG-LOOP":      {"input": "SAT", "setpoint": "HTG-SAT-SP"},
+            "DMP-LOOP":      {"input": "DMP-POS", "setpoint": "DMP-SP"},
+            "ECON-LOOP":     {"input": "MAT", "setpoint": "ECON-SP"},
+            "OAD-LOOP":      {"input": "OAD-POS", "setpoint": "OAD-SP"},
+            "OAD-LL-LOOP":   {"input": "MAT", "setpoint": "MAT-LL-SP"},
+            "OA-FLO-LOOP":   {"input": "OA-FLO", "setpoint": "OA-FLO-SP"},
+            "SA-STP-LOOP":   {"input": "SA-STP", "setpoint": "SA-STP-SP"},
+            "SAT-LOOP":      {"input": "SAT", "setpoint": "SAT-SP"},
+            "SF-SPD-LOOP":   {"input": "SA-STP", "setpoint": "SA-STP-SP"},
+            "SF-SPD-TEMP-LOOP": {"input": "SAT", "setpoint": "SAT-SP"},
+            "BLDG-P-LOOP":   {"input": "BLDG-P", "setpoint": "BLDG-P-SP"},
+            "HCV-LOOP":      {"input": "SAT", "setpoint": "HTG-SAT-SP"},
+            "PHV-LOOP":      {"input": "SAT", "setpoint": "HTG-SAT-SP"},
+        }
+
         loops = objects.get("LOOP", [])
         if loops:
             lines.append(f"--- Loops (PID Settings) ---")
+            lines.append(f"  ** IMPORTANT: Input and Setpoint must be configured in RC Studio **")
             lines.append(f"{'Inst':>5}  {'Name':<30}  {'P':>8}  {'I':>8}  {'D':>8}  {'Bias':>8}  {'DB':>8}  {'Action':>8}  {'I-Units':>8}")
             lines.append(f"{'-'*5}  {'-'*30}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}")
             for l in sorted(loops, key=lambda x: int(x.get("instance", 0))):
@@ -943,6 +974,20 @@ class Composer:
                     f"{l.get('deadband',''):>8}  {l.get('action',''):>8}  "
                     f"{l.get('integralunits',''):>8}"
                 )
+                # Try to suggest input/setpoint from loop name
+                loop_mnem = name.split("-", 1)[1] if "-" in name else name
+                prefix = name.rsplit("-" + loop_mnem.split("-")[0], 1)[0] if "-" in name else device_name
+                binding = _loop_bindings.get(loop_mnem)
+                if binding:
+                    # Find matching points
+                    inp_name = f"{prefix}-{binding['input']}"
+                    sp_name = f"{prefix}-{binding['setpoint']}"
+                    inp_ref = all_points.get(inp_name, f"? ({binding['input']})")
+                    sp_ref = all_points.get(sp_name, f"? ({binding['setpoint']})")
+                    lines.append(f"         -> Input: {inp_ref} ({inp_name})")
+                    lines.append(f"         -> Setpoint: {sp_ref} ({sp_name})")
+                else:
+                    lines.append(f"         -> Input/Setpoint: must be configured manually")
             lines.append("")
 
         # ── Programs ──
