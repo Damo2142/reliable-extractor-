@@ -285,19 +285,23 @@ class Composer:
 
             descs[vid] = ", ".join(parts)
 
-        # Load overrides from master_descriptions.json (non-VAV types keep manual descriptions)
+        # Load overrides from master_descriptions.json — user-set descriptions always win
         override_path = Path("/srv/dfa/shared/files/vendors/reliable/master_descriptions.json")
         if override_path.exists():
             try:
                 overrides = json.loads(override_path.read_text())
-                # For non-VAV, prefer manual overrides if they exist
                 for k, v in overrides.items():
-                    if k not in descs or not k.startswith("VAV"):
+                    if v:  # Only override if description is non-empty
                         descs[k] = v
             except Exception:
                 pass
 
         return descs
+
+    def _cat_folder(self, cat_key: str) -> str:
+        """Reverse-map category key (e.g. 'SBS_AHU') to upload folder name."""
+        inv = {v: k for k, v in self.cfg.CATEGORIES.items()}
+        return inv.get(cat_key, cat_key)
 
     def get_variant_data(self, category: str, variant_id: str) -> Optional[dict]:
         """Load a variant's full library record (objects, meta, graphics, etc.)."""
@@ -996,12 +1000,35 @@ class Composer:
             lines.append(f"--- Programs ---")
             lines.append(f"{'Inst':>5}  {'Name':<35}  {'Enabled':>8}")
             lines.append(f"{'-'*5}  {'-'*35}  {'-'*8}")
+            import re as _re_val
+            manual_progs = []
             for p in sorted(progs, key=lambda x: int(x.get("instance", 0))):
                 name = p.get("name", "").replace("{device-name}", device_name)
                 pv = p.get("present_value", "1")
                 enabled = "Yes" if str(pv) == "1" else "No"
-                lines.append(f"{p.get('instance',''):>5}  {name:<35}  {enabled:>8}")
+                code = p.get("code", "")
+                has_ay = bool(_re_val.search(r'\bAY\d+\b', code))
+                tag = "  ** MANUAL ENTRY REQUIRED (ARRAY refs)" if has_ay else ""
+                lines.append(f"{p.get('instance',''):>5}  {name:<35}  {enabled:>8}{tag}")
+                if has_ay:
+                    manual_progs.append(p)
             lines.append("")
+
+            # Full code listing for programs that need manual entry
+            if manual_progs:
+                lines.append("=" * 70)
+                lines.append("PROGRAMS REQUIRING MANUAL CODE ENTRY IN RC STUDIO")
+                lines.append("PFG cannot compile ARRAY (AY) references.")
+                lines.append("Copy/paste the code below into each program in RC Studio.")
+                lines.append("=" * 70)
+                for p in manual_progs:
+                    name = p.get("name", "").replace("{device-name}", device_name)
+                    code = p.get("code", "").replace("{device-name}", device_name)
+                    lines.append("")
+                    lines.append(f"--- Program {p.get('instance','')}: {name} ---")
+                    lines.append(code)
+                    lines.append(f"--- End Program {p.get('instance','')} ---")
+                lines.append("")
 
         # ── Schedules ──
         scheds = objects.get("SCHEDULE", [])
@@ -1242,48 +1269,97 @@ class Composer:
                 if m and m.group(1) in grp_wine_paths:
                     sg["jsonpath"] = grp_wine_paths[m.group(1)]
 
-            # Step 1b: Generate changes XML
-            # pfg_safe=True excludes DEVICE and TREND (which still crash PFG)
-            # but SYSTEMGROUP and SMARTSENSOR are now always included
-            xml_content = generate_xml(composition, device_id=device_id,
-                                       device_name=device_name, pfg_safe=True)
-            changes_xml = work_dir / "changes.xml"
-            changes_xml.write_text(xml_content)
-            logger.info(f"Generated changes XML: {len(xml_content)} chars")
+            # Detect single-source composition — if all programs come from one
+            # variant, use the original source .pan instead of a blank. This
+            # preserves compiled programs (including ARRAY/AY refs that PFG's
+            # CBAS compiler can't handle when building from scratch).
+            source_variants = set()
+            source_categories = {}
+            for p in composition.get("objects", {}).get("PROGRAM", []):
+                src = p.get("_source", "")
+                if src and "/" in src:
+                    cat, vid = src.split("/", 1)
+                    source_variants.add(vid)
+                    source_categories[vid] = cat
+            # Fallback to graphics_sources
+            graphics_sources = meta.get("graphics_sources", [])
+            if not source_variants and graphics_sources:
+                for gs in graphics_sources:
+                    vid = gs.get("from_variant", "")
+                    cat = gs.get("from_category", "")
+                    if vid:
+                        source_variants.add(vid)
+                        source_categories[vid] = cat
 
-            # Step 2: Get blank .pan
-            blanks_dir = Path("/srv/dfa/shared/files/vendors/reliable/blanks")
-            if not blank_model:
-                # Try to find from HardPointConfig
-                hpc = meta.get("HardPointConfig", "")
-                # Match blanks by HardPointConfig suffix
-                for d in blanks_dir.iterdir():
-                    if d.is_dir() and hpc and hpc in d.name:
-                        blank_model = d.name
-                        break
+            use_source_pan = False
+            source_pan_path = None
+
+            if len(source_variants) == 1:
+                sv = list(source_variants)[0]
+                sc = source_categories.get(sv, "")
+                if sc:
+                    # Find the source .panx or .pan in uploads
+                    folder_name = self._cat_folder(sc)
+                    if folder_name:
+                        cat_dir = self.cfg.upload_root / folder_name
+                        # Try .panx first, then .pan
+                        src_panx = next(cat_dir.rglob(f"{sv}.panx"), None)
+                        src_pan = next(cat_dir.rglob(f"{sv}.pan"), None)
+                        if src_panx:
+                            source_pan_path = self._extract_blank_pan(src_panx, work_dir)
+                            use_source_pan = True
+                        elif src_pan:
+                            source_pan_path = work_dir / f"{sv}.pan"
+                            shutil.copy2(src_pan, source_pan_path)
+                            use_source_pan = True
+
+            if use_source_pan:
+                # Single-source: use original .pan, apply only device ID/name change
+                # PFG preserves all compiled programs, arrays, trends, etc.
+                logger.info(f"Single-source composition: using source .pan from {list(source_variants)[0]}")
+                changes_xml = work_dir / "changes.xml"
+                # Empty changes — PFG just copies and renames
+                changes_xml.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<points>\n</points>\n')
+                input_pan = source_pan_path
+            else:
+                # Multi-source: build from blank with changes XML
+                xml_content = generate_xml(composition, device_id=device_id,
+                                           device_name=device_name, pfg_safe=True)
+                changes_xml = work_dir / "changes.xml"
+                changes_xml.write_text(xml_content)
+                logger.info(f"Generated changes XML: {len(xml_content)} chars")
+
+            if not use_source_pan:
+                # Step 2: Get blank .pan
+                blanks_dir = Path("/srv/dfa/shared/files/vendors/reliable/blanks")
                 if not blank_model:
-                    # Default to first available
-                    available = self.list_blank_panels()
-                    if not available:
-                        raise ValueError("No blank controller templates found")
-                    blank_model = available[0]["model"]
-                    logger.warning(f"No blank_model specified, using default: {blank_model}")
+                    # Try to find from HardPointConfig
+                    hpc = meta.get("HardPointConfig", "")
+                    # Match blanks by HardPointConfig suffix
+                    for d in blanks_dir.iterdir():
+                        if d.is_dir() and hpc and hpc in d.name:
+                            blank_model = d.name
+                            break
+                    if not blank_model:
+                        # Default to first available
+                        available = self.list_blank_panels()
+                        if not available:
+                            raise ValueError("No blank controller templates found")
+                        blank_model = available[0]["model"]
+                        logger.warning(f"No blank_model specified, using default: {blank_model}")
 
-            blank_panx = blanks_dir / blank_model
-            panx_files = list(blank_panx.glob("*.panx"))
-            if not panx_files:
-                raise ValueError(f"No .panx found in blanks/{blank_model}")
+                blank_panx = blanks_dir / blank_model
+                panx_files = list(blank_panx.glob("*.panx"))
+                if not panx_files:
+                    raise ValueError(f"No .panx found in blanks/{blank_model}")
 
-            input_pan = self._extract_blank_pan(panx_files[0], work_dir)
-            logger.info(f"Using blank template: {blank_model} -> {input_pan.name}")
+                input_pan = self._extract_blank_pan(panx_files[0], work_dir)
+                logger.info(f"Using blank template: {blank_model} -> {input_pan.name}")
 
-            # Step 3: Run PFG (safe objects only — points, programs, loops, schedules, calendars)
+            # Step 3: Run PFG
             output_pan = work_dir / f"{comp_id}.pan"
             self._run_pfg_generate(input_pan, changes_xml, output_pan,
                                    work_dir, device_id, device_name)
-
-            # NOTE: TRENDs, SMARTSENSOR, SYSTEMGROUP excluded from PFG (crashes).
-            # These are listed in the companion values document for reference.
 
             # Copy to output dir
             final_pan = output_dir / f"{comp_id}.pan"
@@ -1329,14 +1405,22 @@ class Composer:
             pan_path = self.generate_pan(composition, blank_model)
 
             # Step 2: Build meta.json
-            panx_meta = {
-                "Device": int(device_id),
-                "Database": f"{device_id}.pan",
-            }
+            # Match RC Studio's exact field order: Features, Device, Model, Database, HardPointConfig, GroupAssets
             features = []
             if meta.get("HardPointConfig"):
-                panx_meta["HardPointConfig"] = meta["HardPointConfig"]
                 features.append("hardpoint_config")
+            if meta.get("GroupAssets"):
+                features.append("group_assets")
+
+            panx_meta = {}
+            if features:
+                panx_meta["Features"] = features
+            panx_meta["Device"] = int(device_id)
+            if meta.get("Model"):
+                panx_meta["Model"] = meta["Model"]
+            panx_meta["Database"] = f"{device_id}.pan"
+            if meta.get("HardPointConfig"):
+                panx_meta["HardPointConfig"] = meta["HardPointConfig"]
             if meta.get("GroupAssets"):
                 # Deduplicate GroupAssets by Asset path
                 seen_assets = set()
@@ -1347,10 +1431,7 @@ class Composer:
                         seen_assets.add(key)
                         deduped.append(ga)
                 panx_meta["GroupAssets"] = deduped
-                features.append("group_assets")
             panx_meta["ViewAssets"] = meta.get("ViewAssets", [])
-            if features:
-                panx_meta["Features"] = features
 
             meta_json = work_dir / "meta.json"
             meta_json.write_text(json.dumps(panx_meta, indent=2))
@@ -1375,8 +1456,12 @@ class Composer:
                         asset_dirs.append(d)
 
             # Copy ALL files from asset dirs (flat + subdirectories) into group_assets/pic/
+            # Also search the shared asset library as a fallback
             copied_paths = set()
-            for asset_dir in asset_dirs:
+            shared_dir = self.cfg.assets_root / "_shared"
+            all_asset_dirs = asset_dirs + ([shared_dir] if shared_dir.exists() else [])
+
+            for asset_dir in all_asset_dirs:
                 for root, dirs, files in os.walk(asset_dir):
                     for fname in files:
                         src = Path(root) / fname

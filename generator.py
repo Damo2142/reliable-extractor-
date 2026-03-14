@@ -174,9 +174,39 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
 
         lines.append(f'\t<point {" ".join(attrs)}/>')
 
+    # ─── ARRAYS ─── (must be before PROGRAMS so AY refs resolve during compilation)
+    for arr in objects.get("ARRAY", []):
+        name = replace_device_name(arr.get("name", ""), device_name)
+        attrs = [
+            f'type="ARRAY"',
+            f'instance="{escape_xml_attr(arr.get("instance", ""))}"',
+        ]
+        if name:
+            attrs.append(f'objectName="{escape_xml_attr(name)}"')
+        attrs.append(f'description="{escape_xml_attr(arr.get("description", ""))}"')
+        values = arr.get("values", [])
+        if values:
+            attrs.append(f'size="{len(values)}"')
+        lines.append(f'\t<point {" ".join(attrs)}/>')
+
+    # ─── TABLES ─── (must be before PROGRAMS so TBL refs resolve)
+    for tbl in objects.get("TABLE", []):
+        name = replace_device_name(tbl.get("name", ""), device_name)
+        attrs = [
+            f'type="TABLE"',
+            f'instance="{escape_xml_attr(tbl.get("instance", ""))}"',
+        ]
+        if name:
+            attrs.append(f'objectName="{escape_xml_attr(name)}"')
+        attrs.append(f'description="{escape_xml_attr(tbl.get("description", ""))}"')
+        lines.append(f'\t<point {" ".join(attrs)}/>')
+
     # ─── PROGRAMS ───
+    import re as _re_prog
     for prog in objects.get("PROGRAM", []):
         name = replace_device_name(prog.get("name", ""), device_name)
+        code = prog.get("code", "")
+
         attrs = [
             f'type="PROGRAM"',
             f'instance="{escape_xml_attr(prog.get("instance", ""))}"',
@@ -188,9 +218,26 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
             attrs.append(f'objectName="{escape_xml_attr(name)}"')
         attrs.append(f'description="{escape_xml_attr(prog.get("description", ""))}"')
 
-        code = prog.get("code", "")
-        # Replace device name in code too
+        # Replace device name in code
         code = code.replace("{device-name}", device_name)
+
+        # REM out lines with ARRAY (AY) refs so PFG can compile
+        # User can un-REM them in RC Studio once arrays are configured
+        if pfg_safe and _re_prog.search(r'\bAY\d+\b', code):
+            new_lines = []
+            for line in code.split('\n'):
+                stripped = line.strip()
+                if _re_prog.search(r'\bAY\d+\b', stripped) and not stripped.upper().startswith('REM'):
+                    # Extract line number if present
+                    m = _re_prog.match(r'^(\d+)\s+(.*)', stripped)
+                    if m:
+                        new_lines.append(f"{m.group(1)} REM [AY] {m.group(2)}")
+                    else:
+                        new_lines.append(f"REM [AY] {stripped}")
+                else:
+                    new_lines.append(line)
+            code = '\n'.join(new_lines)
+
         escaped_code = escape_xml_code(code)
 
         lines.append(f'\t<point {" ".join(attrs)}>')

@@ -165,6 +165,9 @@ class ExtractionEngine:
                 except Exception as e:
                     logger.warning(f"Could not parse GRP JSON {grp_json.name}: {e}")
 
+            # Replace hardcoded device name prefixes with {device-name} template
+            self._templatize_names(parsed)
+
             record = {
                 "id": vid,
                 "category": category,
@@ -673,6 +676,53 @@ class ExtractionEngine:
         obj_count = sum(len(v) for v in result.values() if isinstance(v, list))
         logger.info(f"Regex fallback extracted {obj_count} objects")
         return result
+
+    def _templatize_names(self, parsed: dict):
+        """Replace hardcoded device name prefixes with {device-name} in all object names.
+
+        Uses the DEVICE object's name to determine the full prefix to replace.
+        E.g., if device name is 'MYS-AHU3', replaces 'MYS-AHU3-RAT' -> '{device-name}-RAT'
+        Falls back to replacing everything before the first dash if no DEVICE found.
+        """
+        TEMPLATIZE_TYPES = [
+            'AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV',
+            'PROGRAM', 'LOOP', 'TREND', 'SCHEDULE', 'CALENDAR',
+            'SYSTEMGROUP', 'TABLE', 'ARRAY',
+        ]
+
+        # Get the device name from DEVICE objects to use as the prefix to replace
+        device_names = []
+        for dev in parsed.get('DEVICE', []):
+            dn = dev.get('name', '')
+            if dn:
+                device_names.append(dn)
+
+        for obj_type in TEMPLATIZE_TYPES:
+            for item in parsed.get(obj_type, []):
+                name = item.get('name', '')
+                if not name or name.startswith('{device-name}'):
+                    continue
+
+                replaced = False
+                # Try matching against known device names (longest first)
+                for dn in sorted(device_names, key=len, reverse=True):
+                    if name.startswith(dn + '-'):
+                        item['name'] = '{device-name}' + name[len(dn):]
+                        replaced = True
+                        break
+                    elif name.startswith(dn):
+                        item['name'] = '{device-name}' + name[len(dn):]
+                        replaced = True
+                        break
+
+                # Fallback: replace everything before the first dash
+                if not replaced:
+                    idx = name.find('-')
+                    if idx < 0:
+                        continue
+                    prefix = name[:idx]
+                    if prefix.isalnum():
+                        item['name'] = '{device-name}' + name[idx:]
 
     def _library_path(self, category: str, vid: str) -> Path:
         return self.cfg.library_root / category / f"{vid}.json"

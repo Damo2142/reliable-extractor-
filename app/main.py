@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -250,6 +250,173 @@ async def list_asset_files(category: str, variant_id: str):
     return {"files": files, "count": len(files)}
 
 
+@app.get("/api/files/assets/{category}/{variant_id}/download")
+async def download_variant_assets(category: str, variant_id: str):
+    """Download all assets (images, animations) for a variant as a zip."""
+    import zipfile
+    import io
+
+    asset_dir = engine.cfg.assets_root / category / variant_id
+    if not asset_dir.exists():
+        raise HTTPException(404, "No assets found for this variant")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(asset_dir):
+            for fname in files:
+                fpath = Path(root) / fname
+                arcname = str(fpath.relative_to(asset_dir))
+                zf.write(fpath, arcname)
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{variant_id}_assets.zip"'}
+    )
+
+
+@app.post("/api/files/assets/{category}/{variant_id}/upload")
+async def upload_variant_assets(category: str, variant_id: str, files: list[UploadFile] = File(...)):
+    """Upload asset files (images, animations) to a variant's asset folder.
+    Supports individual files or a zip of files.
+    """
+    import zipfile
+    import io
+
+    asset_dir = engine.cfg.assets_root / category / variant_id
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    uploaded = []
+    for f in files:
+        data = await f.read()
+
+        # If it's a zip, extract its contents
+        if f.filename and f.filename.lower().endswith('.zip'):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        # Strip leading folder if all files share one
+                        arcname = info.filename
+                        dest = asset_dir / arcname
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_bytes(zf.read(info))
+                        uploaded.append(arcname)
+            except zipfile.BadZipFile:
+                raise HTTPException(400, f"{f.filename} is not a valid zip")
+        else:
+            # Save individual file
+            dest = asset_dir / f.filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            uploaded.append(f.filename)
+
+    # Also update the library JSON's GroupAssets if it exists
+    lib_entry = engine.load_library_entry(category, variant_id)
+    if lib_entry:
+        existing_assets = set()
+        for ga in lib_entry.get("meta", {}).get("GroupAssets", []):
+            existing_assets.add(ga.get("Asset", ""))
+
+        new_assets = []
+        for fname in uploaded:
+            asset_path = f"group_assets\\{fname.replace('/', os.sep)}"
+            if asset_path not in existing_assets:
+                new_assets.append({
+                    "Asset": asset_path,
+                    "JobPath": fname.replace('/', os.sep),
+                })
+
+        if new_assets:
+            lib_entry.setdefault("meta", {}).setdefault("GroupAssets", []).extend(new_assets)
+            engine._save_library_entry(category, variant_id, lib_entry)
+
+    return {"status": "uploaded", "count": len(uploaded), "files": uploaded}
+
+
+@app.get("/api/files/assets/shared")
+async def list_shared_assets():
+    """List all files in the shared asset library."""
+    shared_dir = engine.cfg.assets_root / "_shared"
+    if not shared_dir.exists():
+        return {"files": [], "count": 0}
+    files = []
+    for root, dirs, fnames in os.walk(shared_dir):
+        for fname in sorted(fnames):
+            fpath = Path(root) / fname
+            rel = str(fpath.relative_to(shared_dir))
+            mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+            files.append({
+                "name": fname,
+                "path": rel,
+                "size": fpath.stat().st_size,
+                "mime": mime,
+                "is_image": mime.startswith("image/"),
+            })
+    return {"files": files, "count": len(files)}
+
+
+@app.post("/api/files/assets/shared/upload")
+async def upload_shared_assets(files: list[UploadFile] = File(...)):
+    """Upload files to the shared asset library. Supports files or zips."""
+    import zipfile
+    import io
+
+    shared_dir = engine.cfg.assets_root / "_shared"
+    shared_dir.mkdir(parents=True, exist_ok=True)
+    uploaded = []
+
+    for f in files:
+        data = await f.read()
+        if f.filename and f.filename.lower().endswith('.zip'):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        dest = shared_dir / info.filename
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_bytes(zf.read(info))
+                        uploaded.append(info.filename)
+            except zipfile.BadZipFile:
+                raise HTTPException(400, f"{f.filename} is not a valid zip")
+        else:
+            dest = shared_dir / f.filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            uploaded.append(f.filename)
+
+    return {"status": "uploaded", "count": len(uploaded), "files": uploaded}
+
+
+@app.get("/api/files/assets/shared/download")
+async def download_shared_assets():
+    """Download the entire shared asset library as a zip."""
+    import zipfile
+    import io
+
+    shared_dir = engine.cfg.assets_root / "_shared"
+    if not shared_dir.exists():
+        raise HTTPException(404, "No shared assets found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(shared_dir):
+            for fname in files:
+                fpath = Path(root) / fname
+                arcname = str(fpath.relative_to(shared_dir))
+                zf.write(fpath, arcname)
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="shared_assets.zip"'}
+    )
+
+
 @app.get("/api/files/assets/{category}/{variant_id}/{filename}")
 async def serve_asset_file(category: str, variant_id: str, filename: str):
     """Serve a single asset file (image, etc.)."""
@@ -347,9 +514,100 @@ async def save_variant(category: str, variant_id: str, body: dict = None):
         existing["counts"] = {k: len(v) for k, v in existing["objects"].items() if isinstance(v, list) and v}
     if "meta" in body:
         existing["meta"].update(body["meta"])
+    if "description" in body:
+        existing["description"] = body["description"]
+        # Also update master_descriptions.json so it persists across re-extractions
+        _update_master_description(variant_id, body["description"])
 
     engine._save_library_entry(category, variant_id, existing)
     return {"status": "saved", "id": variant_id}
+
+
+def _update_master_description(variant_id: str, description: str):
+    """Update a single variant description in master_descriptions.json."""
+    descs = {}
+    if cfg.master_descriptions.exists():
+        try:
+            descs = json.loads(cfg.master_descriptions.read_text())
+        except Exception:
+            pass
+    descs[variant_id] = description
+    cfg.master_descriptions.write_text(json.dumps(descs, indent=2))
+    # Also update the extractor's in-memory cache
+    engine.descriptions[variant_id] = description
+
+
+@app.get("/api/library/descriptions")
+async def get_all_descriptions():
+    """Get all variant descriptions from master_descriptions.json."""
+    if cfg.master_descriptions.exists():
+        try:
+            return json.loads(cfg.master_descriptions.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+@app.put("/api/library/{category}/{variant_id}/description")
+async def set_variant_description(category: str, variant_id: str, body: dict = None):
+    """Set the description for a single variant.
+    Body: { "description": "My custom controller description" }
+    """
+    if not body or "description" not in body:
+        raise HTTPException(400, "Must provide 'description' in body")
+
+    description = body["description"]
+
+    # Update master_descriptions.json
+    _update_master_description(variant_id, description)
+
+    # Update the library JSON if it exists
+    existing = engine.load_library_entry(category, variant_id)
+    if existing:
+        existing["description"] = description
+        engine._save_library_entry(category, variant_id, existing)
+
+    return {"status": "updated", "id": variant_id, "description": description}
+
+
+@app.put("/api/library/descriptions")
+async def set_bulk_descriptions(body: dict = None):
+    """Set descriptions for multiple variants at once.
+    Body: { "VAV-IS10001": "Single Duct, Floating HW Reheat", "MY-CUSTOM": "My desc" }
+    """
+    if not body:
+        raise HTTPException(400, "Must provide variant_id: description map")
+
+    descs = {}
+    if cfg.master_descriptions.exists():
+        try:
+            descs = json.loads(cfg.master_descriptions.read_text())
+        except Exception:
+            pass
+
+    descs.update(body)
+    cfg.master_descriptions.write_text(json.dumps(descs, indent=2))
+
+    # Update extractor in-memory cache
+    engine.descriptions.update(body)
+
+    # Update any existing library JSONs
+    updated = []
+    for vid, desc in body.items():
+        for cat_dir in cfg.library_root.iterdir():
+            if not cat_dir.is_dir() or cat_dir.name.startswith("_"):
+                continue
+            entry_path = cat_dir / f"{vid}.json"
+            if entry_path.exists():
+                try:
+                    entry = json.loads(entry_path.read_text())
+                    entry["description"] = desc
+                    entry_path.write_text(json.dumps(entry, indent=2))
+                    updated.append(vid)
+                except Exception:
+                    pass
+
+    return {"status": "updated", "count": len(body), "library_updated": updated}
 
 
 # ─── Composer ────────────────────────────────────────────────────────────────
