@@ -797,6 +797,163 @@ class PanWriter:
                         zf.write(fpath, arcname)
 
 
+def diff_controllers(pan1_path: Path, pan2_path: Path) -> dict:
+    """Compare two .pan files and return human-readable differences.
+
+    Useful for:
+    - Verifying template copies
+    - Finding configuration differences between controllers
+    - Commissioning: comparing as-built vs design
+    """
+    p1 = PanBinary.from_panx(pan1_path) if str(pan1_path).endswith('.panx') else PanBinary.from_file(pan1_path)
+    p2 = PanBinary.from_panx(pan2_path) if str(pan2_path).endswith('.panx') else PanBinary.from_file(pan2_path)
+
+    diffs = {
+        'device_id': None,
+        'object_count': None,
+        'value_differences': [],
+        'name_differences': [],
+        'missing_in_first': [],
+        'missing_in_second': [],
+        'loop_differences': [],
+    }
+
+    # Compare device IDs
+    id1 = struct.unpack('<I', p1.data[4:8])[0]
+    id2 = struct.unpack('<I', p2.data[4:8])[0]
+    if id1 != id2:
+        diffs['device_id'] = {'first': id1, 'second': id2}
+
+    # Build name→object maps
+    objs1 = {}
+    for obj in p1.objects:
+        # Normalize name by stripping device-specific prefix
+        objs1[obj['name']] = obj
+    objs2 = {}
+    for obj in p2.objects:
+        objs2[obj['name']] = obj
+
+    # Compare object counts
+    cats1 = {}
+    for obj in p1.objects:
+        cats1[obj['category']] = cats1.get(obj['category'], 0) + 1
+    cats2 = {}
+    for obj in p2.objects:
+        cats2[obj['category']] = cats2.get(obj['category'], 0) + 1
+    if cats1 != cats2:
+        diffs['object_count'] = {'first': cats1, 'second': cats2}
+
+    # Compare present values for matching objects
+    pts1 = {p['name']: p['present_value'] for p in p1.get_points() if p['present_value'] is not None}
+    pts2 = {p['name']: p['present_value'] for p in p2.get_points() if p['present_value'] is not None}
+
+    common_names = set(pts1.keys()) & set(pts2.keys())
+    for name in sorted(common_names):
+        v1 = pts1[name]
+        v2 = pts2[name]
+        if abs(v1 - v2) > 0.01:
+            diffs['value_differences'].append({
+                'name': name,
+                'first': round(v1, 4),
+                'second': round(v2, 4),
+            })
+
+    # Missing objects
+    only1 = set(pts1.keys()) - set(pts2.keys())
+    only2 = set(pts2.keys()) - set(pts1.keys())
+    diffs['missing_in_second'] = sorted(only1)
+    diffs['missing_in_first'] = sorted(only2)
+
+    # Compare loop bindings
+    loops1 = {l.get('instance', ''): l for l in p1.get_loops()}
+    loops2 = {l.get('instance', ''): l for l in p2.get_loops()}
+    for inst in set(loops1.keys()) | set(loops2.keys()):
+        l1 = loops1.get(inst, {})
+        l2 = loops2.get(inst, {})
+        for field in ['input_ref', 'setpoint_ref', 'output_ref']:
+            v1 = l1.get(field, '')
+            v2 = l2.get(field, '')
+            if v1 != v2:
+                diffs['loop_differences'].append({
+                    'loop': f"LOOP{inst}",
+                    'field': field,
+                    'first': v1 or 'not set',
+                    'second': v2 or 'not set',
+                })
+
+    return diffs
+
+
+def batch_modify(source_path: Path, modifications: list) -> list:
+    """Apply modifications to a source .pan and generate multiple outputs.
+
+    Each modification is a dict:
+    {
+        "device_id": 901,
+        "device_name": "VAV-01",        # replaces source device name
+        "values": {"AV11": 72.0},       # point present values to set
+        "output_filename": "VAV-01.pan"
+    }
+
+    The source device name is auto-detected from the binary.
+
+    Returns list of output paths.
+    """
+    # Read source
+    if str(source_path).endswith('.panx'):
+        import zipfile
+        with zipfile.ZipFile(source_path) as z:
+            pan_name = [n for n in z.namelist() if n.endswith('.pan')][0]
+            source_data = z.read(pan_name)
+    else:
+        source_data = source_path.read_bytes()
+
+    # Detect source device name from the most common name prefix
+    parser = PanBinary(source_data)
+    prefixes = {}
+    for obj in parser.objects:
+        name = obj['name']
+        if '-' in name:
+            prefix = name.split('-')[0].strip()
+            if prefix and len(prefix) > 1:
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+    source_name = max(prefixes, key=prefixes.get) if prefixes else ""
+
+    outputs = []
+    output_dir = Path('/tmp/batch_output')
+    output_dir.mkdir(exist_ok=True)
+
+    for mod in modifications:
+        writer = PanWriter(bytes(source_data))
+
+        # Set device ID
+        if 'device_id' in mod:
+            writer.set_device_id(mod['device_id'])
+
+        # Rename device
+        new_name = mod.get('device_name', '')
+        if new_name and source_name:
+            if len(new_name) == len(source_name):
+                writer.rename_device(source_name, new_name)
+            else:
+                logger.warning(
+                    f"Name length mismatch: '{source_name}' ({len(source_name)}) "
+                    f"vs '{new_name}' ({len(new_name)}). Skipping rename."
+                )
+
+        # Set values
+        for point_ref, value in mod.get('values', {}).items():
+            writer.set_present_value(point_ref, value)
+
+        # Save
+        filename = mod.get('output_filename', f"device_{mod.get('device_id', 0)}.pan")
+        out_path = output_dir / filename
+        writer.save(out_path)
+        outputs.append(out_path)
+
+    return outputs
+
+
 def enrich_library_entry(pan_path: Path, library_json: dict) -> dict:
     """Enrich a library JSON entry with data from the .pan binary.
 

@@ -469,6 +469,103 @@ async def binary_data(category: str, variant_id: str):
     }
 
 
+@app.post("/api/binary/diff")
+async def binary_diff(body: dict = None):
+    """Compare two controllers and return differences.
+
+    Body: {
+        "first": {"category": "SBS_AHU", "variant_id": "1003"},
+        "second": {"category": "SBS_AHU", "variant_id": "PS-AHU-ERW-0100"}
+    }
+    """
+    from app.pan_binary import diff_controllers
+
+    if not body or 'first' not in body or 'second' not in body:
+        raise HTTPException(400, "Must provide 'first' and 'second' controller references")
+
+    paths = []
+    for key in ['first', 'second']:
+        ref = body[key]
+        folder = engine._cat_folder(ref['category'])
+        cat_dir = engine.cfg.upload_root / folder
+        src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+              next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+        if not src:
+            raise HTTPException(404, f"Controller not found: {ref['variant_id']}")
+        paths.append(src)
+
+    try:
+        result = diff_controllers(paths[0], paths[1])
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Diff failed: {e}")
+
+
+@app.post("/api/binary/copy")
+async def binary_copy(body: dict = None):
+    """Copy a controller with new device name and ID.
+
+    Body: {
+        "source": {"category": "SBS_AHU", "variant_id": "1003"},
+        "new_device_id": 900,
+        "new_device_name": "AHU-TEST",    // must be same byte length as source
+        "values": {"RMT-SP": 72.0}        // optional value overrides
+    }
+    """
+    from app.pan_binary import PanWriter
+
+    if not body or 'source' not in body:
+        raise HTTPException(400, "Must provide 'source' controller reference")
+
+    ref = body['source']
+    folder = engine._cat_folder(ref['category'])
+    cat_dir = engine.cfg.upload_root / folder
+    src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+          next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"Controller not found: {ref['variant_id']}")
+
+    try:
+        if str(src).endswith('.panx'):
+            writer = PanWriter.from_panx(src)
+        else:
+            writer = PanWriter.from_file(src)
+
+        if 'new_device_id' in body:
+            writer.set_device_id(body['new_device_id'])
+
+        if 'new_device_name' in body:
+            # Auto-detect source name
+            parser = __import__('app.pan_binary', fromlist=['PanBinary']).PanBinary(bytes(writer.data))
+            prefixes = {}
+            for obj in parser.objects:
+                if '-' in obj['name']:
+                    p = obj['name'].split('-')[0].strip()
+                    if p and len(p) > 1:
+                        prefixes[p] = prefixes.get(p, 0) + 1
+            source_name = max(prefixes, key=prefixes.get) if prefixes else ""
+            new_name = body['new_device_name']
+
+            if source_name and len(source_name) == len(new_name):
+                count = writer.rename_device(source_name, new_name)
+            elif source_name:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"Name length mismatch: source='{source_name}' ({len(source_name)} chars), new='{new_name}' ({len(new_name)} chars). Must be same length."}
+                )
+
+        out_path = Path(f"/tmp/binary_copy_{body.get('new_device_id', 'output')}.pan")
+        writer.save(out_path)
+
+        return FileResponse(
+            out_path,
+            filename=f"{body.get('new_device_name', 'controller')}.pan",
+            media_type="application/octet-stream",
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Copy failed: {e}")
+
+
 @app.get("/api/files/assets/shared")
 async def list_shared_assets():
     """List all files in the shared asset library."""
