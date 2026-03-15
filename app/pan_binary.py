@@ -133,6 +133,9 @@ class PanBinary:
             # Extract present value
             obj['present_value'] = self._extract_present_value(data_region)
 
+            # Extract all decodable properties
+            obj['properties'] = self._extract_all_properties(data_region)
+
             # Categorize
             obj['category'] = self._categorize(name)
 
@@ -165,13 +168,100 @@ class PanBinary:
                     pass
         return None
 
+    def _extract_all_properties(self, data: bytes) -> dict:
+        """Extract all decodable properties from an object's data region.
+
+        Property format in Reliable .pan binary:
+          [prop_id byte] [value_tag byte] [value bytes]
+
+        Value tags:
+          0x44 = 4-byte big-endian float
+          0x91 = 1-byte unsigned int
+          0x21 = 1-byte unsigned int
+          0x10 = boolean false
+          0x11 = boolean true
+          0x71 = 1-byte enumerated
+          0x0c = BACnet Object Identifier (4 bytes BE)
+
+        Known property IDs:
+          0x51 (81)  = out-of-service
+          0x55 (85)  = present-value
+          0x57 (87)  = priority-array
+          0x68 (104) = relinquish-default
+          0x71 (113) = status-flags
+          0x75 (117) = units (BACnet engineering units enum)
+          0x1d (29)  = range/sensor-type (Reliable proprietary)
+          0x16 (22)  = resolution/increment area
+        """
+        props = {}
+        i = 0
+        while i < len(data) - 2:
+            prop_id = data[i]
+            tag = data[i + 1]
+
+            if tag == 0x44 and i + 6 <= len(data):
+                # Float property
+                try:
+                    val = struct.unpack('>f', data[i+2:i+6])[0]
+                    if val == val and -1e6 < val < 1e6:  # valid, not NaN
+                        props.setdefault(prop_id, []).append(('float', val))
+                except struct.error:
+                    pass
+                i += 6
+                continue
+
+            if tag == 0x91 and i + 3 <= len(data):
+                props.setdefault(prop_id, []).append(('uint8', data[i+2]))
+                i += 3
+                continue
+
+            if tag == 0x21 and i + 3 <= len(data):
+                props.setdefault(prop_id, []).append(('uint8', data[i+2]))
+                i += 3
+                continue
+
+            if tag in (0x10, 0x11):
+                props.setdefault(prop_id, []).append(('bool', tag == 0x11))
+                i += 2
+                continue
+
+            if tag == 0x71 and i + 3 <= len(data):
+                props.setdefault(prop_id, []).append(('enum', data[i+2]))
+                i += 3
+                continue
+
+            i += 1
+
+        # Also find BACnet ObjIDs (standalone 0x0c tag)
+        for i in range(len(data) - 5):
+            if data[i] == 0x0c:
+                type_name, instance = decode_objid(data[i+1:i+5])
+                if type_name and type_name != 'NULL':
+                    props.setdefault('objid_refs', []).append((type_name, instance))
+
+        # Also find strings (0x75 [len] [bytes])
+        for i in range(len(data) - 3):
+            if data[i] == 0x75:
+                slen = data[i+1]
+                if 2 < slen < 100 and i + 2 + slen <= len(data):
+                    try:
+                        s = data[i+2:i+2+slen].decode('utf-8', errors='replace').rstrip('\x00')
+                        if s and any(c.isalpha() for c in s):
+                            props.setdefault('strings', []).append(s)
+                    except Exception:
+                        pass
+
+        return props
+
     def _categorize(self, name: str) -> str:
         """Categorize an object by its name pattern."""
         upper = name.upper()
         if 'LOOP' in upper and 'TL' not in upper:
             return 'LOOP'
-        if any(upper.endswith(s) for s in ['-TL', '-MTL', '-STL', '-RTL']):
-            return 'TREND'
+        if any(s in upper for s in ['-TL', '-MTL', '-STL', '-RTL']):
+            # Make sure it's a trend, not a point with TL in the name
+            if upper.endswith('-TL') or '-MTL' in upper or '-STL' in upper or '-RTL' in upper:
+                return 'TREND'
         if 'SCHED' in upper:
             return 'SCHEDULE'
         if '-PRG' in upper:
@@ -249,6 +339,137 @@ class PanBinary:
                     'present_value': obj['present_value'],
                 })
         return points
+
+    def get_point_details(self) -> list:
+        """Get detailed info for all point objects including all decoded properties."""
+        # BACnet engineering units (common ones)
+        UNITS = {
+            0: 'no-units', 2: 'deg-F', 3: 'deg-C', 4: 'deg-F-per-min',
+            14: 'inches-wc', 15: 'CFM', 17: 'minutes', 19: 'psi',
+            22: 'percent', 23: 'percent-rh', 40: '%open', 41: 'rpm',
+            45: 'inches', 55: 'watts', 62: 'ppm', 64: 'deg-F', 65: 'deg-C',
+            95: 'no-units', 98: 'hours',
+        }
+
+        points = []
+        for obj in self.objects:
+            if obj['category'] in ('LOOP', 'TREND', 'SCHEDULE', 'PROGRAM',
+                                    'SMARTSENSOR', 'SYSTEMGROUP'):
+                continue
+
+            props = obj.get('properties', {})
+            pv = obj.get('present_value')
+
+            # Extract known properties
+            # Units: property 0x75 (117)
+            units_val = None
+            units_entries = props.get(0x75, [])
+            for tag, val in units_entries:
+                if tag == 'uint8':
+                    units_val = val
+                    break
+
+            # Out of service: property 0x51 (81)
+            oos = None
+            for tag, val in props.get(0x51, []):
+                if tag == 'bool':
+                    oos = val
+
+            # Relinquish default: property 0x68 (104)
+            rel_default = None
+            for tag, val in props.get(0x68, []):
+                if tag == 'float':
+                    rel_default = val
+
+            # Range/sensor type: property 0x1d (29)
+            range_val = None
+            for tag, val in props.get(0x1d, []):
+                if tag == 'uint8':
+                    range_val = val
+
+            # Status flags: property 0x71 (113)
+            status = None
+            for tag, val in props.get(0x71, []):
+                if tag in ('uint8', 'enum'):
+                    status = val
+
+            # Strings (alarm text, descriptions)
+            strings = props.get('strings', [])
+
+            point = {
+                'name': obj['name'],
+                'present_value': pv,
+                'units': units_val,
+                'units_name': UNITS.get(units_val, f'unit-{units_val}') if units_val is not None else None,
+                'out_of_service': oos,
+                'relinquish_default': rel_default,
+                'range': range_val,
+                'status_flags': status,
+                'alarm_texts': [s for s in strings if 'Fault' in s or 'Range' in s or 'Alarm' in s],
+                'ref_count': len(obj['refs']),
+            }
+            points.append(point)
+
+        return points
+
+    def generate_point_report(self) -> str:
+        """Generate a complete point report as formatted text."""
+        lines = [
+            "=" * 80,
+            "CONTROLLER POINT REPORT — Generated from .pan Binary",
+            "=" * 80,
+            "",
+        ]
+
+        # Summary
+        summary = self.get_all_objects()
+        lines.append("Object Summary:")
+        for cat, items in sorted(summary.items()):
+            lines.append(f"  {cat}: {len(items)}")
+        lines.append("")
+
+        # Loop bindings
+        loops = self.get_loops()
+        if loops:
+            lines.append("=" * 60)
+            lines.append("LOOP CONFIGURATION (from binary)")
+            lines.append("=" * 60)
+            for loop in loops:
+                lines.append(f"\n  LOOP{loop.get('instance','')} ({loop['name']})")
+                lines.append(f"    Input:    {loop.get('input_ref', 'not configured')}")
+                lines.append(f"    Setpoint: {loop.get('setpoint_ref', 'not configured')}")
+                lines.append(f"    Output:   {loop.get('output_ref', 'not configured')}")
+                if loop.get('present_value') is not None:
+                    lines.append(f"    PV:       {loop['present_value']:.2f}")
+            lines.append("")
+
+        # Point details
+        points = self.get_point_details()
+        if points:
+            lines.append("=" * 60)
+            lines.append("POINT DETAILS")
+            lines.append("=" * 60)
+            lines.append(f"{'Name':<40} {'PV':>10} {'Units':<15} {'Range':>5} {'OOS':>4}")
+            lines.append("-" * 80)
+            for pt in sorted(points, key=lambda x: x['name']):
+                pv = f"{pt['present_value']:.2f}" if pt['present_value'] is not None else ""
+                units = pt.get('units_name', '') or ''
+                rng = str(pt.get('range', '')) if pt.get('range') is not None else ''
+                oos = 'Y' if pt.get('out_of_service') else ''
+                lines.append(f"  {pt['name']:<38} {pv:>10} {units:<15} {rng:>5} {oos:>4}")
+            lines.append("")
+
+        # Trends
+        trends = self.get_trends()
+        if trends:
+            lines.append("=" * 60)
+            lines.append("TREND POINT REFERENCES (from binary)")
+            lines.append("=" * 60)
+            for t in trends:
+                lines.append(f"  {t['name']}: {', '.join(t['refs'])}")
+            lines.append("")
+
+        return '\n'.join(lines)
 
     def get_all_objects(self) -> dict:
         """Get a complete summary of all objects by category."""

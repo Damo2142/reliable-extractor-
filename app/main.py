@@ -406,6 +406,69 @@ async def upload_variant_assets(category: str, variant_id: str, files: list[Uplo
     return {"status": "uploaded", "count": len(uploaded), "files": uploaded}
 
 
+@app.get("/api/binary/report/{category}/{variant_id}")
+async def binary_point_report(category: str, variant_id: str):
+    """Generate a complete point report from the .pan binary.
+
+    Includes data that PFG XML export misses: loop bindings, verified present
+    values, trend references, unit mappings.
+    """
+    from app.pan_binary import PanBinary
+
+    # Find the source .panx or .pan
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    report = pan.generate_point_report()
+    return StreamingResponse(
+        __import__('io').BytesIO(report.encode()),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{variant_id}_binary_report.txt"'}
+    )
+
+
+@app.get("/api/binary/data/{category}/{variant_id}")
+async def binary_data(category: str, variant_id: str):
+    """Get structured binary data as JSON for a variant.
+
+    Returns loops with actual input/setpoint bindings, points with verified
+    present values, and trend references — all from the .pan binary.
+    """
+    from app.pan_binary import PanBinary
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    return {
+        "variant_id": variant_id,
+        "object_count": len(pan.objects),
+        "loops": pan.get_loops(),
+        "trends": pan.get_trends(),
+        "points": pan.get_point_details(),
+        "summary": {cat: len(items) for cat, items in pan.get_all_objects().items()},
+    }
+
+
 @app.get("/api/files/assets/shared")
 async def list_shared_assets():
     """List all files in the shared asset library."""
