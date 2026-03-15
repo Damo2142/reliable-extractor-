@@ -536,13 +536,19 @@ async def binary_copy(body: dict = None):
 
         if 'new_device_name' in body:
             # Auto-detect source name
-            parser = __import__('app.pan_binary', fromlist=['PanBinary']).PanBinary(bytes(writer.data))
+            from app.pan_binary import PanBinary as _PB
+            parser = _PB(bytes(writer.data))
+            # Find the most common multi-segment prefix (e.g., "MYS-AHU3")
+            # by looking at object names that have at least 2 dashes
             prefixes = {}
             for obj in parser.objects:
-                if '-' in obj['name']:
-                    p = obj['name'].split('-')[0].strip()
-                    if p and len(p) > 1:
-                        prefixes[p] = prefixes.get(p, 0) + 1
+                name = obj['name'].strip().strip('\x00')
+                parts = name.split('-')
+                if len(parts) >= 3:
+                    # Try 2-segment prefix: "MYS-AHU3" from "MYS-AHU3-DAT"
+                    prefix = f"{parts[0]}-{parts[1]}"
+                    if prefix and len(prefix) > 2:
+                        prefixes[prefix] = prefixes.get(prefix, 0) + 1
             source_name = max(prefixes, key=prefixes.get) if prefixes else ""
             new_name = body['new_device_name']
 

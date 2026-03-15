@@ -693,7 +693,8 @@ class PanWriter:
             except (UnicodeDecodeError, ValueError):
                 continue
 
-            if old_name in name:
+            clean_name = name.strip('\x00').strip()
+            if old_name in clean_name:
                 new_full = name.replace(old_name, new_name)
                 new_full_bytes = new_full.encode('utf-8')
                 # Pad or truncate to allocated length
