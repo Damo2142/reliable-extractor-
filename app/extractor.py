@@ -165,8 +165,12 @@ class ExtractionEngine:
                 except Exception as e:
                     logger.warning(f"Could not parse GRP JSON {grp_json.name}: {e}")
 
-            # Extract loop bindings from .pan binary BEFORE templatizing names
-            self._extract_loop_bindings_from_binary(pan_path, parsed)
+            # Extract loop bindings + verify data from .pan binary
+            try:
+                from app.pan_binary import enrich_library_entry as _enrich
+                # We'll call enrich after building the record (needs full objects dict)
+            except ImportError:
+                _enrich = None
 
             # Replace hardcoded device name prefixes with {device-name} template
             self._templatize_names(parsed)
@@ -185,6 +189,14 @@ class ExtractionEngine:
                 "grp_files": grp_files,
                 "counts": self._count_objects(parsed),
             }
+
+            # Enrich with binary .pan data (loop bindings, verified values)
+            if _enrich:
+                try:
+                    record = _enrich(pan_path, record)
+                    logger.info(f"Enriched {vid} with binary .pan data")
+                except Exception as e:
+                    logger.warning(f"Binary enrichment failed for {vid}: {e}")
 
             self._save_library_entry(category, vid, record)
             return record
