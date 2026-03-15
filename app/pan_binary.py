@@ -471,6 +471,75 @@ class PanBinary:
 
         return '\n'.join(lines)
 
+    def get_schedules(self) -> list:
+        """Get SCHEDULE objects with decoded weekly schedule data."""
+        schedules = []
+        for obj in self.objects:
+            if obj['category'] != 'SCHEDULE':
+                continue
+
+            data = obj['data_region']
+            props = obj.get('properties', {})
+
+            sched = {
+                'name': obj['name'],
+                'present_value': obj.get('present_value'),
+            }
+
+            # Extract schedule default
+            for tag, val in props.get(0xAE, []):  # 174 = schedule-default
+                sched['default_value'] = val
+
+            # Find weekly schedule (property 0x7B = 123)
+            # Format: 7b [7 pairs of bytes = day enable/mode for Mon-Sun]
+            for i in range(len(data) - 16):
+                if data[i] == 0x7b:
+                    days = []
+                    for d in range(7):
+                        day_byte1 = data[i + 1 + d * 2]
+                        day_byte2 = data[i + 2 + d * 2]
+                        days.append((day_byte1, day_byte2))
+                    sched['weekly_schedule'] = days
+                    day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                    sched['weekly_summary'] = {
+                        day_names[d]: f"{days[d][0]:02x}/{days[d][1]:02x}"
+                        for d in range(7)
+                    }
+                    break
+
+            schedules.append(sched)
+        return schedules
+
+    def get_programs(self) -> list:
+        """Get PROGRAM objects with enabled state and code size."""
+        programs = []
+        for obj in self.objects:
+            if obj['category'] != 'PROGRAM':
+                continue
+
+            props = obj.get('properties', {})
+
+            prog = {
+                'name': obj['name'],
+                'data_size': len(obj['data_region']),
+            }
+
+            # Enabled state: property 0x0A (10)
+            for tag, val in props.get(0x0A, []):
+                if tag == 'uint8':
+                    prog['enabled'] = val == 1
+
+            # Present value (might indicate running state)
+            if obj.get('present_value') is not None:
+                prog['present_value'] = obj['present_value']
+
+            # Count ObjID refs (cross-references to other objects)
+            refs = props.get('objid_refs', [])
+            prog['ref_count'] = len(refs)
+
+            programs.append(prog)
+        return programs
+
     def get_all_objects(self) -> dict:
         """Get a complete summary of all objects by category."""
         result = {}
