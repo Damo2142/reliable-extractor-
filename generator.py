@@ -221,22 +221,33 @@ def generate_xml(library_data, device_id=None, device_name=None, pfg_safe=False)
         # Replace device name in code
         code = code.replace("{device-name}", device_name)
 
-        # REM out lines with ARRAY (AY) refs so PFG can compile
-        # User can un-REM them in RC Studio once arrays are configured
-        if pfg_safe and _re_prog.search(r'\bAY\d+\b', code):
-            new_lines = []
-            for line in code.split('\n'):
-                stripped = line.strip()
-                if _re_prog.search(r'\bAY\d+\b', stripped) and not stripped.upper().startswith('REM'):
-                    # Extract line number if present
-                    m = _re_prog.match(r'^(\d+)\s+(.*)', stripped)
-                    if m:
-                        new_lines.append(f"{m.group(1)} REM [AY] {m.group(2)}")
+        # REM out lines PFG can't compile:
+        # - AY (ARRAY) references
+        # - {parent} network references (BACnet cross-device links)
+        if pfg_safe:
+            has_ay = bool(_re_prog.search(r'\bAY\d+\b', code))
+            has_parent = '{parent}' in code
+            if has_ay or has_parent:
+                new_lines = []
+                for line in code.split('\n'):
+                    stripped = line.strip()
+                    if stripped.upper().startswith('REM'):
+                        new_lines.append(line)
+                        continue
+                    tag = None
+                    if _re_prog.search(r'\bAY\d+\b', stripped):
+                        tag = '[AY]'
+                    elif '{parent}' in stripped:
+                        tag = '[NET]'
+                    if tag:
+                        m = _re_prog.match(r'^(\d+)\s+(.*)', stripped)
+                        if m:
+                            new_lines.append(f"{m.group(1)} REM {tag} {m.group(2)}")
+                        else:
+                            new_lines.append(f"REM {tag} {stripped}")
                     else:
-                        new_lines.append(f"REM [AY] {stripped}")
-                else:
-                    new_lines.append(line)
-            code = '\n'.join(new_lines)
+                        new_lines.append(line)
+                code = '\n'.join(new_lines)
 
         escaped_code = escape_xml_code(code)
 

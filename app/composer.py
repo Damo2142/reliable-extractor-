@@ -349,7 +349,7 @@ class Composer:
         return mapping
 
     def compose(self, selections: list, device_name: str = "{device-name}",
-                device_id: str = "900") -> dict:
+                device_id: str = "900", primary_variant: str = None) -> dict:
         """Compose a new controller from selected programs across variants.
 
         Mnemonic-based composition:
@@ -398,7 +398,7 @@ class Composer:
         program_ref_map = {}
 
         # Also collect trends, calendars, etc.
-        all_trends = []
+        all_trends = {}  # keyed by "source_key:instance" to prevent duplicates
         all_calendars = {}
         all_smartsensors = {}
         all_systemgroups = {}
@@ -437,6 +437,7 @@ class Composer:
 
             # Parse code references
             code = program.get("code", "")
+            prog_name = program.get("name", f"PRG{prog_inst}")
             refs = parse_code_references(code)
 
             # ── Collect points by mnemonic ──
@@ -463,8 +464,14 @@ class Composer:
                                 break
 
                         if pt_obj is None:
-                            # Auto-create placeholder with type-specific defaults
-                            # Defaults based on BACnet conventions and RC library norms
+                            # Auto-create placeholder — find the code line that references it
+                            ref_pattern = f"{ptype}{inst}"
+                            code_line = ""
+                            for line in code.split('\n'):
+                                if ref_pattern in line:
+                                    code_line = line.strip()[:60]
+                                    break
+
                             _defaults = {
                                 "AV": {"present_value": "0", "range": "45", "unit": "45", "increment": "0.100000"},
                                 "AI": {"present_value": "0", "range": "3",  "unit": "2",  "increment": "0.200000"},
@@ -476,11 +483,12 @@ class Composer:
                                 "MV": {"present_value": "1", "range": "0",  "unit": "",   "increment": ""},
                             }
                             defs = _defaults.get(ptype, {"present_value": "0", "range": "0", "unit": "", "increment": ""})
+                            desc = f"[auto] {prog_name} -> {code_line}" if code_line else f"[auto] referenced by {prog_name}"
                             pt_obj = {
                                 "type": ptype,
                                 "instance": str(inst),
                                 "name": f"{{device-name}}-{mnemonic}",
-                                "description": f"[auto-created: referenced in program from {key}]",
+                                "description": desc,
                                 "present_value": defs["present_value"],
                                 "range": defs["range"],
                                 "unit": defs["unit"],
@@ -527,11 +535,13 @@ class Composer:
                                 mnemonic_scheds[mnem_key] = sched_obj
                                 break
 
-            # Pull ALL trends from source
+            # Pull ALL trends from source (deduplicate by source+instance)
             for trend in objects.get("TREND", []):
-                trend_copy = dict(trend)
-                trend_copy["_source"] = key
-                all_trends.append(trend_copy)
+                trend_key = f"{key}:{trend.get('instance', '')}"
+                if trend_key not in all_trends:
+                    trend_copy = dict(trend)
+                    trend_copy["_source"] = key
+                    all_trends[trend_key] = trend_copy
 
             # Pull calendars, smartsensors, etc. (controller-level objects)
             for cal in objects.get("CALENDAR", []):
@@ -596,6 +606,69 @@ class Composer:
                         if f not in existing:
                             all_meta.setdefault("Features", []).append(f)
                             existing.add(f)
+
+        # ── Phase 1b: Include ALL remaining points from the PRIMARY variant ──
+        # The primary variant (most selected programs) gets all its points included
+        # since it's the base template. Other variants only contribute what their
+        # selected programs reference (already collected in Phase 1).
+        # Determine primary variant: explicitly set, or the one with most programs
+        if primary_variant:
+            primary_key = primary_variant
+        else:
+            from collections import Counter as _Counter
+            variant_prog_count = _Counter(
+                f"{sel['category']}/{sel['variant_id']}" for sel in selections
+            )
+            primary_key = variant_prog_count.most_common(1)[0][0] if variant_prog_count else None
+
+        if primary_key and primary_key in source_cache:
+            data = source_cache[primary_key]
+            objects = data.get("objects", {})
+            inst_to_mnemonic = self._build_instance_to_mnemonic_map(objects)
+
+            for ptype in POINT_TYPES:
+                for obj in objects.get(ptype, []):
+                    inst = int(obj.get("instance", 0))
+                    mnemonic = inst_to_mnemonic.get((ptype, inst))
+                    if not mnemonic:
+                        mnemonic = f"{ptype}{inst}"
+                    mnem_key = f"{ptype}:{mnemonic}"
+                    if mnem_key not in mnemonic_points:
+                        pt_obj = dict(obj)
+                        pt_obj["_source"] = primary_key
+                        pt_obj["_mnemonic"] = mnemonic
+                        mnemonic_points[mnem_key] = pt_obj
+
+            for loop in objects.get("LOOP", []):
+                inst = int(loop.get("instance", 0))
+                mnemonic = inst_to_mnemonic.get(("LOOP", inst))
+                if not mnemonic:
+                    mnemonic = f"LOOP{inst}"
+                mnem_key = f"LOOP:{mnemonic}"
+                if mnem_key not in mnemonic_loops:
+                    loop_obj = dict(loop)
+                    loop_obj["_source"] = primary_key
+                    loop_obj["_mnemonic"] = mnemonic
+                    mnemonic_loops[mnem_key] = loop_obj
+
+            for sched in objects.get("SCHEDULE", []):
+                inst = int(sched.get("instance", 0))
+                mnemonic = inst_to_mnemonic.get(("SCHED", inst)) or inst_to_mnemonic.get(("SCHEDULE", inst))
+                if not mnemonic:
+                    mnemonic = f"SCHED{inst}"
+                mnem_key = f"SCHED:{mnemonic}"
+                if mnem_key not in mnemonic_scheds:
+                    sched_obj = dict(sched)
+                    sched_obj["_source"] = primary_key
+                    sched_obj["_mnemonic"] = mnemonic
+                    mnemonic_scheds[mnem_key] = sched_obj
+
+            for trend in objects.get("TREND", []):
+                trend_key = f"{primary_key}:{trend.get('instance', '')}"
+                if trend_key not in all_trends:
+                    trend_copy = dict(trend)
+                    trend_copy["_source"] = primary_key
+                    all_trends[trend_key] = trend_copy
 
         # ── Phase 2: Assign instances ──
         #
@@ -728,11 +801,10 @@ class Composer:
 
         kept_trends = []
         seen_trend_names = set()
-        for trend in all_trends:
+        for trend in all_trends.values():
             source = trend.get("_source", "")
             old_refs = trend.get("references", [])
             new_refs = []
-            has_valid_ref = False
 
             for ref in old_refs:
                 m = re.match(r'\d+(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|SCHED)(\d+)', ref)
@@ -742,14 +814,17 @@ class Composer:
                     new_inst = trend_remap.get((source, ref_type, ref_inst))
                     if new_inst is not None:
                         new_refs.append(f"{device_id}{ref_type}{new_inst}")
-                        has_valid_ref = True
+                    else:
+                        # Keep original ref format for unmapped points
+                        new_refs.append(f"{device_id}{ref_type}{ref_inst}")
 
-            if has_valid_ref:
-                trend_name = trend.get("name", "")
-                if trend_name not in seen_trend_names:
+            trend_name = trend.get("name", "")
+            # Dedup by name, but allow multiple unnamed trends (empty name)
+            if not trend_name or trend_name not in seen_trend_names:
+                if trend_name:
                     seen_trend_names.add(trend_name)
-                    trend["references"] = new_refs
-                    kept_trends.append(trend)
+                trend["references"] = new_refs
+                kept_trends.append(trend)
 
         for i, trend in enumerate(kept_trends, 1):
             trend["instance"] = str(i)
@@ -961,7 +1036,28 @@ class Composer:
             "BLDG-P-LOOP":   {"input": "BLDG-P", "setpoint": "BLDG-P-SP"},
             "HCV-LOOP":      {"input": "SAT", "setpoint": "HTG-SAT-SP"},
             "PHV-LOOP":      {"input": "SAT", "setpoint": "HTG-SAT-SP"},
+            # SBS custom loops
+            "DSP-LOOP":      {"input": "DSP", "setpoint": "DSP-SP"},
+            "MAT-LO-LIMIT-LOOP": {"input": "MAT", "setpoint": "MAT-LO-SP"},
+            "MAT-LOOP":      {"input": "MAT", "setpoint": "MAT-SP"},
+            "RA-FLOW-LOOP":  {"input": "RA-FLOW", "setpoint": "RA-FLOW-SP"},
+            "CHW-VLV-LOOP":  {"input": "SAT", "setpoint": "CLG-SAT-SP"},
+            "HW-VLV-LOOP":   {"input": "SAT", "setpoint": "HTG-SAT-SP"},
         }
+
+        # Auto-discover loop bindings from program code:
+        # Look for patterns like "LOOP1 = AV4" or "AV5 = LOOP1" in programs
+        import re as _re_loop
+        _loop_code_bindings = {}  # loop_instance -> {"input": "TYPE:INST", "setpoint": "TYPE:INST"}
+        for prog in objects.get("PROGRAM", []):
+            code = prog.get("code", "").replace("{device-name}", device_name)
+            for line in code.split('\n'):
+                stripped = line.strip()
+                # Pattern: LOOP1 = expression (setpoint or output assignment)
+                # Pattern: AV4 = LOOP1 (loop output to a point)
+                # The actual input/setpoint are configured in RC Studio, not in code.
+                # But we can find which programs reference which loops
+                pass
 
         loops = objects.get("LOOP", [])
         if loops:
@@ -981,7 +1077,10 @@ class Composer:
                 # Try to suggest input/setpoint from loop name
                 loop_mnem = name.split("-", 1)[1] if "-" in name else name
                 prefix = name.rsplit("-" + loop_mnem.split("-")[0], 1)[0] if "-" in name else device_name
-                binding = _loop_bindings.get(loop_mnem)
+                # Strip trailing instance number from mnemonic (DSP-LOOP1 -> DSP-LOOP)
+                import re as _re_lm
+                loop_mnem_clean = _re_lm.sub(r'\d+$', '', loop_mnem)
+                binding = _loop_bindings.get(loop_mnem) or _loop_bindings.get(loop_mnem_clean)
                 if binding:
                     # Find matching points
                     inp_name = f"{prefix}-{binding['input']}"
@@ -1051,7 +1150,17 @@ class Composer:
             lines.append(f"{'-'*5}  {'-'*35}  {'-'*15}  {'-'*10}  {'-'*20}")
             for t in sorted(trends, key=lambda x: int(x.get("instance", 0))):
                 name = t.get("name", "").replace("{device-name}", device_name)
-                refs = ", ".join(r for r in t.get("references", []) if r)
+                raw_refs = [r for r in t.get("references", []) if r]
+                # Replace device ID prefix in refs with device_name
+                import re as _re_trend
+                display_refs = []
+                for r in raw_refs:
+                    m = _re_trend.match(r'(\d+)(.*)', r)
+                    if m and device_id:
+                        display_refs.append(f"{device_name}{m.group(2)}")
+                    else:
+                        display_refs.append(r)
+                refs = ", ".join(display_refs)
                 lines.append(
                     f"{t.get('instance',''):>5}  {name:<35}  "
                     f"{t.get('type','SINGLETREND'):<15}  "
@@ -1068,13 +1177,139 @@ class Composer:
                 lines.append(f"  {s.get('instance',''):>3}  {name}")
             lines.append("")
 
-        # ── SystemGroups ──
+        # ── SystemGroups — full layout spec for recreating graphics ──
         sgroups = objects.get("SYSTEMGROUP", [])
+        grp_files = composition.get("grp_files", {})
         if sgroups:
-            lines.append(f"--- System Groups ---")
+            lines.append("=" * 70)
+            lines.append("SYSTEM GROUP LAYOUT REFERENCE")
+            lines.append("Use this data to recreate system group graphics in RC Studio.")
+            lines.append("=" * 70)
+
             for sg in sorted(sgroups, key=lambda x: int(x.get("instance", 0))):
                 name = sg.get("name", "").replace("{device-name}", device_name)
-                lines.append(f"  {sg.get('instance',''):>3}  {name}  graphic={sg.get('groupgraphic','')}  json={sg.get('jsonpath','')}")
+                lines.append("")
+                lines.append(f"--- System Group {sg.get('instance','')}: {name} ---")
+                lines.append(f"  Graphic: {sg.get('groupgraphic', '')}")
+
+                # Find matching GRP JSON
+                grp_key = None
+                jsonpath = sg.get("jsonpath", "")
+                import re as _re_grp
+                m = _re_grp.search(r'(\d+GRP\d+)', jsonpath)
+                if m:
+                    grp_key = m.group(1)
+
+                grp_data = grp_files.get(grp_key, {}) if grp_key else {}
+                if not grp_data:
+                    # Try all grp files by instance number
+                    for gk, gd in grp_files.items():
+                        if gk.endswith(f"GRP{sg.get('instance', '')}"):
+                            grp_data = gd
+                            break
+
+                if not grp_data:
+                    lines.append("  (No GRP layout data available)")
+                    continue
+
+                # Canvas
+                bg_w = grp_data.get("background_width", 0)
+                bg_h = grp_data.get("background_height", 0)
+                bg_img = grp_data.get("background_image", "")
+                lines.append(f"  Canvas: {bg_w}x{bg_h}")
+                if bg_img:
+                    lines.append(f"  Background Image: {bg_img}")
+                lines.append("")
+
+                # Elements
+                points = grp_data.get("points", [])
+                lines.append(f"  Elements ({len(points)}):")
+                lines.append(f"  {'#':>3}  {'Type':<10}  {'Image/Animation':<45}  {'Pos (x,y)':<14}  {'Size (w x h)':<14}  {'Font':>4}  {'Colors (norm/hi/lo)'}")
+                lines.append(f"  {'-'*3}  {'-'*10}  {'-'*45}  {'-'*14}  {'-'*14}  {'-'*4}  {'-'*30}")
+
+                for i, pt in enumerate(points, 1):
+                    gel = pt.get("gel_filename", "")
+                    ext = pt.get("external_file", "")
+                    gel_type = pt.get("gel_type", "")
+                    img = ext or gel or ""
+                    img = img.replace("pic\\", "")
+
+                    x = pt.get("x-pos", 0)
+                    y = pt.get("y-pos", 0)
+                    w = pt.get("width", 0)
+                    h = pt.get("height", 0)
+                    font = pt.get("font_size", "")
+                    norm_rgb = pt.get("normal_colour_RGB", 0)
+                    hi_rgb = pt.get("on_high_colour_RGB", 0)
+                    lo_rgb = pt.get("off_low_colour_RGB", 0)
+
+                    def rgb_hex(v):
+                        if not v:
+                            return ""
+                        try:
+                            return f"#{int(v):06X}"
+                        except (ValueError, TypeError):
+                            return ""
+
+                    colors = f"{rgb_hex(norm_rgb)} {rgb_hex(hi_rgb)} {rgb_hex(lo_rgb)}".strip()
+                    pos = f"({x},{y})"
+                    size = f"{w}x{h}" if w or h else ""
+
+                    lines.append(f"  {i:>3}  {gel_type:<10}  {img:<45}  {pos:<14}  {size:<14}  {font:>4}  {colors}")
+
+                    # Show BACnet reference if it has one
+                    bdev = pt.get("BACnet_device", 0)
+                    binst = pt.get("BACnet_instance", 0)
+                    disp_type = pt.get("display_type", "")
+                    disp_text = pt.get("display_text", "")
+                    role = pt.get("role", "")
+                    sec_link = pt.get("secondary_link", "")
+
+                    extras = []
+                    if bdev or binst:
+                        # Show device name instead of raw ID for template mode
+                        dev_label = device_name if device_name != "{device-name}" else "{device-name}"
+                        if bdev and bdev != 0:
+                            extras.append(f"Point={dev_label}:{binst}")
+                        elif binst:
+                            extras.append(f"Point=self:{binst}")
+                    if disp_type and disp_type != "value":
+                        extras.append(f"display={disp_type}")
+                    if disp_text:
+                        extras.append(f"text=\"{disp_text}\"")
+                    if role and role != "operator":
+                        extras.append(f"role={role}")
+                    if sec_link:
+                        extras.append(f"link={sec_link}")
+
+                    # Landing pad info
+                    lp = pt.get("landing_pad", {})
+                    if lp.get("enabled"):
+                        lp_w = lp.get("width", 0)
+                        lp_h = lp.get("height", 0)
+                        lp_border = "border" if lp.get("border") else ""
+                        extras.append(f"pad={lp_w}x{lp_h} {lp_border}".strip())
+
+                    if extras:
+                        lines.append(f"       {' | '.join(extras)}")
+
+                # Asset files needed
+                asset_files = set()
+                for pt in points:
+                    for field in ["gel_filename", "external_file"]:
+                        v = pt.get(field, "")
+                        if v:
+                            asset_files.add(v.replace("pic\\", ""))
+                    lp_img = pt.get("landing_pad", {}).get("image", "")
+                    if lp_img:
+                        asset_files.add(lp_img)
+
+                if asset_files:
+                    lines.append("")
+                    lines.append(f"  Required Assets:")
+                    for af in sorted(asset_files):
+                        lines.append(f"    - {af}")
+
             lines.append("")
 
         content = "\n".join(lines)
@@ -1248,8 +1483,15 @@ class Composer:
                 grp_path = grp_dir / f"{grp_name}.json"
                 # Update device ID in GRP JSON point references
                 grp_text = json.dumps(grp_data, indent=2)
-                if device_id:
-                    # GRP JSONs have BACnet_device fields — update them
+                if device_name == "{device-name}":
+                    # Template mode: set BACnet_device to 0 (self-reference)
+                    grp_text = re.sub(
+                        r'"BACnet_device"\s*:\s*\d+',
+                        '"BACnet_device": 0',
+                        grp_text
+                    )
+                elif device_id:
+                    # Named device: update to actual device ID
                     grp_text = re.sub(
                         r'"BACnet_device"\s*:\s*\d+',
                         f'"BACnet_device": {device_id}',
@@ -1269,92 +1511,39 @@ class Composer:
                 if m and m.group(1) in grp_wine_paths:
                     sg["jsonpath"] = grp_wine_paths[m.group(1)]
 
-            # Detect single-source composition — if all programs come from one
-            # variant, use the original source .pan instead of a blank. This
-            # preserves compiled programs (including ARRAY/AY refs that PFG's
-            # CBAS compiler can't handle when building from scratch).
-            source_variants = set()
-            source_categories = {}
-            for p in composition.get("objects", {}).get("PROGRAM", []):
-                src = p.get("_source", "")
-                if src and "/" in src:
-                    cat, vid = src.split("/", 1)
-                    source_variants.add(vid)
-                    source_categories[vid] = cat
-            # Fallback to graphics_sources
-            graphics_sources = meta.get("graphics_sources", [])
-            if not source_variants and graphics_sources:
-                for gs in graphics_sources:
-                    vid = gs.get("from_variant", "")
-                    cat = gs.get("from_category", "")
-                    if vid:
-                        source_variants.add(vid)
-                        source_categories[vid] = cat
+            # Generate changes XML with all point names using {device-name} template
+            # AY (ARRAY) references in program code are REM'd so PFG can compile
+            xml_content = generate_xml(composition, device_id=device_id,
+                                       device_name=device_name, pfg_safe=True)
+            changes_xml = work_dir / "changes.xml"
+            changes_xml.write_text(xml_content)
+            logger.info(f"Generated changes XML: {len(xml_content)} chars")
 
-            use_source_pan = False
-            source_pan_path = None
-
-            if len(source_variants) == 1:
-                sv = list(source_variants)[0]
-                sc = source_categories.get(sv, "")
-                if sc:
-                    # Find the source .panx or .pan in uploads
-                    folder_name = self._cat_folder(sc)
-                    if folder_name:
-                        cat_dir = self.cfg.upload_root / folder_name
-                        # Try .panx first, then .pan
-                        src_panx = next(cat_dir.rglob(f"{sv}.panx"), None)
-                        src_pan = next(cat_dir.rglob(f"{sv}.pan"), None)
-                        if src_panx:
-                            source_pan_path = self._extract_blank_pan(src_panx, work_dir)
-                            use_source_pan = True
-                        elif src_pan:
-                            source_pan_path = work_dir / f"{sv}.pan"
-                            shutil.copy2(src_pan, source_pan_path)
-                            use_source_pan = True
-
-            if use_source_pan:
-                # Single-source: use original .pan, apply only device ID/name change
-                # PFG preserves all compiled programs, arrays, trends, etc.
-                logger.info(f"Single-source composition: using source .pan from {list(source_variants)[0]}")
-                changes_xml = work_dir / "changes.xml"
-                # Empty changes — PFG just copies and renames
-                changes_xml.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<points>\n</points>\n')
-                input_pan = source_pan_path
-            else:
-                # Multi-source: build from blank with changes XML
-                xml_content = generate_xml(composition, device_id=device_id,
-                                           device_name=device_name, pfg_safe=True)
-                changes_xml = work_dir / "changes.xml"
-                changes_xml.write_text(xml_content)
-                logger.info(f"Generated changes XML: {len(xml_content)} chars")
-
-            if not use_source_pan:
-                # Step 2: Get blank .pan
-                blanks_dir = Path("/srv/dfa/shared/files/vendors/reliable/blanks")
+            # Step 2: Get blank .pan
+            blanks_dir = Path("/srv/dfa/shared/files/vendors/reliable/blanks")
+            if not blank_model:
+                # Try to find from HardPointConfig
+                hpc = meta.get("HardPointConfig", "")
+                # Match blanks by HardPointConfig suffix
+                for d in blanks_dir.iterdir():
+                    if d.is_dir() and hpc and hpc in d.name:
+                        blank_model = d.name
+                        break
                 if not blank_model:
-                    # Try to find from HardPointConfig
-                    hpc = meta.get("HardPointConfig", "")
-                    # Match blanks by HardPointConfig suffix
-                    for d in blanks_dir.iterdir():
-                        if d.is_dir() and hpc and hpc in d.name:
-                            blank_model = d.name
-                            break
-                    if not blank_model:
-                        # Default to first available
-                        available = self.list_blank_panels()
-                        if not available:
-                            raise ValueError("No blank controller templates found")
-                        blank_model = available[0]["model"]
-                        logger.warning(f"No blank_model specified, using default: {blank_model}")
+                    # Default to first available
+                    available = self.list_blank_panels()
+                    if not available:
+                        raise ValueError("No blank controller templates found")
+                    blank_model = available[0]["model"]
+                    logger.warning(f"No blank_model specified, using default: {blank_model}")
 
-                blank_panx = blanks_dir / blank_model
-                panx_files = list(blank_panx.glob("*.panx"))
-                if not panx_files:
-                    raise ValueError(f"No .panx found in blanks/{blank_model}")
+            blank_panx = blanks_dir / blank_model
+            panx_files = list(blank_panx.glob("*.panx"))
+            if not panx_files:
+                raise ValueError(f"No .panx found in blanks/{blank_model}")
 
-                input_pan = self._extract_blank_pan(panx_files[0], work_dir)
-                logger.info(f"Using blank template: {blank_model} -> {input_pan.name}")
+            input_pan = self._extract_blank_pan(panx_files[0], work_dir)
+            logger.info(f"Using blank template: {blank_model} -> {input_pan.name}")
 
             # Step 3: Run PFG
             output_pan = work_dir / f"{comp_id}.pan"

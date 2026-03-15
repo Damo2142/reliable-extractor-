@@ -252,21 +252,91 @@ async def list_asset_files(category: str, variant_id: str):
 
 @app.get("/api/files/assets/{category}/{variant_id}/download")
 async def download_variant_assets(category: str, variant_id: str):
-    """Download all assets (images, animations) for a variant as a zip."""
+    """Download all assets for a variant as a zip.
+    Sources (in priority order):
+    1. Variant-specific asset folder (from .panx extraction)
+    2. Required images parsed from GRP JSON files in the library entry
+    3. Shared asset library as fallback
+    """
     import zipfile
     import io
+    import re as _re
 
     asset_dir = engine.cfg.assets_root / category / variant_id
-    if not asset_dir.exists():
-        raise HTTPException(404, "No assets found for this variant")
+    shared_dir = engine.cfg.assets_root / "_shared"
 
     buf = io.BytesIO()
+    added = set()  # Track by full relative path to allow same filename in different dirs
+
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk(asset_dir):
-            for fname in files:
-                fpath = Path(root) / fname
-                arcname = str(fpath.relative_to(asset_dir))
-                zf.write(fpath, arcname)
+        # 1. Add variant-specific assets if they exist
+        if asset_dir.exists():
+            for root, dirs, files in os.walk(asset_dir):
+                for fname in files:
+                    fpath = Path(root) / fname
+                    arcname = str(fpath.relative_to(asset_dir))
+                    zf.write(fpath, arcname)
+                    added.add(arcname.lower().replace('\\', '/'))
+
+        # 2. Parse GRP JSONs + meta GroupAssets for ALL required files
+        lib_entry = engine.load_library_entry(category, variant_id)
+        required_files = set()
+        required_dirs = set()  # Animation directories to include entirely
+        if lib_entry:
+            grp_files = lib_entry.get("grp_files", {})
+            for grp_name, grp_data in grp_files.items():
+                text = json.dumps(grp_data)
+                for m in _re.finditer(r'"(?:external_file|gel_filename|image|background_image)"\s*:\s*"([^"]+)"', text):
+                    val = m.group(1).replace('\\\\', '\\').replace('pic\\', '')
+                    if val and '.' in val:
+                        required_files.add(val)
+
+            # GroupAssets — includes animation subdirectories
+            for ga in lib_entry.get("meta", {}).get("GroupAssets", []):
+                job_path = ga.get("JobPath", "").replace('pic\\', '')
+                if job_path and '.' in job_path:
+                    required_files.add(job_path)
+                    # If it's in an Animation subdir, mark the whole dir
+                    if 'Animation' in job_path:
+                        parts = job_path.replace('\\', '/').split('/')
+                        # Animation/DirName/ — include all files in that dir
+                        if len(parts) >= 2:
+                            anim_dir = '/'.join(parts[:2])  # e.g. "Animation/Damper-Vert-02-V02"
+                            required_dirs.add(anim_dir)
+
+        # 3. Find required files in shared library
+        if shared_dir.exists():
+            # First: copy entire animation directories
+            for anim_dir in required_dirs:
+                src_dir = shared_dir / anim_dir
+                if src_dir.exists():
+                    for root, dirs, files in os.walk(src_dir):
+                        for fname in files:
+                            fpath = Path(root) / fname
+                            arcname = str(fpath.relative_to(shared_dir)).replace('\\', '/')
+                            if arcname.lower().replace('\\', '/') not in added:
+                                zf.write(fpath, arcname)
+                                added.add(arcname.lower().replace('\\', '/'))
+
+            # Then: individual files (images, icons)
+            for req in required_files:
+                req_norm = req.replace('\\', '/')
+                if req_norm.lower() in added:
+                    continue
+                # Try exact relative path first
+                exact = shared_dir / req_norm
+                if exact.exists():
+                    zf.write(exact, req_norm)
+                    added.add(req_norm.lower())
+                    continue
+                # Fallback: search by filename
+                matches = list(shared_dir.rglob(Path(req_norm).name))
+                if matches:
+                    zf.write(matches[0], req_norm)
+                    added.add(req_norm.lower())
+
+    if not added:
+        raise HTTPException(404, "No assets found for this variant")
 
     buf.seek(0)
     return StreamingResponse(
@@ -642,9 +712,12 @@ async def composer_compose(body: dict = None):
 
     device_name = body.get("device_name", "{device-name}")
     device_id = body.get("device_id", "900")
+    primary_variant = body.get("primary_variant", None)
 
     try:
-        result = composer.compose(selections, device_name, device_id)
+        result = composer.compose(selections, device_name, device_id, primary_variant=primary_variant)
+        # Cache for Excel export
+        composer._last_composition = result
         return result
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -823,6 +896,146 @@ async def composer_generate_panx(body: dict = None):
         raise HTTPException(500, f"PANX generation failed: {e}")
 
 
+@app.post("/api/composer/generate-template-package")
+async def composer_generate_template_package(body: dict = None):
+    """Generate a complete template package zip containing:
+    - .pan file (with {device-name} template names)
+    - values reference document
+    - assets folder (images + animations from primary variant + shared library)
+
+    Uses the first selected variant as the primary source for assets.
+    """
+    import zipfile as _zf
+    import io
+    import re as _re_pkg
+
+    if not body:
+        raise HTTPException(400, "Must provide composition data")
+
+    blank_model = body.pop("blank_model", None)
+    data = _resolve_composition(body)
+    comp_id = data.get("id", "composed")
+
+    try:
+        # 1. Generate .pan
+        pan_path = await asyncio.get_event_loop().run_in_executor(
+            None, composer.generate_pan, data, blank_model
+        )
+
+        # 2. Get values doc
+        values_path = pan_path.parent / f"{comp_id}_values.txt"
+
+        # 3. Collect assets from primary variant + shared library
+        meta = data.get("meta", {})
+        graphics_sources = meta.get("graphics_sources", [])
+
+        # Primary variant = first graphics source
+        primary_cat = graphics_sources[0].get("from_category", "") if graphics_sources else ""
+        primary_var = graphics_sources[0].get("from_variant", "") if graphics_sources else ""
+
+        # Gather required files from GRP JSONs + GroupAssets
+        required_files = set()
+        required_dirs = set()
+        grp_files = data.get("grp_files", {})
+        for grp_name, grp_data in grp_files.items():
+            text = json.dumps(grp_data)
+            for m in _re_pkg.finditer(r'"(?:external_file|gel_filename|image|background_image)"\s*:\s*"([^"]+)"', text):
+                val = m.group(1).replace('\\\\', '\\').replace('pic\\', '')
+                if val and '.' in val:
+                    required_files.add(val)
+
+        for ga in meta.get("GroupAssets", []):
+            job_path = ga.get("JobPath", "").replace('pic\\', '')
+            if job_path and '.' in job_path:
+                required_files.add(job_path)
+                if 'Animation' in job_path:
+                    parts = job_path.replace('\\', '/').split('/')
+                    if len(parts) >= 2:
+                        required_dirs.add('/'.join(parts[:2]))
+
+        # Build zip
+        buf = io.BytesIO()
+        with _zf.ZipFile(buf, 'w', _zf.ZIP_DEFLATED) as zf:
+            # Add .pan
+            zf.write(pan_path, f"{comp_id}.pan")
+
+            # Add values doc
+            if values_path.exists():
+                zf.write(values_path, f"{comp_id}_values.txt")
+
+            # Add assets
+            added_assets = set()
+            asset_sources = []
+
+            # Primary variant assets first
+            if primary_cat and primary_var:
+                pdir = engine.cfg.assets_root / primary_cat / primary_var
+                if pdir.exists():
+                    asset_sources.append(pdir)
+
+            # Other variant assets
+            for gs in graphics_sources[1:]:
+                d = engine.cfg.assets_root / gs.get("from_category", "") / gs.get("from_variant", "")
+                if d.exists() and d not in asset_sources:
+                    asset_sources.append(d)
+
+            # Shared library last
+            shared = engine.cfg.assets_root / "_shared"
+            if shared.exists():
+                asset_sources.append(shared)
+
+            # Copy from variant asset dirs
+            for adir in asset_sources:
+                if adir.name == "_shared":
+                    continue  # Handle shared separately
+                for root, dirs, files in os.walk(adir):
+                    for fname in files:
+                        fpath = Path(root) / fname
+                        arcname = "assets/" + str(fpath.relative_to(adir)).replace('\\', '/')
+                        if arcname.lower() not in added_assets:
+                            zf.write(fpath, arcname)
+                            added_assets.add(arcname.lower())
+
+            # Copy animation dirs from shared
+            if shared.exists():
+                for anim_dir in required_dirs:
+                    src_dir = shared / anim_dir
+                    if src_dir.exists():
+                        for root, dirs, files in os.walk(src_dir):
+                            for fname in files:
+                                fpath = Path(root) / fname
+                                arcname = "assets/" + str(fpath.relative_to(shared)).replace('\\', '/')
+                                if arcname.lower() not in added_assets:
+                                    zf.write(fpath, arcname)
+                                    added_assets.add(arcname.lower())
+
+                # Individual files from shared
+                for req in required_files:
+                    req_norm = req.replace('\\', '/')
+                    arcname = "assets/" + req_norm
+                    if arcname.lower() in added_assets:
+                        continue
+                    exact = shared / req_norm
+                    if exact.exists():
+                        zf.write(exact, arcname)
+                        added_assets.add(arcname.lower())
+                    else:
+                        matches = list(shared.rglob(Path(req_norm).name))
+                        if matches:
+                            zf.write(matches[0], arcname)
+                            added_assets.add(arcname.lower())
+
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{comp_id}_template_package.zip"'}
+        )
+    except Exception as e:
+        logger.exception("Template package generation failed")
+        raise HTTPException(500, f"Template package generation failed: {e}")
+
+
 @app.get("/api/composer/values-document/{comp_id}")
 async def composer_values_document(comp_id: str):
     """Download the companion values reference document for a generated controller.
@@ -839,6 +1052,241 @@ async def composer_values_document(comp_id: str):
         values_path,
         filename=f"{comp_id}_values.txt",
         media_type="text/plain",
+    )
+
+
+@app.get("/api/composer/values-document/{comp_id}/excel")
+async def composer_values_excel(comp_id: str):
+    """Download values as an Excel file for easy copy/paste into RC Studio."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    output_dir = cfg.library_root / "COMPOSED" / "_output"
+
+    # Load the composition data to build Excel
+    comp_path = output_dir / f"{comp_id}.pan"
+    if not comp_path.exists():
+        raise HTTPException(404, f"Composition not found for '{comp_id}'")
+
+    # Try to load from the last compose result
+    last_comp = getattr(composer, '_last_composition', None)
+    if not last_comp or last_comp.get("id") != comp_id:
+        raise HTTPException(404, "Composition data expired — recompose first")
+
+    objects = last_comp.get("objects", {})
+    device_name = last_comp.get("meta", {}).get("device_name", "{device-name}")
+
+    wb = Workbook()
+    header_font = Font(bold=True, size=11)
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    header_font_white = Font(bold=True, size=11, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+
+    empty_fill = PatternFill("solid", fgColor="F2F2F2")
+
+    def add_sheet(name, headers, rows):
+        """Add a sheet with rows. First column must be instance number.
+        Fills empty rows for gaps so the spreadsheet is contiguous for copy/paste."""
+        ws = wb.create_sheet(name)
+        for c, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=c, value=h)
+            cell.font = header_font_white
+            cell.fill = header_fill
+            cell.border = thin_border
+
+        if not rows:
+            return
+
+        # Build dict by instance for gap filling
+        by_inst = {}
+        for row in rows:
+            by_inst[row[0]] = row
+
+        max_inst = max(by_inst.keys())
+        r = 2
+        for inst in range(1, max_inst + 1):
+            if inst in by_inst:
+                for c, val in enumerate(by_inst[inst], 1):
+                    cell = ws.cell(row=r, column=c, value=val)
+                    cell.border = thin_border
+            else:
+                # Empty row — just instance number, greyed out
+                cell = ws.cell(row=r, column=1, value=inst)
+                cell.border = thin_border
+                cell.fill = empty_fill
+                for c in range(2, len(headers) + 1):
+                    cell = ws.cell(row=r, column=c, value="")
+                    cell.border = thin_border
+                    cell.fill = empty_fill
+            r += 1
+
+        # Auto-width
+        for c in range(1, len(headers) + 1):
+            max_len = max(len(str(ws.cell(row, c).value or '')) for row in range(1, r))
+            ws.column_dimensions[ws.cell(1, c).column_letter].width = min(max_len + 3, 50)
+
+    # Analog Values
+    av_rows = []
+    for p in sorted(objects.get("AV", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        av_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                       p.get("range", ""), p.get("unit", ""), p.get("increment", ""),
+                       p.get("description", "")])
+    if av_rows:
+        add_sheet("Analog Values", ["Instance", "Name", "Value", "Range", "Unit", "Increment", "Description"], av_rows)
+
+    # Analog Inputs
+    ai_rows = []
+    for p in sorted(objects.get("AI", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        ai_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                       p.get("range", ""), p.get("unit", ""), p.get("increment", "")])
+    if ai_rows:
+        add_sheet("Analog Inputs", ["Instance", "Name", "Value", "Range", "Unit", "Increment"], ai_rows)
+
+    # Analog Outputs
+    ao_rows = []
+    for p in sorted(objects.get("AO", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        ao_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                       p.get("range", ""), p.get("unit", ""), p.get("increment", "")])
+    if ao_rows:
+        add_sheet("Analog Outputs", ["Instance", "Name", "Value", "Range", "Unit", "Increment"], ao_rows)
+
+    # Binary Values
+    bv_rows = []
+    for p in sorted(objects.get("BV", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        bv_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                       p.get("range", ""), p.get("unit", "")])
+    if bv_rows:
+        add_sheet("Binary Values", ["Instance", "Name", "Value", "Range", "Unit"], bv_rows)
+
+    # Binary Inputs/Outputs
+    for btype, sheet_name in [("BI", "Binary Inputs"), ("BO", "Binary Outputs")]:
+        b_rows = []
+        for p in sorted(objects.get(btype, []), key=lambda x: int(x.get("instance", 0))):
+            name = p.get("name", "").replace("{device-name}", device_name)
+            b_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                          p.get("range", ""), p.get("unit", "")])
+        if b_rows:
+            add_sheet(sheet_name, ["Instance", "Name", "Value", "Range", "Unit"], b_rows)
+
+    # Multistate
+    for mtype, sheet_name in [("MV", "Multistate Values"), ("MO", "Multistate Outputs")]:
+        m_rows = []
+        for p in sorted(objects.get(mtype, []), key=lambda x: int(x.get("instance", 0))):
+            name = p.get("name", "").replace("{device-name}", device_name)
+            m_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                          p.get("range", "")])
+        if m_rows:
+            add_sheet(sheet_name, ["Instance", "Name", "Value", "Range"], m_rows)
+
+    # Loops — include suggested input/setpoint
+    import re as _re_xl
+    # Build point name lookup
+    all_pts = {}
+    for ptype in ["AV", "AI", "AO", "BV", "BI", "BO", "MV", "MO"]:
+        for p in objects.get(ptype, []):
+            pname = p.get("name", "").replace("{device-name}", device_name)
+            all_pts[pname] = f"{ptype}{p.get('instance','')}"
+
+    # Find LOOP output assignments from code
+    loop_outputs = {}
+    for prog in objects.get("PROGRAM", []):
+        code = prog.get("code", "").replace("{device-name}", device_name)
+        for line in code.split('\n'):
+            # AO4 = LOOP8 pattern
+            m = _re_xl.search(r'(AO\d+)\s*=\s*LOOP(\d+)', line)
+            if m:
+                loop_outputs.setdefault(m.group(2), []).append(m.group(1))
+            # F = LOOP1 then AO10 = ... pattern
+            m2 = _re_xl.search(r'\w+\s*=\s*LOOP(\d+)', line)
+
+    loop_rows = []
+    for l in sorted(objects.get("LOOP", []), key=lambda x: int(x.get("instance", 0))):
+        name = l.get("name", "").replace("{device-name}", device_name)
+        inst = l.get("instance", "")
+
+        # Use binary-extracted bindings first, fall back to inferred suggestions
+        input_pt = ""
+        setpoint_pt = ""
+        output_pt = ""
+
+        # Binary extraction (accurate)
+        ir = l.get("input_ref", "")
+        irn = l.get("input_name", "").replace("{device-name}", device_name)
+        if ir:
+            input_pt = f"{ir} ({irn})" if irn else ir
+        else:
+            # Fallback: inference from name matching
+            si = l.get("suggested_input", "")
+            sin = l.get("suggested_input_name", "").replace("{device-name}", device_name)
+            if si:
+                input_pt = f"{si} ({sin}) [inferred]" if sin else f"{si} [inferred]"
+
+        sr = l.get("setpoint_ref", "")
+        srn = l.get("setpoint_name", "").replace("{device-name}", device_name)
+        if sr:
+            setpoint_pt = f"{sr} ({srn})" if srn else sr
+        else:
+            sp = l.get("suggested_setpoint", "")
+            spn = l.get("suggested_setpoint_name", "").replace("{device-name}", device_name)
+            if sp:
+                setpoint_pt = f"{sp} ({spn}) [inferred]" if spn else f"{sp} [inferred]"
+
+        so = l.get("suggested_output", "")
+        son = l.get("suggested_output_name", "").replace("{device-name}", device_name)
+        if so:
+            output_pt = f"{so} ({son})" if son else so
+
+        loop_rows.append([int(inst), name,
+                         l.get("proportional", ""), l.get("integral", ""),
+                         l.get("derivative", ""), l.get("bias", ""),
+                         l.get("deadband", ""), l.get("action", ""),
+                         l.get("integralunits", ""),
+                         input_pt, setpoint_pt, output_pt])
+    if loop_rows:
+        add_sheet("Loops", ["Instance", "Name", "P", "I", "D", "Bias", "Deadband", "Action", "I-Units",
+                           "Input (suggested)", "Setpoint (suggested)", "Output"], loop_rows)
+
+    # Programs
+    prog_rows = []
+    for p in sorted(objects.get("PROGRAM", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        pv = p.get("present_value", "1")
+        prog_rows.append([int(p.get("instance", 0)), name,
+                         "Yes" if str(pv) == "1" else "No",
+                         p.get("code", "").replace("{device-name}", device_name)])
+    if prog_rows:
+        add_sheet("Programs", ["Instance", "Name", "Enabled", "Code"], prog_rows)
+
+    # Trends
+    trend_rows = []
+    for t in sorted(objects.get("TREND", []), key=lambda x: int(x.get("instance", 0))):
+        name = t.get("name", "").replace("{device-name}", device_name)
+        refs = ", ".join(r for r in t.get("references", []) if r)
+        trend_rows.append([int(t.get("instance", 0)), name, t.get("type", ""),
+                          t.get("interval", ""), refs])
+    if trend_rows:
+        add_sheet("Trends", ["Instance", "Name", "Type", "Interval", "References"], trend_rows)
+
+    # Remove default empty sheet
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{comp_id}_values.xlsx"'}
     )
 
 

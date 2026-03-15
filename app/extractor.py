@@ -165,8 +165,13 @@ class ExtractionEngine:
                 except Exception as e:
                     logger.warning(f"Could not parse GRP JSON {grp_json.name}: {e}")
 
+            # Extract loop bindings from .pan binary BEFORE templatizing names
+            self._extract_loop_bindings_from_binary(pan_path, parsed)
+
             # Replace hardcoded device name prefixes with {device-name} template
             self._templatize_names(parsed)
+            self._templatize_parent_refs(parsed)
+            self._infer_loop_bindings(parsed)
 
             record = {
                 "id": vid,
@@ -723,6 +728,190 @@ class ExtractionEngine:
                     prefix = name[:idx]
                     if prefix.isalnum():
                         item['name'] = '{device-name}' + name[idx:]
+
+    def _extract_loop_bindings_from_binary(self, pan_path: Path, parsed: dict):
+        """Extract loop input/setpoint bindings directly from the .pan binary.
+
+        The .pan binary stores BACnet Object Identifiers (tag 0x0c) after each
+        LOOP object name. The first ObjID is the input (controlled variable),
+        the second is the setpoint reference.
+
+        This data is NOT available in PFG's XML export.
+        """
+        TYPE_NAMES = {0:'AI', 1:'AO', 2:'AV', 3:'BI', 4:'BO', 5:'BV', 12:'LOOP', 14:'MO', 19:'MV'}
+
+        try:
+            pan_data = pan_path.read_bytes()
+        except Exception:
+            return
+
+        # Build instance-to-name lookup from parsed data
+        point_names = {}
+        for ptype in ['AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV']:
+            for p in parsed.get(ptype, []):
+                point_names[f"{ptype}{p.get('instance', '')}"] = p.get('name', '')
+
+        # Find LOOP objects in binary by their "Mu" header + name containing "LOOP"
+        import struct as _struct
+        for m in re.finditer(b'\x4d\x75(.)', pan_data):
+            name_len = m.group(1)[0]
+            name_start = m.start() + 3
+            try:
+                name = pan_data[name_start:name_start + name_len].decode('utf-8').rstrip('\x00')
+            except Exception:
+                continue
+            if 'LOOP' not in name.upper():
+                continue
+
+            inst_match = re.search(r'LOOP(\d+)', name, re.IGNORECASE)
+            if not inst_match:
+                continue
+            loop_inst = inst_match.group(1)
+
+            # Find BACnet ObjID tags (0x0c) in the 100 bytes after the name
+            name_end = name_start + name_len
+            search_region = pan_data[name_end:name_end + 100]
+            refs = []
+            for i in range(len(search_region) - 5):
+                if search_region[i] == 0x0c:
+                    objid = _struct.unpack('>I', search_region[i+1:i+5])[0]
+                    obj_type = (objid >> 22) & 0x3FF
+                    obj_inst = objid & 0x3FFFFF
+                    if obj_type in TYPE_NAMES and 0 < obj_inst < 1000:
+                        refs.append((TYPE_NAMES[obj_type], str(obj_inst)))
+
+            # Match to parsed LOOP objects and store bindings
+            for loop_obj in parsed.get('LOOP', []):
+                if loop_obj.get('instance') == loop_inst:
+                    if len(refs) >= 1:
+                        ref_key = f"{refs[0][0]}{refs[0][1]}"
+                        loop_obj['input_ref'] = ref_key
+                        loop_obj['input_name'] = point_names.get(ref_key, '')
+                    if len(refs) >= 2:
+                        ref_key = f"{refs[1][0]}{refs[1][1]}"
+                        loop_obj['setpoint_ref'] = ref_key
+                        loop_obj['setpoint_name'] = point_names.get(ref_key, '')
+                    break
+
+    def _infer_loop_bindings(self, parsed: dict):
+        """Infer loop input/setpoint/output references from point names and program code.
+
+        PFG XML extraction doesn't include loop bindings, so we reconstruct them
+        by matching loop name mnemonics to point names and analyzing code for
+        LOOP output assignments.
+
+        Adds 'suggested_input', 'suggested_setpoint', 'suggested_output' to each LOOP object.
+        """
+        # Build point name lookup: mnemonic -> (type, instance)
+        point_by_mnem = {}
+        for ptype in ['AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV']:
+            for p in parsed.get(ptype, []):
+                name = p.get('name', '')
+                if name.startswith('{device-name}-'):
+                    mnem = name[len('{device-name}-'):]
+                    point_by_mnem[mnem] = (ptype, p.get('instance', ''))
+
+        # Find LOOP output assignments from program code
+        loop_outputs = {}  # loop_instance -> [(type, instance)]
+        for prog in parsed.get('PROGRAM', []):
+            code = prog.get('code', '')
+            for m in re.finditer(r'(AO\d+)\s*=\s*(?:.*\b)?LOOP(\d+)\b', code):
+                ao_inst = m.group(1)[2:]  # strip "AO"
+                loop_inst = m.group(2)
+                loop_outputs.setdefault(loop_inst, []).append(('AO', ao_inst))
+
+        for loop in parsed.get('LOOP', []):
+            name = loop.get('name', '')
+            inst = loop.get('instance', '')
+
+            # Extract mnemonic: strip {device-name}- prefix and trailing digits+LOOP suffix
+            mnem = name.replace('{device-name}-', '') if name.startswith('{device-name}-') else name
+            # Strip trailing instance number: DSP-LOOP1 -> DSP-LOOP -> DSP
+            clean = re.sub(r'\d+$', '', mnem)
+            if clean.endswith('-LOOP'):
+                base_mnem = clean[:-5]
+            elif clean.endswith('LOOP'):
+                base_mnem = clean[:-4]
+            else:
+                base_mnem = clean
+
+            # Search for input: point named same as base mnemonic
+            # Skip AO type for input — AOs are outputs, not loop inputs
+            inp = point_by_mnem.get(base_mnem)
+            if inp and inp[0] != 'AO':
+                loop['suggested_input'] = f"{inp[0]}{inp[1]}"
+                loop['suggested_input_name'] = f"{{device-name}}-{base_mnem}"
+            elif not inp or inp[0] == 'AO':
+                # Try common input patterns for valve/coil loops
+                for try_mnem in ['SAT', 'MAT', 'DAT', 'RAT', base_mnem.replace('-VLV', '')]:
+                    alt = point_by_mnem.get(try_mnem)
+                    if alt and alt[0] in ('AI', 'AV'):
+                        loop['suggested_input'] = f"{alt[0]}{alt[1]}"
+                        loop['suggested_input_name'] = f"{{device-name}}-{try_mnem}"
+                        break
+
+            # Search for setpoint: point named base_mnem + "-SP"
+            sp = point_by_mnem.get(f"{base_mnem}-SP")
+            if sp:
+                loop['suggested_setpoint'] = f"{sp[0]}{sp[1]}"
+                loop['suggested_setpoint_name'] = f"{{device-name}}-{base_mnem}-SP"
+            else:
+                # Try common alternatives
+                for suffix in ['-SAT-SP', '-CLG-SAT-SP', '-HTG-SAT-SP', '-LO-SP']:
+                    alt = point_by_mnem.get(f"{base_mnem}{suffix}")
+                    if alt:
+                        loop['suggested_setpoint'] = f"{alt[0]}{alt[1]}"
+                        loop['suggested_setpoint_name'] = f"{{device-name}}-{base_mnem}{suffix}"
+                        break
+
+            # Output from code analysis
+            outs = loop_outputs.get(inst, [])
+            if outs:
+                loop['suggested_output'] = f"{outs[0][0]}{outs[0][1]}"
+                out_mnem = point_by_mnem.get(outs[0][0] + outs[0][1])
+                # Find AO name
+                for p in parsed.get('AO', []):
+                    if p.get('instance') == outs[0][1]:
+                        loop['suggested_output_name'] = p.get('name', '')
+                        break
+
+    def _templatize_parent_refs(self, parsed: dict):
+        """Replace hardcoded parent/network device IDs with {parent} in program code.
+
+        In Reliable Controls, network references like 1000AV1 mean 'AV1 from device 1000'.
+        In a template, non-self device IDs should be {parent} to indicate the associated
+        parent controller.
+        """
+        # Get this controller's device ID
+        device_id = None
+        for dev in parsed.get('DEVICE', []):
+            device_id = dev.get('instance', '')
+            break
+        if not device_id:
+            return
+
+        # Find all non-self device IDs in program code
+        network_ids = set()
+        for prog in parsed.get('PROGRAM', []):
+            code = prog.get('code', '')
+            for m in re.finditer(r'\b(\d+)(AI|AO|AV|BI|BO|BV|MO|MV|SCHED|LOOP|DEV)(\d+)\b', code):
+                dev_id = m.group(1)
+                if dev_id != str(device_id) and len(dev_id) >= 3:
+                    network_ids.add(dev_id)
+
+        if not network_ids:
+            return
+
+        # Replace in program code
+        for prog in parsed.get('PROGRAM', []):
+            code = prog.get('code', '')
+            for nid in network_ids:
+                code = re.sub(
+                    rf'\b{nid}(AI|AO|AV|BI|BO|BV|MO|MV|SCHED|LOOP|DEV)(\d+)\b',
+                    r'{parent}\1\2',
+                    code
+                )
+            prog['code'] = code
 
     def _library_path(self, category: str, vid: str) -> Path:
         return self.cfg.library_root / category / f"{vid}.json"
