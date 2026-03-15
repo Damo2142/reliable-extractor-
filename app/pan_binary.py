@@ -624,6 +624,179 @@ class PanBinary:
         return report
 
 
+class PanWriter:
+    """Modify Reliable Controls .pan binary files directly.
+
+    Enables lossless controller copying and template creation without PFG:
+    - Change device ID and name
+    - Rename all object names (same-length swap)
+    - Modify present values
+    - Set loop input/setpoint/output references
+
+    File structure:
+      Offset 0: Magic number (0x0023BAC0, constant)
+      Offset 4: Device instance ID (4-byte little-endian)
+      Offset 8: Section offset (varies by model)
+      Objects: "Mu" header pattern throughout the file
+    """
+
+    def __init__(self, data: bytes):
+        self.data = bytearray(data)
+
+    @classmethod
+    def from_file(cls, path: Path) -> 'PanWriter':
+        return cls(path.read_bytes())
+
+    @classmethod
+    def from_panx(cls, panx_path: Path) -> 'PanWriter':
+        import zipfile
+        with zipfile.ZipFile(panx_path) as z:
+            pan_names = [n for n in z.namelist() if n.endswith('.pan')]
+            if not pan_names:
+                raise ValueError(f"No .pan file found in {panx_path}")
+            return cls(z.read(pan_names[0]))
+
+    def set_device_id(self, new_id: int):
+        """Change the BACnet device instance ID."""
+        self.data[4:8] = struct.pack('<I', new_id)
+        # Also update any BACnet ObjID references that point to this device
+        # (trend references, loop references use device ID prefix)
+
+    def get_device_id(self) -> int:
+        return struct.unpack('<I', self.data[4:8])[0]
+
+    def rename_device(self, old_name: str, new_name: str) -> int:
+        """Replace all occurrences of old device name with new name.
+
+        Names must be the same byte length for in-place replacement.
+        Returns the number of replacements made.
+        """
+        old_bytes = old_name.encode('utf-8')
+        new_bytes = new_name.encode('utf-8')
+
+        if len(old_bytes) != len(new_bytes):
+            raise ValueError(
+                f"Name length mismatch: '{old_name}' ({len(old_bytes)} bytes) "
+                f"vs '{new_name}' ({len(new_bytes)} bytes). "
+                f"Binary replacement requires same byte length."
+            )
+
+        count = 0
+        # Replace in all "Mu" name fields
+        for m in re.finditer(b'\x4d\x75(.)', bytes(self.data)):
+            name_len = m.group(1)[0]
+            name_start = m.start() + 3
+            name_bytes = self.data[name_start:name_start + name_len]
+
+            try:
+                name = name_bytes.decode('utf-8').rstrip('\x00')
+            except (UnicodeDecodeError, ValueError):
+                continue
+
+            if old_name in name:
+                new_full = name.replace(old_name, new_name)
+                new_full_bytes = new_full.encode('utf-8')
+                # Pad or truncate to allocated length
+                padded = new_full_bytes + b'\x00' * (name_len - len(new_full_bytes))
+                self.data[name_start:name_start + name_len] = padded[:name_len]
+                count += 1
+
+        return count
+
+    def set_present_value(self, obj_name: str, new_value: float) -> bool:
+        """Set the present value of a named object.
+
+        Finds the object by name, then overwrites the float at property 0x55.
+        Returns True if successful.
+        """
+        name_bytes = obj_name.encode('utf-8')
+        try:
+            pos = self.data.index(name_bytes + b'\x00')
+        except ValueError:
+            return False
+
+        # Find property 0x55 (present value) after the name
+        name_end = pos + len(name_bytes) + 1
+        region = self.data[name_end:name_end + 30]
+
+        for i in range(len(region) - 6):
+            if region[i:i+2] == b'\x55\x44':
+                # Overwrite the float
+                abs_pos = name_end + i + 2
+                self.data[abs_pos:abs_pos + 4] = struct.pack('>f', new_value)
+                return True
+
+        return False
+
+    def set_loop_binding(self, loop_name: str, input_type: str = None,
+                         input_instance: int = None,
+                         setpoint_type: str = None,
+                         setpoint_instance: int = None) -> bool:
+        """Set loop input and/or setpoint references.
+
+        Overwrites the BACnet ObjID at the known offsets after the loop name.
+        """
+        name_bytes = loop_name.encode('utf-8')
+        try:
+            pos = self.data.index(name_bytes + b'\x00')
+        except ValueError:
+            return False
+
+        name_end = pos + len(name_bytes) + 1
+        region = self.data[name_end:name_end + 100]
+
+        # Find BACnet ObjID tags (0x0c)
+        objid_positions = []
+        for i in range(len(region) - 5):
+            if region[i] == 0x0c:
+                objid = struct.unpack('>I', region[i+1:i+5])[0]
+                obj_type = (objid >> 22) & 0x3FF
+                obj_inst = objid & 0x3FFFFF
+                if obj_type < 20 and obj_inst < 10000:
+                    objid_positions.append(name_end + i + 1)  # Position of the 4-byte ObjID
+
+        if input_type is not None and input_instance is not None and len(objid_positions) >= 1:
+            new_objid = encode_objid(input_type, input_instance)
+            pos = objid_positions[0]
+            self.data[pos:pos + 4] = new_objid
+
+        if setpoint_type is not None and setpoint_instance is not None and len(objid_positions) >= 2:
+            new_objid = encode_objid(setpoint_type, setpoint_instance)
+            pos = objid_positions[1]
+            self.data[pos:pos + 4] = new_objid
+
+        return True
+
+    def save(self, path: Path):
+        """Write the modified .pan to a file."""
+        path.write_bytes(self.data)
+
+    def save_panx(self, path: Path, meta: dict = None, assets_dir: Path = None):
+        """Package the modified .pan into a .panx (zip) file."""
+        import zipfile
+        import json
+
+        device_id = self.get_device_id()
+
+        with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Write .pan
+            zf.writestr(f"{device_id}.pan", bytes(self.data))
+
+            # Write meta.json
+            if meta is None:
+                meta = {"Device": device_id, "Database": f"{device_id}.pan"}
+            zf.writestr("meta.json", json.dumps(meta, indent=2))
+
+            # Write assets
+            if assets_dir and assets_dir.exists():
+                import os
+                for root, dirs, files in os.walk(assets_dir):
+                    for fname in files:
+                        fpath = Path(root) / fname
+                        arcname = "group_assets/" + str(fpath.relative_to(assets_dir))
+                        zf.write(fpath, arcname)
+
+
 def enrich_library_entry(pan_path: Path, library_json: dict) -> dict:
     """Enrich a library JSON entry with data from the .pan binary.
 
