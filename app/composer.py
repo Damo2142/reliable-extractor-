@@ -1210,16 +1210,71 @@ class Composer:
                         )
                         continue
 
+                    # Instead of copying the entire data region (which can corrupt
+                    # structural metadata), write individual float values from the
+                    # source ARRAY/TABLE into the target using set_present_value.
+                    # PFG creates the correct object structure — we just fill in values.
                     source_data = source_obj['data_region']
                     if not source_data:
                         continue
 
-                    # Copy the raw data region into the generated .pan
-                    if writer.copy_data_region(obj_name, source_data):
-                        patched += 1
+                    # Extract float values from source data region (0x44 tag = float)
+                    source_floats = []
+                    i = 0
+                    while i < len(source_data) - 5:
+                        if source_data[i] == 0x44:
+                            try:
+                                val = struct.unpack('>f', source_data[i+1:i+5])[0]
+                                if val == val and -1e9 < val < 1e9:
+                                    source_floats.append((i, val))
+                            except struct.error:
+                                pass
+                            i += 5
+                        else:
+                            i += 1
+
+                    if not source_floats:
+                        continue
+
+                    # Find the target object and write floats at matching positions
+                    target_name = obj_name
+                    # Find in writer's data
+                    name_bytes = target_name.encode('utf-8')
+                    try:
+                        name_pos = bytes(writer.data).index(name_bytes + b'\x00')
+                    except ValueError:
+                        # Try without null terminator
+                        try:
+                            name_pos = bytes(writer.data).index(name_bytes)
+                        except ValueError:
+                            continue
+
+                    name_end = name_pos + len(name_bytes) + 1
+                    # Find target data region
+                    next_mu = bytes(writer.data).find(b'\x4d\x75', name_end + 10)
+                    if next_mu < 0:
+                        next_mu = min(name_end + 500, len(writer.data))
+
+                    target_region = writer.data[name_end:next_mu]
+
+                    # Find float slots in target and overwrite with source values
+                    float_idx = 0
+                    ti = 0
+                    while ti < len(target_region) - 5 and float_idx < len(source_floats):
+                        if target_region[ti] == 0x44:
+                            # Write source float value here
+                            abs_pos = name_end + ti + 1
+                            writer.data[abs_pos:abs_pos + 4] = struct.pack('>f', source_floats[float_idx][1])
+                            float_idx += 1
+                            ti += 5
+                        else:
+                            ti += 1
+
+                    if float_idx > 0:
+                        patched += float_idx
                         logger.info(
-                            f"Binary post-process: restored data region for "
-                            f"'{obj_name}' ({len(source_data)} bytes) from {variant_key}"
+                            f"Binary post-process: restored {float_idx} float values for "
+                            f"'{obj_name}' from {variant_key}"
                         )
 
                 except Exception as e:
