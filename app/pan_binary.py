@@ -104,7 +104,7 @@ class PanBinary:
             name_bytes = self.data[name_start:name_start + name_len]
 
             try:
-                name = name_bytes.decode('utf-8').rstrip('\x00')
+                name = name_bytes.decode('utf-8').strip('\x00')
             except (UnicodeDecodeError, ValueError):
                 continue
 
@@ -239,13 +239,15 @@ class PanBinary:
                 if type_name and type_name != 'NULL':
                     props.setdefault('objid_refs', []).append((type_name, instance))
 
-        # Also find strings (0x75 [len] [bytes])
-        for i in range(len(data) - 3):
-            if data[i] == 0x75:
-                slen = data[i+1]
-                if 2 < slen < 100 and i + 2 + slen <= len(data):
+        # Find strings using 0x0f tag (string marker): [0x0f 0x00 len_byte string_bytes]
+        # Note: 0x75 is NOT a string marker — it's the BACnet units property ID
+        for i in range(len(data) - 4):
+            if data[i] == 0x75 and data[i+1] == 0x0f:
+                # This is actually: prop_id=0x75 tag=0x0f (string) — alarm/description text
+                slen = data[i+2]
+                if 2 < slen < 100 and i + 3 + slen <= len(data):
                     try:
-                        s = data[i+2:i+2+slen].decode('utf-8', errors='replace').rstrip('\x00')
+                        s = data[i+3:i+3+slen].decode('utf-8', errors='replace').strip('\x00')
                         if s and any(c.isalpha() for c in s):
                             props.setdefault('strings', []).append(s)
                     except Exception:
@@ -273,19 +275,28 @@ class PanBinary:
         return 'POINT'
 
     def get_loops(self) -> list:
-        """Get all LOOP objects with input/setpoint/output bindings."""
+        """Get all LOOP objects with input/setpoint/output bindings and PID params.
+
+        Binary loop structure (verified across AHU/VAV/FCU variants):
+          Offset ~39: 0x5d float = proportional constant (Kp)
+          Offset ~58: 0x6c float = integral constant (Ki)
+          Offset ~71: 1st ObjID = manipulated variable / controlled output
+          Offset ~88: 2nd ObjID = controlled variable / process input
+          Offset ~174: 0x0e float = derivative constant (Kd)
+          Offset ~194: 3rd ObjID = setpoint reference
+          Property 0x1c enum = action (0=direct, 1=reverse)
+        """
         loops = []
         for obj in self.objects:
             if obj['category'] != 'LOOP':
                 continue
 
             # Extract instance from name
-            inst_match = re.search(r'LOOP(\d+)', obj['name'], re.IGNORECASE)
-            instance = inst_match.group(1) if inst_match else ''
+            inst_match = re.search(r'LOOP(\d+)?', obj['name'], re.IGNORECASE)
+            instance = inst_match.group(1) if inst_match and inst_match.group(1) else ''
 
-            # Filter refs: skip NULL and firmware refs (instance > 300)
-            real_refs = [r for r in obj['refs']
-                        if r['type'] != 'NULL' and r['instance'] < 300]
+            data = obj['data_region']
+            props = obj.get('properties', {})
 
             loop = {
                 'name': obj['name'],
@@ -293,18 +304,63 @@ class PanBinary:
                 'present_value': obj['present_value'],
             }
 
+            # Extract raw property values from data region
+            val_0x5d = None  # proportional constant
+            val_0x6c = None  # dual-purpose: integral constant OR direct setpoint value
+            val_0x0e = None  # derivative constant
+            for i in range(min(len(data) - 6, 250)):
+                if data[i] == 0x5d and data[i+1] == 0x44:
+                    val_0x5d = round(struct.unpack('>f', data[i+2:i+6])[0], 4)
+                if data[i] == 0x6c and data[i+1] == 0x44:
+                    val_0x6c = round(struct.unpack('>f', data[i+2:i+6])[0], 4)
+                if data[i] == 0x0e and data[i+1] == 0x44:
+                    val_0x0e = round(struct.unpack('>f', data[i+2:i+6])[0], 4)
+
+            # Extract action (direct=0, reverse=1)
+            for i in range(min(len(data) - 3, 250)):
+                if data[i] == 0x1c and data[i+1] == 0x71:
+                    loop['action'] = 'reverse' if data[i+2] == 1 else 'direct'
+
+            # All ObjID refs sorted by position (order matters)
+            all_refs = sorted(obj['refs'], key=lambda r: r['offset'])
+            # Filter to real refs (not NULL, instance < 10000)
+            real_refs = [r for r in all_refs
+                        if r['type'] != 'NULL' and r['instance'] < 10000]
+
+            # Assign refs based on position in the data region:
+            # 1st = manipulated variable (output), 2nd = controlled variable (input),
+            # 3rd = setpoint reference
             if len(real_refs) >= 1:
-                loop['input_ref'] = real_refs[0]['ref']
-                loop['input_type'] = real_refs[0]['type']
-                loop['input_instance'] = real_refs[0]['instance']
+                loop['output_ref'] = real_refs[0]['ref']
+                loop['output_type'] = real_refs[0]['type']
+                loop['output_instance'] = real_refs[0]['instance']
             if len(real_refs) >= 2:
-                loop['setpoint_ref'] = real_refs[1]['ref']
-                loop['setpoint_type'] = real_refs[1]['type']
-                loop['setpoint_instance'] = real_refs[1]['instance']
+                loop['input_ref'] = real_refs[1]['ref']
+                loop['input_type'] = real_refs[1]['type']
+                loop['input_instance'] = real_refs[1]['instance']
             if len(real_refs) >= 3:
-                loop['output_ref'] = real_refs[2]['ref']
-                loop['output_type'] = real_refs[2]['type']
-                loop['output_instance'] = real_refs[2]['instance']
+                loop['setpoint_ref'] = real_refs[2]['ref']
+                loop['setpoint_type'] = real_refs[2]['type']
+                loop['setpoint_instance'] = real_refs[2]['instance']
+
+            # Property 0x6c has dual meaning:
+            # - If loop has a setpoint reference (3+ ObjID refs), 0x6c = integral constant
+            # - If loop has no setpoint ref (<3 refs), 0x6c = direct setpoint value
+            has_setpoint_ref = len(real_refs) >= 3
+
+            if val_0x5d is not None:
+                loop['proportional'] = val_0x5d
+            if val_0x0e is not None:
+                loop['derivative'] = val_0x0e
+
+            if has_setpoint_ref:
+                # Complex loop with external setpoint — 0x6c is integral constant
+                if val_0x6c is not None:
+                    loop['integral'] = val_0x6c
+            else:
+                # Simple loop with direct setpoint — 0x6c is the setpoint value
+                if val_0x6c is not None:
+                    loop['setpoint_value'] = val_0x6c
 
             loops.append(loop)
 
@@ -333,22 +389,56 @@ class PanBinary:
             if obj['category'] in ('LOOP', 'TREND', 'SCHEDULE', 'PROGRAM',
                                     'SMARTSENSOR', 'SYSTEMGROUP'):
                 continue
-            if obj['present_value'] is not None:
-                points.append({
-                    'name': obj['name'],
-                    'present_value': obj['present_value'],
-                })
+            points.append({
+                'name': obj['name'],
+                'present_value': obj['present_value'],
+            })
         return points
 
     def get_point_details(self) -> list:
         """Get detailed info for all point objects including all decoded properties."""
-        # BACnet engineering units (common ones)
+        # BACnet engineering units (expanded)
         UNITS = {
-            0: 'no-units', 2: 'deg-F', 3: 'deg-C', 4: 'deg-F-per-min',
-            14: 'inches-wc', 15: 'CFM', 17: 'minutes', 19: 'psi',
-            22: 'percent', 23: 'percent-rh', 40: '%open', 41: 'rpm',
-            45: 'inches', 55: 'watts', 62: 'ppm', 64: 'deg-F', 65: 'deg-C',
-            95: 'no-units', 98: 'hours',
+            0: 'no-units', 1: 'sq-meters', 2: 'sq-feet',
+            3: 'milliamperes', 4: 'amperes', 5: 'ohms',
+            6: 'volts', 7: 'kilovolts', 8: 'megavolts',
+            9: 'volt-amperes', 10: 'kilovolt-amperes',
+            11: 'megavolt-amperes', 12: 'volt-amperes-reactive',
+            15: 'joules', 17: 'watts', 18: 'kilowatts',
+            19: 'megawatts', 20: 'watts-per-sq-foot',
+            21: 'BTUs-per-hour', 22: 'horsepower',
+            23: 'therms', 24: 'ton-hours',
+            26: 'joules-per-kg-dry-air',
+            27: 'BTUs-per-pound-dry-air',
+            29: 'cycles-per-hour', 30: 'cycles-per-minute',
+            31: 'hertz', 33: 'grams-of-water-per-kg-dry-air',
+            34: 'percent-rh', 35: 'millimeters',
+            36: 'meters', 37: 'inches', 38: 'feet',
+            39: 'watts-per-sq-foot',
+            42: 'imperial-gallons', 43: 'liters',
+            44: 'us-gallons',
+            45: 'cubic-feet-per-minute', 46: 'cubic-meters-per-hour',
+            47: 'imperial-gallons-per-minute', 48: 'liters-per-second',
+            49: 'liters-per-minute', 50: 'us-gallons-per-minute',
+            51: 'degrees-angular', 52: 'deg-C-per-hour',
+            53: 'deg-C-per-minute', 54: 'deg-F-per-hour',
+            55: 'deg-F-per-minute', 56: 'no-units',
+            57: 'parts-per-million', 58: 'parts-per-billion',
+            59: 'percent', 60: 'percent-per-second',
+            61: 'per-minute', 62: 'deg-C',
+            63: 'deg-F', 64: 'deg-F', 65: 'deg-C',
+            66: 'deg-F', 67: 'deg-C',
+            69: 'psi', 70: 'centimeters-of-water',
+            71: 'inches-of-water', 72: 'mm-of-mercury',
+            73: 'centimeters-of-mercury', 74: 'inches-of-mercury',
+            75: 'pascals', 76: 'kilopascals', 77: 'bar',
+            78: 'pounds-force-per-sq-inch',
+            80: 'minutes', 81: 'seconds', 82: 'hours',
+            85: 'revolutions-per-minute',
+            91: 'percent-open', 92: 'percent',
+            95: 'no-units', 96: 'ppm', 97: 'ppm',
+            98: 'hours', 99: 'minutes', 100: 'seconds',
+            143: 'ppm', 144: 'CFM',
         }
 
         points = []
@@ -441,6 +531,20 @@ class PanBinary:
                 lines.append(f"    Output:   {loop.get('output_ref', 'not configured')}")
                 if loop.get('present_value') is not None:
                     lines.append(f"    PV:       {loop['present_value']:.2f}")
+                if loop.get('setpoint_value') is not None:
+                    lines.append(f"    Setpoint: {loop['setpoint_value']:.2f} (direct value)")
+                if loop.get('action'):
+                    lines.append(f"    Action:   {loop['action']}")
+                # PID parameters
+                pid_parts = []
+                if 'proportional' in loop:
+                    pid_parts.append(f"P={loop['proportional']}")
+                if 'integral' in loop:
+                    pid_parts.append(f"I={loop['integral']}")
+                if 'derivative' in loop:
+                    pid_parts.append(f"D={loop['derivative']}")
+                if pid_parts:
+                    lines.append(f"    PID:      {', '.join(pid_parts)}")
             lines.append("")
 
         # Point details
@@ -689,7 +793,7 @@ class PanWriter:
             name_bytes = self.data[name_start:name_start + name_len]
 
             try:
-                name = name_bytes.decode('utf-8').rstrip('\x00')
+                name = name_bytes.decode('utf-8').strip('\x00')
             except (UnicodeDecodeError, ValueError):
                 continue
 
@@ -979,7 +1083,7 @@ def enrich_library_entry(pan_path: Path, library_json: dict) -> dict:
     # Build name-to-point lookup from binary
     binary_points = {p['name']: p for p in parser.get_points()}
 
-    # Enrich loops with binary bindings
+    # Enrich loops with binary bindings and PID params
     binary_loops = {l['instance']: l for l in parser.get_loops()}
     for loop in objects.get('LOOP', []):
         inst = loop.get('instance', '')
@@ -987,7 +1091,6 @@ def enrich_library_entry(pan_path: Path, library_json: dict) -> dict:
         if bl:
             if bl.get('input_ref'):
                 loop['input_ref'] = bl['input_ref']
-                # Find the name for this reference
                 for ptype in ['AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV']:
                     for p in objects.get(ptype, []):
                         if f"{ptype}{p.get('instance','')}" == bl['input_ref']:
@@ -1002,6 +1105,20 @@ def enrich_library_entry(pan_path: Path, library_json: dict) -> dict:
                             break
             if bl.get('output_ref'):
                 loop['output_ref'] = bl['output_ref']
+                for ptype in ['AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV']:
+                    for p in objects.get(ptype, []):
+                        if f"{ptype}{p.get('instance','')}" == bl['output_ref']:
+                            loop['output_name'] = p.get('name', '')
+                            break
+            # PID parameters from binary
+            if 'proportional' in bl:
+                loop['binary_proportional'] = bl['proportional']
+            if 'integral' in bl:
+                loop['binary_integral'] = bl['integral']
+            if 'derivative' in bl:
+                loop['binary_derivative'] = bl['derivative']
+            if 'action' in bl:
+                loop['binary_action'] = bl['action']
 
     # Enrich trends with binary references
     binary_trends = {t['name']: t for t in parser.get_trends()}
