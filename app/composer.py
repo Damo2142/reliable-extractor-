@@ -1330,8 +1330,7 @@ class Composer:
 
         loops = objects.get("LOOP", [])
         if loops:
-            lines.append(f"--- Loops (PID Settings) ---")
-            lines.append(f"  ** IMPORTANT: Input and Setpoint must be configured in RC Studio **")
+            lines.append(f"--- Loops (PID Settings + Binary Bindings) ---")
             lines.append(f"{'Inst':>5}  {'Name':<30}  {'P':>8}  {'I':>8}  {'D':>8}  {'Bias':>8}  {'DB':>8}  {'Action':>8}  {'I-Units':>8}")
             lines.append(f"{'-'*5}  {'-'*30}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}")
             for l in sorted(loops, key=lambda x: int(x.get("instance", 0))):
@@ -1343,23 +1342,40 @@ class Composer:
                     f"{l.get('deadband',''):>8}  {l.get('action',''):>8}  "
                     f"{l.get('integralunits',''):>8}"
                 )
-                # Try to suggest input/setpoint from loop name
-                loop_mnem = name.split("-", 1)[1] if "-" in name else name
-                prefix = name.rsplit("-" + loop_mnem.split("-")[0], 1)[0] if "-" in name else device_name
-                # Strip trailing instance number from mnemonic (DSP-LOOP1 -> DSP-LOOP)
-                import re as _re_lm
-                loop_mnem_clean = _re_lm.sub(r'\d+$', '', loop_mnem)
-                binding = _loop_bindings.get(loop_mnem) or _loop_bindings.get(loop_mnem_clean)
-                if binding:
-                    # Find matching points
-                    inp_name = f"{prefix}-{binding['input']}"
-                    sp_name = f"{prefix}-{binding['setpoint']}"
-                    inp_ref = all_points.get(inp_name, f"? ({binding['input']})")
-                    sp_ref = all_points.get(sp_name, f"? ({binding['setpoint']})")
-                    lines.append(f"         -> Input: {inp_ref} ({inp_name})")
-                    lines.append(f"         -> Setpoint: {sp_ref} ({sp_name})")
-                else:
-                    lines.append(f"         -> Input/Setpoint: must be configured manually")
+                # Check binary-enriched data first (from library enrichment)
+                has_binary = False
+                if l.get('output_ref') or l.get('input_ref') or l.get('setpoint_ref') or l.get('setpoint_value') is not None:
+                    has_binary = True
+                    if l.get('output_ref'):
+                        out_name = l.get('output_name', '')
+                        lines.append(f"         -> Output:   {l['output_ref']}" + (f" ({out_name})" if out_name else ""))
+                    if l.get('input_ref'):
+                        inp_name = l.get('input_name', '')
+                        lines.append(f"         -> Input:    {l['input_ref']}" + (f" ({inp_name})" if inp_name else ""))
+                    if l.get('setpoint_ref'):
+                        sp_name = l.get('setpoint_name', '')
+                        lines.append(f"         -> Setpoint: {l['setpoint_ref']}" + (f" ({sp_name})" if sp_name else ""))
+                    elif l.get('setpoint_value') is not None:
+                        lines.append(f"         -> Setpoint: {l['setpoint_value']:.1f} (direct value)")
+                    if l.get('binary_proportional') is not None:
+                        lines.append(f"         -> PID (binary): P={l.get('binary_proportional','-')} I={l.get('binary_integral','-')} D={l.get('binary_derivative','-')}")
+
+                if not has_binary:
+                    # Fallback: try to suggest input/setpoint from loop name
+                    loop_mnem = name.split("-", 1)[1] if "-" in name else name
+                    prefix = name.rsplit("-" + loop_mnem.split("-")[0], 1)[0] if "-" in name else device_name
+                    import re as _re_lm
+                    loop_mnem_clean = _re_lm.sub(r'\d+$', '', loop_mnem)
+                    binding = _loop_bindings.get(loop_mnem) or _loop_bindings.get(loop_mnem_clean)
+                    if binding:
+                        inp_name = f"{prefix}-{binding['input']}"
+                        sp_name = f"{prefix}-{binding['setpoint']}"
+                        inp_ref = all_points.get(inp_name, f"? ({binding['input']})")
+                        sp_ref = all_points.get(sp_name, f"? ({binding['setpoint']})")
+                        lines.append(f"         -> Input: {inp_ref} ({inp_name})")
+                        lines.append(f"         -> Setpoint: {sp_ref} ({sp_name})")
+                    else:
+                        lines.append(f"         -> Input/Setpoint: not available in library data")
             lines.append("")
 
         # ── Programs ──
