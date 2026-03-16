@@ -287,13 +287,13 @@ async def download_variant_assets(category: str, variant_id: str):
             for grp_name, grp_data in grp_files.items():
                 text = json.dumps(grp_data)
                 for m in _re.finditer(r'"(?:external_file|gel_filename|image|background_image)"\s*:\s*"([^"]+)"', text):
-                    val = m.group(1).replace('\\\\', '\\').replace('pic\\', '')
+                    val = m.group(1).replace('\\\\', '/').replace('\\', '/').replace('pic/', '')
                     if val and '.' in val:
                         required_files.add(val)
 
             # GroupAssets — includes animation subdirectories
             for ga in lib_entry.get("meta", {}).get("GroupAssets", []):
-                job_path = ga.get("JobPath", "").replace('pic\\', '')
+                job_path = ga.get("JobPath", "").replace('\\', '/').replace('pic/', '')
                 if job_path and '.' in job_path:
                     required_files.add(job_path)
                     # If it's in an Animation subdir, mark the whole dir
@@ -392,11 +392,13 @@ async def upload_variant_assets(category: str, variant_id: str, files: list[Uplo
 
         new_assets = []
         for fname in uploaded:
-            asset_path = f"group_assets\\{fname.replace('/', os.sep)}"
+            # Normalize to forward slashes for cross-platform compatibility
+            fname_norm = fname.replace('\\', '/')
+            asset_path = f"group_assets/{fname_norm}"
             if asset_path not in existing_assets:
                 new_assets.append({
                     "Asset": asset_path,
-                    "JobPath": fname.replace('/', os.sep),
+                    "JobPath": fname_norm,
                 })
 
         if new_assets:
@@ -1106,12 +1108,12 @@ async def composer_generate_template_package(body: dict = None):
         for grp_name, grp_data in grp_files.items():
             text = json.dumps(grp_data)
             for m in _re_pkg.finditer(r'"(?:external_file|gel_filename|image|background_image)"\s*:\s*"([^"]+)"', text):
-                val = m.group(1).replace('\\\\', '\\').replace('pic\\', '')
+                val = m.group(1).replace('\\\\', '/').replace('\\', '/').replace('pic/', '')
                 if val and '.' in val:
                     required_files.add(val)
 
         for ga in meta.get("GroupAssets", []):
-            job_path = ga.get("JobPath", "").replace('pic\\', '')
+            job_path = ga.get("JobPath", "").replace('\\', '/').replace('pic/', '')
             if job_path and '.' in job_path:
                 required_files.add(job_path)
                 if 'Animation' in job_path:

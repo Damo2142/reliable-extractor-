@@ -593,7 +593,16 @@ class Composer:
             src_meta = data.get("meta", {})
             if src_meta:
                 if "GroupAssets" in src_meta:
-                    all_meta.setdefault("GroupAssets", []).extend(src_meta["GroupAssets"])
+                    # Normalize backslash paths to forward slashes for Linux compatibility
+                    normalized_ga = []
+                    for ga in src_meta["GroupAssets"]:
+                        ga_copy = dict(ga)
+                        if "Asset" in ga_copy:
+                            ga_copy["Asset"] = ga_copy["Asset"].replace("\\", "/")
+                        if "JobPath" in ga_copy:
+                            ga_copy["JobPath"] = ga_copy["JobPath"].replace("\\", "/")
+                        normalized_ga.append(ga_copy)
+                    all_meta.setdefault("GroupAssets", []).extend(normalized_ga)
                 if "ViewAssets" in src_meta:
                     all_meta.setdefault("ViewAssets", []).extend(src_meta["ViewAssets"])
                 if "Model" in src_meta and "Model" not in all_meta:
@@ -887,6 +896,9 @@ class Composer:
             "counts": counts,
         }
 
+        # Validate that all referenced graphics exist on disk
+        self._validate_graphics(result)
+
         logger.info(
             f"Composed {len(programs)} programs, "
             f"{sum(len(v) for v in objects.values() if isinstance(v, list))} objects, "
@@ -907,6 +919,74 @@ class Composer:
         save_path.write_text(json.dumps(composition, indent=2))
         logger.info(f"Saved composition: {save_path}")
         return save_path
+
+    def _validate_graphics(self, composition: dict):
+        """Validate that all graphics referenced in GroupAssets and GRP files exist on disk.
+
+        Logs warnings for missing files but does not block composition.
+        """
+        meta = composition.get("meta", {})
+        graphics_sources = meta.get("graphics_sources", [])
+        grp_files = composition.get("grp_files", {})
+        shared_dir = self.cfg.assets_root / "_shared"
+
+        # Build list of asset directories to search
+        asset_dirs = []
+        seen_variants = set()
+        for gs in graphics_sources:
+            vkey = f"{gs.get('from_category', '')}/{gs.get('from_variant', '')}"
+            if vkey not in seen_variants:
+                seen_variants.add(vkey)
+                d = self.cfg.assets_root / gs.get("from_category", "") / gs.get("from_variant", "")
+                if d.exists():
+                    asset_dirs.append(d)
+        if shared_dir.exists():
+            asset_dirs.append(shared_dir)
+
+        # Collect all referenced files from GRP JSONs
+        referenced = set()
+        import json as _json
+        for grp_name, grp_data in grp_files.items():
+            text = _json.dumps(grp_data)
+            for m in re.finditer(
+                r'"(?:external_file|gel_filename|image|background_image)"\s*:\s*"([^"]+)"', text
+            ):
+                val = m.group(1).replace('\\\\', '/').replace('\\', '/').replace('pic/', '')
+                if val and '.' in val:
+                    referenced.add(val)
+
+        # Collect from GroupAssets
+        for ga in meta.get("GroupAssets", []):
+            job_path = ga.get("JobPath", "").replace('\\', '/').replace('pic/', '')
+            if job_path and '.' in job_path:
+                referenced.add(job_path)
+
+        # Check each referenced file
+        missing = []
+        found = 0
+        for ref in sorted(referenced):
+            ref_norm = ref.replace('\\', '/')
+            exists = False
+            for d in asset_dirs:
+                if (d / ref_norm).exists():
+                    exists = True
+                    break
+                # Fallback: search by filename only
+                if list(d.rglob(Path(ref_norm).name)):
+                    exists = True
+                    break
+            if exists:
+                found += 1
+            else:
+                missing.append(ref)
+
+        if missing:
+            logger.warning(
+                f"Graphics validation: {len(missing)} referenced files not found on disk: "
+                + ", ".join(missing[:20])
+                + (f" ... and {len(missing)-20} more" if len(missing) > 20 else "")
+            )
+        logger.info(f"Graphics validation: {found}/{found + len(missing)} referenced files found")
 
     def list_compositions(self) -> list:
         """List all saved compositions."""
@@ -1611,14 +1691,20 @@ class Composer:
             if meta.get("HardPointConfig"):
                 panx_meta["HardPointConfig"] = meta["HardPointConfig"]
             if meta.get("GroupAssets"):
-                # Deduplicate GroupAssets by Asset path
+                # Deduplicate GroupAssets by Asset path (normalize slashes for comparison)
                 seen_assets = set()
                 deduped = []
                 for ga in meta["GroupAssets"]:
-                    key = ga.get("Asset", "")
+                    # Normalize backslashes to forward slashes
+                    ga_norm = dict(ga)
+                    if "Asset" in ga_norm:
+                        ga_norm["Asset"] = ga_norm["Asset"].replace("\\", "/")
+                    if "JobPath" in ga_norm:
+                        ga_norm["JobPath"] = ga_norm["JobPath"].replace("\\", "/")
+                    key = ga_norm.get("Asset", "")
                     if key not in seen_assets:
                         seen_assets.add(key)
-                        deduped.append(ga)
+                        deduped.append(ga_norm)
                 panx_meta["GroupAssets"] = deduped
             panx_meta["ViewAssets"] = meta.get("ViewAssets", [])
 

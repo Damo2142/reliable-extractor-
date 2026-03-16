@@ -232,11 +232,20 @@ class ExtractionEngine:
         graphics = []
         asset_dir = self.cfg.assets_root / category / vid
         asset_dir.mkdir(parents=True, exist_ok=True)
+        # Also include animation sprite files (.js, .json) and any other assets
+        GRAPHICS_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp", ".js", ".json"}
         for gfx in work_dir.rglob("*"):
-            if gfx.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp"}:
-                dest = asset_dir / gfx.name
+            if gfx.is_file() and gfx.suffix.lower() in GRAPHICS_EXTS:
+                # Skip meta.json and GRP JSONs at root level
+                if gfx.name == "meta.json" or "GRP" in gfx.stem:
+                    continue
+                # Preserve relative directory structure (e.g. Animation/sprite-name/file.png)
+                rel_path = gfx.relative_to(work_dir)
+                dest = asset_dir / rel_path
+                dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(gfx, dest)
-                graphics.append(gfx.name)
+                # Store the relative path (with forward slashes) instead of flat filename
+                graphics.append(str(rel_path).replace("\\", "/"))
 
         return pan_path, meta, graphics
 
