@@ -244,7 +244,7 @@ class ExtractionEngine:
     def _run_pfg(self, pan_path: Path, work_dir: Path, vid: str) -> Path:
         # Serialize PFG runs to prevent output file collisions
         PFG_LOCK_FILE.touch(exist_ok=True)
-        with open(PFG_LOCK_FILE, 'r') as lock_fd:
+        with open(PFG_LOCK_FILE, 'r+') as lock_fd:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             try:
                 return self._run_pfg_inner(pan_path, work_dir, vid)

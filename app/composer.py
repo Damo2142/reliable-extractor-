@@ -1354,7 +1354,7 @@ class Composer:
         from app.extractor import PFG_WORK_DIR, PFG_LOCK_FILE, to_wine_path
 
         PFG_LOCK_FILE.touch(exist_ok=True)
-        with open(PFG_LOCK_FILE, 'r') as lock_fd:
+        with open(PFG_LOCK_FILE, 'r+') as lock_fd:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             try:
                 pfg_dir = Path(PFG_WORK_DIR)
