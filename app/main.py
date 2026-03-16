@@ -1734,6 +1734,115 @@ async def composer_generate_panx(body: dict = None):
         raise HTTPException(500, f"PANX generation failed: {e}")
 
 
+def _generate_excel_from_composition(comp_data):
+    """Generate the grouped Excel point schedule from a composition — same format as the standalone endpoint."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Border, Side
+
+    objects = comp_data.get("objects", {})
+    device_name = comp_data.get("meta", {}).get("device_name", "{device-name}")
+
+    wb = Workbook()
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    header_font = Font(bold=True, size=11, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+    empty_fill = PatternFill("solid", fgColor="F2F2F2")
+
+    def add_sheet(name, headers, rows):
+        ws = wb.create_sheet(name)
+        for c, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=c, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = thin_border
+        if not rows:
+            return
+        by_inst = {}
+        for row in rows:
+            by_inst[row[0]] = row
+        max_inst = max(by_inst.keys())
+        r = 2
+        for inst in range(1, max_inst + 1):
+            if inst in by_inst:
+                for c, val in enumerate(by_inst[inst], 1):
+                    cell = ws.cell(row=r, column=c, value=val)
+                    cell.border = thin_border
+            else:
+                cell = ws.cell(row=r, column=1, value=inst)
+                cell.border = thin_border
+                cell.fill = empty_fill
+                for c in range(2, len(headers) + 1):
+                    cell = ws.cell(row=r, column=c, value="")
+                    cell.border = thin_border
+                    cell.fill = empty_fill
+            r += 1
+        for c in range(1, len(headers) + 1):
+            max_len = max(len(str(ws.cell(row, c).value or '')) for row in range(1, r))
+            ws.column_dimensions[ws.cell(1, c).column_letter].width = min(max_len + 3, 50)
+
+    for ptype, sheet_name, extra_cols in [
+        ("AV", "Analog Values", ["present_value", "range", "unit", "increment", "description"]),
+        ("AI", "Analog Inputs", ["present_value", "range", "unit", "description"]),
+        ("AO", "Analog Outputs", ["present_value", "range", "unit", "description"]),
+        ("BV", "Binary Values", ["present_value", "description"]),
+        ("BI", "Binary Inputs", ["present_value", "description"]),
+        ("BO", "Binary Outputs", ["present_value", "description"]),
+        ("MV", "Multistate Values", ["present_value", "description"]),
+        ("MO", "Multistate Outputs", ["present_value", "description"]),
+    ]:
+        pts = objects.get(ptype, [])
+        if not pts:
+            continue
+        headers = ["Instance", "Name"] + [c.replace("_", " ").title() for c in extra_cols]
+        rows = []
+        for p in sorted(pts, key=lambda x: int(x.get("instance", 0))):
+            name = p.get("name", "").replace("{device-name}", device_name)
+            row = [int(p.get("instance", 0)), name]
+            for col in extra_cols:
+                row.append(p.get(col, ""))
+            rows.append(row)
+        if rows:
+            add_sheet(sheet_name, headers, rows)
+
+    # Loops sheet
+    loops = objects.get("LOOP", [])
+    if loops:
+        headers = ["Instance", "Name", "P", "I", "D", "Action", "Input", "Setpoint", "Output"]
+        rows = []
+        for l in sorted(loops, key=lambda x: int(x.get("instance", 0))):
+            name = l.get("name", "").replace("{device-name}", device_name)
+            rows.append([int(l.get("instance", 0)), name,
+                        l.get("proportional", ""), l.get("integral", ""), l.get("derivative", ""),
+                        l.get("action", ""), l.get("input_ref", l.get("suggested_input", "")),
+                        l.get("setpoint_ref", l.get("setpoint_value", "")),
+                        l.get("output_ref", l.get("suggested_output", ""))])
+        add_sheet("Loops", headers, rows)
+
+    # Programs sheet
+    progs = objects.get("PROGRAM", [])
+    if progs:
+        headers = ["Instance", "Name", "Lines", "Description"]
+        rows = []
+        for p in sorted(progs, key=lambda x: int(x.get("instance", 0))):
+            name = p.get("name", "").replace("{device-name}", device_name)
+            code = p.get("code", "")
+            rows.append([int(p.get("instance", 0)), name, len(code.split("\n")), p.get("description", "")])
+        add_sheet("Programs", headers, rows)
+
+    # Remove default empty sheet
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 @app.post("/api/composer/generate-template-package")
 async def composer_generate_template_package(body: dict = None):
     """Generate a complete template package zip containing:
@@ -1863,36 +1972,14 @@ async def composer_generate_template_package(body: dict = None):
                             zf.write(matches[0], arcname)
                             added_assets.add(arcname.lower())
 
-                # 5. Generate and add Excel point schedule
+                # 5. Generate and add Excel point schedule (same format as standalone endpoint)
                 try:
-                    from openpyxl import Workbook
-                    from openpyxl.styles import Font, PatternFill
-                    wb = Workbook()
-                    ws = wb.active
-                    ws.title = "Point Schedule"
-                    headers_xl = ["Type", "Instance", "Name", "Present Value", "Units", "Description"]
-                    hdr_fill = PatternFill(start_color="1E3A5F", end_color="1E3A5F", fill_type="solid")
-                    hdr_font = Font(color="FFFFFF", bold=True, size=10)
-                    for col, h in enumerate(headers_xl, 1):
-                        cell = ws.cell(row=1, column=col, value=h)
-                        cell.fill = hdr_fill
-                        cell.font = hdr_font
-                    row_idx = 2
-                    for ptype in ["AI","AO","AV","BI","BO","BV","MO","MV","LOOP","PROGRAM","SCHEDULE","TREND","ARRAY","TABLE"]:
-                        for pt in data.get("objects", {}).get(ptype, []):
-                            ws.cell(row=row_idx, column=1, value=ptype)
-                            ws.cell(row=row_idx, column=2, value=pt.get("instance",""))
-                            ws.cell(row=row_idx, column=3, value=pt.get("name",""))
-                            ws.cell(row=row_idx, column=4, value=pt.get("present_value",""))
-                            ws.cell(row=row_idx, column=5, value=pt.get("units",""))
-                            ws.cell(row=row_idx, column=6, value=pt.get("description",""))
-                            row_idx += 1
-                    for col in range(1, 7):
-                        ws.column_dimensions[chr(64+col)].width = [8, 10, 40, 14, 12, 40][col-1]
-                    excel_buf = io.BytesIO()
-                    wb.save(excel_buf)
-                    excel_buf.seek(0)
-                    zf.writestr(f"{comp_id}_point_schedule.xlsx", excel_buf.read())
+                    # Cache composition for the Excel endpoint to use
+                    composer._last_composition = data
+                    # Call the Excel generation inline using the same logic
+                    excel_buf = _generate_excel_from_composition(data)
+                    if excel_buf:
+                        zf.writestr(f"{comp_id}_point_schedule.xlsx", excel_buf.read())
                 except Exception as exc:
                     logger.warning(f"Could not add Excel to template package: {exc}")
 
