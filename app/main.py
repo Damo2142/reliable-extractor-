@@ -7,6 +7,7 @@ import asyncio
 import json
 import mimetypes
 import os
+import struct
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -572,6 +573,465 @@ async def binary_copy(body: dict = None):
         )
     except Exception as e:
         raise HTTPException(500, f"Copy failed: {e}")
+
+
+# ─── #15: Binary Create (bypass PFG) ─────────────────────────────────────────
+
+@app.post("/api/binary/create")
+async def binary_create(body: dict = None):
+    """Create a .pan file from a source template WITHOUT using PFG/Wine.
+
+    Takes a source .pan/.panx (by category/variant), applies device_id,
+    device_name, and optional value overrides. Returns a modified .pan file.
+
+    Body: {
+        "source": {"category": "SBS_AHU", "variant_id": "1003"},
+        "device_id": 900,
+        "device_name": "AHU-01",
+        "values": {"RMT-SP": 72.0, "OCC-CMD": 1.0}
+    }
+    """
+    from app.pan_binary import PanWriter, PanBinary as _PB
+
+    if not body or 'source' not in body:
+        raise HTTPException(400, "Must provide 'source' with category and variant_id")
+
+    ref = body['source']
+    folder = engine._cat_folder(ref['category'])
+    cat_dir = engine.cfg.upload_root / folder
+    src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+          next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"Source not found: {ref['variant_id']}")
+
+    try:
+        if str(src).endswith('.panx'):
+            writer = PanWriter.from_panx(src)
+        else:
+            writer = PanWriter.from_file(src)
+
+        # Set device ID
+        new_id = body.get('device_id')
+        if new_id is not None:
+            writer.set_device_id(int(new_id))
+
+        # Rename device
+        new_name = body.get('device_name')
+        rename_count = 0
+        source_name = ""
+        if new_name:
+            parser = _PB(bytes(writer.data))
+            prefixes = {}
+            for obj in parser.objects:
+                name = obj['name'].strip().strip('\x00')
+                parts = name.split('-')
+                if len(parts) >= 3:
+                    prefix = f"{parts[0]}-{parts[1]}"
+                    if prefix and len(prefix) > 2:
+                        prefixes[prefix] = prefixes.get(prefix, 0) + 1
+            source_name = max(prefixes, key=prefixes.get) if prefixes else ""
+
+            if source_name:
+                if len(source_name) == len(new_name):
+                    rename_count = writer.rename_device(source_name, new_name)
+                else:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "detail": f"Name length mismatch: source='{source_name}' "
+                                      f"({len(source_name)} chars), new='{new_name}' "
+                                      f"({len(new_name)} chars). Must be same byte length.",
+                            "source_name": source_name,
+                        }
+                    )
+
+        # Set present values
+        values_set = {}
+        for point_name, value in body.get('values', {}).items():
+            ok = writer.set_present_value(point_name, float(value))
+            values_set[point_name] = "set" if ok else "not found"
+
+        out_path = Path(f"/tmp/binary_create_{body.get('device_id', 'output')}.pan")
+        writer.save(out_path)
+
+        filename = f"{new_name or ref['variant_id']}.pan"
+        return FileResponse(
+            out_path,
+            filename=filename,
+            media_type="application/octet-stream",
+            headers={
+                "X-Source-Name": source_name,
+                "X-Rename-Count": str(rename_count),
+                "X-Values-Status": json.dumps(values_set),
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Binary create failed: {e}")
+
+
+# ─── #17: Bulk Programming (improved copy) ───────────────────────────────────
+
+@app.post("/api/binary/bulk")
+async def binary_bulk(body: dict = None):
+    """Generate multiple .pan files from a single source template.
+
+    Returns a zip containing all generated .pan files plus a summary CSV.
+
+    Body: {
+        "source": {"category": "SBS_VAV", "variant_id": "2001"},
+        "devices": [
+            {"device_id": 901, "device_name": "VAV-01", "values": {"RMT-SP": 72.0}},
+            {"device_id": 902, "device_name": "VAV-02", "values": {"RMT-SP": 74.0}},
+            {"device_id": 903, "device_name": "VAV-03", "values": {}}
+        ]
+    }
+    """
+    import zipfile
+    import csv
+    import io
+    from app.pan_binary import PanWriter, PanBinary as _PB
+
+    if not body or 'source' not in body or 'devices' not in body:
+        raise HTTPException(400, "Must provide 'source' and 'devices' list")
+
+    devices = body['devices']
+    if not devices:
+        raise HTTPException(400, "devices list is empty")
+
+    ref = body['source']
+    folder = engine._cat_folder(ref['category'])
+    cat_dir = engine.cfg.upload_root / folder
+    src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+          next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"Source not found: {ref['variant_id']}")
+
+    # Read source binary once
+    if str(src).endswith('.panx'):
+        import zipfile as _zf
+        with _zf.ZipFile(src) as z:
+            pan_name = [n for n in z.namelist() if n.endswith('.pan')][0]
+            source_data = z.read(pan_name)
+    else:
+        source_data = src.read_bytes()
+
+    # Auto-detect source device name
+    parser = _PB(source_data)
+    prefixes = {}
+    for obj in parser.objects:
+        name = obj['name'].strip().strip('\x00')
+        parts = name.split('-')
+        if len(parts) >= 3:
+            prefix = f"{parts[0]}-{parts[1]}"
+            if prefix and len(prefix) > 2:
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+    source_name = max(prefixes, key=prefixes.get) if prefixes else ""
+
+    # Build output zip
+    zip_buffer = io.BytesIO()
+    csv_buffer = io.StringIO()
+    csv_writer = csv.writer(csv_buffer)
+    csv_writer.writerow(['device_id', 'device_name', 'status', 'rename_count', 'values_set', 'errors'])
+
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for dev in devices:
+            dev_id = dev.get('device_id', 0)
+            dev_name = dev.get('device_name', f'device_{dev_id}')
+            errors = []
+
+            try:
+                writer = PanWriter(bytes(source_data))
+
+                # Set device ID
+                if dev_id:
+                    writer.set_device_id(int(dev_id))
+
+                # Rename
+                rename_count = 0
+                if dev_name and source_name:
+                    if len(dev_name) == len(source_name):
+                        rename_count = writer.rename_device(source_name, dev_name)
+                    else:
+                        errors.append(
+                            f"Name length mismatch: '{source_name}'({len(source_name)}) "
+                            f"vs '{dev_name}'({len(dev_name)})"
+                        )
+
+                # Set values
+                values_ok = 0
+                for pt, val in dev.get('values', {}).items():
+                    if writer.set_present_value(pt, float(val)):
+                        values_ok += 1
+                    else:
+                        errors.append(f"Point not found: {pt}")
+
+                pan_bytes = bytes(writer.data)
+                filename = f"{dev_name}.pan"
+                zf.writestr(filename, pan_bytes)
+
+                status = "ok" if not errors else "partial"
+                csv_writer.writerow([dev_id, dev_name, status, rename_count,
+                                     values_ok, '; '.join(errors) if errors else ''])
+            except Exception as e:
+                csv_writer.writerow([dev_id, dev_name, 'error', 0, 0, str(e)])
+
+        # Add summary CSV
+        zf.writestr('summary.csv', csv_buffer.getvalue())
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="bulk_{ref["variant_id"]}_{len(devices)}devices.zip"'
+        }
+    )
+
+
+# ─── #22: Field Diagnostic ───────────────────────────────────────────────────
+
+@app.post("/api/binary/diagnose")
+async def binary_diagnose(file: UploadFile = File(...)):
+    """Upload a .pan/.panx file and receive a full diagnostic report.
+
+    Returns device info, object summary, loop configs, point details,
+    trend configs, schedule summaries, and warnings.
+    """
+    from app.pan_binary import PanBinary
+
+    content = await file.read()
+    filename = file.filename or "upload.pan"
+
+    try:
+        if filename.endswith('.panx'):
+            import zipfile as _zf
+            import io as _io
+            with _zf.ZipFile(_io.BytesIO(content)) as z:
+                pan_name = [n for n in z.namelist() if n.endswith('.pan')][0]
+                pan_data = z.read(pan_name)
+        else:
+            pan_data = content
+
+        pan = PanBinary(pan_data)
+    except Exception as e:
+        raise HTTPException(400, f"Failed to parse file: {e}")
+
+    # Device info
+    device_id = struct.unpack('<I', pan.data[4:8])[0] if len(pan.data) >= 8 else None
+
+    # Find device name from most common prefix
+    prefixes = {}
+    for obj in pan.objects:
+        name = obj['name'].strip().strip('\x00')
+        parts = name.split('-')
+        if len(parts) >= 3:
+            prefix = f"{parts[0]}-{parts[1]}"
+            if prefix and len(prefix) > 2:
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+    device_name = max(prefixes, key=prefixes.get) if prefixes else "unknown"
+
+    # Object summary
+    summary = {cat: len(items) for cat, items in pan.get_all_objects().items()}
+
+    # Points with details
+    points = pan.get_point_details()
+
+    # Loops
+    loops = pan.get_loops()
+
+    # Trends
+    trends = pan.get_trends()
+
+    # Schedules
+    schedules = pan.get_schedules()
+
+    # Programs
+    programs = pan.get_programs()
+
+    # --- Generate warnings ---
+    warnings = []
+
+    # Out-of-service points
+    oos_points = [p['name'] for p in points if p.get('out_of_service')]
+    if oos_points:
+        warnings.append({
+            "type": "out_of_service",
+            "severity": "warning",
+            "message": f"{len(oos_points)} point(s) are out-of-service",
+            "details": oos_points,
+        })
+
+    # Points with unusual present values (analog points at exactly 0 or very large)
+    suspect_values = []
+    for p in points:
+        pv = p.get('present_value')
+        if pv is not None:
+            if abs(pv) > 10000:
+                suspect_values.append({"name": p['name'], "value": pv, "reason": "unusually large"})
+    if suspect_values:
+        warnings.append({
+            "type": "unusual_values",
+            "severity": "info",
+            "message": f"{len(suspect_values)} point(s) have unusually large values",
+            "details": suspect_values,
+        })
+
+    # Loops missing bindings
+    incomplete_loops = []
+    for loop in loops:
+        missing = []
+        if not loop.get('input_ref'):
+            missing.append('input')
+        if not loop.get('output_ref'):
+            missing.append('output')
+        if not loop.get('setpoint_ref') and loop.get('setpoint_value') is None:
+            missing.append('setpoint')
+        if missing:
+            incomplete_loops.append({"name": loop['name'], "missing": missing})
+    if incomplete_loops:
+        warnings.append({
+            "type": "incomplete_loops",
+            "severity": "warning",
+            "message": f"{len(incomplete_loops)} loop(s) have missing bindings",
+            "details": incomplete_loops,
+        })
+
+    # Empty trends (no point references)
+    empty_trends = [t['name'] for t in trends if not t.get('refs')]
+    if empty_trends:
+        warnings.append({
+            "type": "empty_trends",
+            "severity": "info",
+            "message": f"{len(empty_trends)} trend(s) have no point references",
+            "details": empty_trends,
+        })
+
+    # Disabled programs
+    disabled_progs = [p['name'] for p in programs if p.get('enabled') is False]
+    if disabled_progs:
+        warnings.append({
+            "type": "disabled_programs",
+            "severity": "info",
+            "message": f"{len(disabled_progs)} program(s) are disabled",
+            "details": disabled_progs,
+        })
+
+    return {
+        "filename": filename,
+        "device": {
+            "id": device_id,
+            "name": device_name,
+            "object_count": len(pan.objects),
+            "file_size": len(pan_data),
+        },
+        "object_summary": summary,
+        "loops": loops,
+        "points": points,
+        "trends": trends,
+        "schedules": schedules,
+        "programs": programs,
+        "warnings": warnings,
+        "warning_count": len(warnings),
+    }
+
+
+# ─── #19: Schedule Management ────────────────────────────────────────────────
+
+@app.get("/api/binary/schedules/{category}/{variant_id}")
+async def binary_schedules(category: str, variant_id: str):
+    """Get all schedule objects with decoded weekly schedules from the .pan binary.
+
+    Returns schedule names, default values, and weekly schedule byte pairs.
+    """
+    from app.pan_binary import PanBinary
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    schedules = pan.get_schedules()
+    return {
+        "variant_id": variant_id,
+        "category": category,
+        "schedule_count": len(schedules),
+        "schedules": schedules,
+    }
+
+
+# ─── #20: Trend Info ─────────────────────────────────────────────────────────
+
+@app.get("/api/binary/trends/{category}/{variant_id}")
+async def binary_trends(category: str, variant_id: str):
+    """Get all trend objects with point references and log intervals from .pan binary.
+
+    Returns trend names, referenced points, and configuration details.
+    """
+    from app.pan_binary import PanBinary
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    trends = pan.get_trends()
+
+    # Enrich with additional data from the raw objects
+    trend_details = []
+    for obj in pan.objects:
+        if obj['category'] != 'TREND':
+            continue
+
+        props = obj.get('properties', {})
+        data = obj['data_region']
+
+        detail = {
+            'name': obj['name'],
+            'refs': [r['ref'] for r in obj['refs']
+                     if r['type'] != 'NULL' and r['instance'] < 300],
+            'present_value': obj.get('present_value'),
+        }
+
+        # Try to extract log interval (property 0x6c = 108 for trends stores interval)
+        for i in range(min(len(data) - 6, 200)):
+            if data[i] == 0x6c and data[i+1] == 0x44:
+                import struct as _st
+                val = _st.unpack('>f', data[i+2:i+6])[0]
+                if 0 < val < 86400:  # Reasonable interval (up to 24h in seconds)
+                    detail['log_interval_seconds'] = round(val, 1)
+                    break
+
+        # Check enabled state
+        for tag, val in props.get(0x0A, []):
+            if tag == 'uint8':
+                detail['enabled'] = val == 1
+
+        trend_details.append(detail)
+
+    return {
+        "variant_id": variant_id,
+        "category": category,
+        "trend_count": len(trend_details),
+        "trends": trend_details,
+    }
 
 
 @app.get("/api/files/assets/shared")
