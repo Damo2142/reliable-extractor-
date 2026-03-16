@@ -1073,6 +1073,7 @@ class Composer:
         and writes the corrected .pan back.
         """
         from app.pan_binary import PanBinary, PanWriter
+        import struct
 
         writer = PanWriter(pan_path.read_bytes())
         parser = PanBinary(writer.data)
