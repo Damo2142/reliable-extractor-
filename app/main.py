@@ -1797,7 +1797,13 @@ async def composer_build_from_modules(body: dict = None):
             if len(parts) == 2:
                 cat_key, val = parts
                 user_val = options.get(cat_key, "")
-                if str(user_val).lower() == val.lower():
+                # Handle boolean toggles: co2.true matches co2=true or co2=True
+                user_str = str(user_val).lower().strip()
+                if user_str == val.lower():
+                    if mod_id not in module_ids:
+                        module_ids.append(mod_id)
+                # Also handle "true"/"false" for toggle options
+                elif val.lower() == "true" and user_str in ("true", "1", "yes", "on"):
                     if mod_id not in module_ids:
                         module_ids.append(mod_id)
             elif opt_key in options and options[opt_key]:
