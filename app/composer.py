@@ -874,6 +874,20 @@ class Composer:
                 "from": src,
             })
 
+        # Build ARRAY/TABLE source mapping for binary post-processing
+        # Maps object name -> source variant key (e.g. "VAV/VAV-IS10001")
+        array_table_sources = {}
+        for arr in arrays:
+            src = arr.get("_source", "")
+            name = arr.get("name", "")
+            if src and name:
+                array_table_sources[name] = src
+        for tbl in tables:
+            src = tbl.get("_source", "")
+            name = tbl.get("name", "")
+            if src and name:
+                array_table_sources[name] = src
+
         composed_meta = dict(all_meta)
         composed_meta.update({
             "composed": True,
@@ -881,6 +895,7 @@ class Composer:
             "device_id": device_id,
             "device_name": device_name,
             "graphics_sources": all_graphics_sources,
+            "array_table_sources": array_table_sources,
         })
 
         result = {
@@ -1125,6 +1140,93 @@ class Composer:
                                 patched += 1
                     except (ValueError, TypeError):
                         pass
+
+        # Restore ARRAY and TABLE data regions from source .panx binaries
+        # The XML roundtrip through PFG drops all ARRAY values and TABLE in/out pairs.
+        # We find the source .panx for each ARRAY/TABLE, parse its binary, and copy
+        # the raw data region into the PFG-generated .pan.
+        meta = composition.get("meta", {})
+        array_table_sources = meta.get("array_table_sources", {})
+
+        if array_table_sources:
+            # Cache parsed source binaries to avoid re-reading
+            source_binary_cache = {}  # variant_key -> PanBinary
+
+            for obj_name, variant_key in array_table_sources.items():
+                try:
+                    if variant_key not in source_binary_cache:
+                        # variant_key is "CATEGORY/variant_id" e.g. "VAV/VAV-IS10001"
+                        parts = variant_key.split("/", 1)
+                        if len(parts) != 2:
+                            continue
+                        cat_key, var_id = parts
+                        folder_name = self._cat_folder(cat_key)
+                        cat_dir = self.cfg.upload_root / folder_name
+
+                        # Find source .panx or .pan
+                        src_panx = next(cat_dir.rglob(f"{var_id}.panx"), None)
+                        src_pan = next(cat_dir.rglob(f"{var_id}.pan"), None)
+
+                        if src_panx:
+                            source_binary_cache[variant_key] = PanBinary.from_panx(src_panx)
+                        elif src_pan:
+                            source_binary_cache[variant_key] = PanBinary.from_file(src_pan)
+                        else:
+                            logger.warning(
+                                f"Binary post-process: source .panx/.pan not found for "
+                                f"{variant_key} in {cat_dir}"
+                            )
+                            continue
+
+                    source_pan = source_binary_cache[variant_key]
+
+                    # Find the matching object in the source binary by name
+                    # Names may differ by device prefix, so match on the suffix
+                    # (e.g. source has "1001-AY1", target has "{device-name}-AY1")
+                    source_obj = None
+                    obj_suffix = obj_name.split('}')[-1] if '}' in obj_name else obj_name
+                    # Strip leading dash from suffix for matching
+                    obj_suffix_bare = obj_suffix.lstrip('-')
+
+                    for sobj in source_pan.objects:
+                        sname = sobj['name']
+                        s_suffix = sname.split('}')[-1] if '}' in sname else sname
+                        s_suffix_bare = s_suffix.lstrip('-')
+                        # Also try stripping numeric device prefix
+                        # e.g. "1001-AY1" -> "-AY1" -> "AY1"
+                        import re as _re
+                        s_stripped = _re.sub(r'^\d+-', '', sname)
+
+                        if (s_suffix_bare == obj_suffix_bare or
+                            s_stripped == obj_suffix_bare or
+                            sname.endswith(obj_suffix_bare)):
+                            source_obj = sobj
+                            break
+
+                    if source_obj is None:
+                        logger.debug(
+                            f"Binary post-process: no source object matching "
+                            f"'{obj_name}' (suffix '{obj_suffix_bare}') in {variant_key}"
+                        )
+                        continue
+
+                    source_data = source_obj['data_region']
+                    if not source_data:
+                        continue
+
+                    # Copy the raw data region into the generated .pan
+                    if writer.copy_data_region(obj_name, source_data):
+                        patched += 1
+                        logger.info(
+                            f"Binary post-process: restored data region for "
+                            f"'{obj_name}' ({len(source_data)} bytes) from {variant_key}"
+                        )
+
+                except Exception as e:
+                    logger.warning(
+                        f"Binary post-process: failed to restore '{obj_name}' "
+                        f"from {variant_key}: {e}"
+                    )
 
         if patched > 0:
             writer.save(pan_path)

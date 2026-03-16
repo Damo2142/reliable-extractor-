@@ -272,7 +272,124 @@ class PanBinary:
             return 'SMARTSENSOR'
         if '-GRP' in upper or 'SYSTEM' in upper:
             return 'SYSTEMGROUP'
+        # ARRAY objects: names ending in -AY, -AY1, -AY2, etc.
+        if re.search(r'-AY\d*$', upper):
+            return 'ARRAY'
+        # TABLE objects: names ending in -TBL, -TBL1, -TBL2, etc.
+        if re.search(r'-TBL\d*$', upper):
+            return 'TABLE'
         return 'POINT'
+
+    def get_arrays(self) -> list:
+        """Get all ARRAY objects with their raw data regions and decoded values.
+
+        ARRAY objects store values as sequential floats with 0x44 tag:
+            44 [4-byte BE float] 00  (repeated for each element)
+
+        Returns list of dicts with:
+            name: object name (e.g. '{device-name}-AY1')
+            offset: byte offset of Mu header in binary
+            data_start: byte offset where data region starts (after name)
+            data_end: byte offset where data region ends (next Mu header)
+            data_region: raw bytes of the data region
+            values: list of decoded float values
+        """
+        arrays = []
+        for obj in self.objects:
+            if obj['category'] != 'ARRAY':
+                continue
+
+            data = obj['data_region']
+            values = []
+
+            # Decode sequential float values: 0x44 [4-byte BE float]
+            i = 0
+            while i < len(data) - 5:
+                if data[i] == 0x44:
+                    try:
+                        val = struct.unpack('>f', data[i+1:i+5])[0]
+                        if val == val and -1e10 < val < 1e10:  # valid, not NaN
+                            values.append(round(val, 6))
+                    except struct.error:
+                        pass
+                    i += 5
+                    # Skip trailing 0x00 separator if present
+                    if i < len(data) and data[i] == 0x00:
+                        i += 1
+                    continue
+                i += 1
+
+            arrays.append({
+                'name': obj['name'],
+                'offset': obj['offset'],
+                'data_start': obj['name_end'],
+                'data_end': obj['name_end'] + len(data),
+                'data_region': data,
+                'values': values,
+                'value_count': len(values),
+            })
+
+        return arrays
+
+    def get_tables(self) -> list:
+        """Get all TABLE objects with their raw data regions and decoded rows.
+
+        TABLE objects store in/out pairs as sequential floats with 0x44 tag,
+        similar to ARRAY objects but values are paired (input, output).
+
+        Returns list of dicts with:
+            name: object name (e.g. '{device-name}-TBL1')
+            offset: byte offset of Mu header in binary
+            data_start: byte offset where data region starts
+            data_end: byte offset where data region ends
+            data_region: raw bytes of the data region
+            rows: list of (input, output) tuples
+            values: flat list of all decoded float values
+        """
+        tables = []
+        for obj in self.objects:
+            if obj['category'] != 'TABLE':
+                continue
+
+            data = obj['data_region']
+            values = []
+
+            # Decode sequential float values: 0x44 [4-byte BE float]
+            i = 0
+            while i < len(data) - 5:
+                if data[i] == 0x44:
+                    try:
+                        val = struct.unpack('>f', data[i+1:i+5])[0]
+                        if val == val and -1e10 < val < 1e10:  # valid, not NaN
+                            values.append(round(val, 6))
+                    except struct.error:
+                        pass
+                    i += 5
+                    if i < len(data) and data[i] == 0x00:
+                        i += 1
+                    continue
+                i += 1
+
+            # Pair values as (input, output) rows
+            rows = []
+            for j in range(0, len(values) - 1, 2):
+                rows.append({
+                    'input': values[j],
+                    'output': values[j + 1],
+                })
+
+            tables.append({
+                'name': obj['name'],
+                'offset': obj['offset'],
+                'data_start': obj['name_end'],
+                'data_end': obj['name_end'] + len(data),
+                'data_region': data,
+                'rows': rows,
+                'values': values,
+                'value_count': len(values),
+            })
+
+        return tables
 
     def get_loops(self) -> list:
         """Get all LOOP objects with input/setpoint/output bindings and PID params.
@@ -387,7 +504,7 @@ class PanBinary:
         points = []
         for obj in self.objects:
             if obj['category'] in ('LOOP', 'TREND', 'SCHEDULE', 'PROGRAM',
-                                    'SMARTSENSOR', 'SYSTEMGROUP'):
+                                    'SMARTSENSOR', 'SYSTEMGROUP', 'ARRAY', 'TABLE'):
                 continue
             points.append({
                 'name': obj['name'],
@@ -871,6 +988,79 @@ class PanWriter:
             self.data[pos:pos + 4] = new_objid
 
         return True
+
+    def copy_data_region(self, obj_name: str, source_data: bytes) -> bool:
+        """Copy a raw data region from a source binary into this binary.
+
+        Finds the object by name in this binary, then replaces its data region
+        with the source data region bytes. This enables lossless transfer of
+        ARRAY/TABLE data that PFG drops during the XML roundtrip.
+
+        The data region is everything between one "Mu" header's name end and
+        the next "Mu" header. When copying, the source data region must be <=
+        the target's allocated space. If larger, we skip (log warning).
+
+        Args:
+            obj_name: Name of the object to find (e.g. '{device-name}-AY1')
+            source_data: Raw bytes of the source object's data region
+
+        Returns:
+            True if the copy succeeded, False if the object wasn't found or
+            the source data was too large to fit.
+        """
+        if not source_data:
+            return False
+
+        # Find the object by name in this binary
+        name_bytes = obj_name.encode('utf-8')
+
+        for m in re.finditer(b'\x4d\x75(.)', bytes(self.data)):
+            name_len = m.group(1)[0]
+            if name_len < 2 or name_len > 200:
+                continue
+
+            name_start = m.start() + 3
+            candidate = self.data[name_start:name_start + name_len]
+
+            try:
+                candidate_name = candidate.decode('utf-8').strip('\x00')
+            except (UnicodeDecodeError, ValueError):
+                continue
+
+            if candidate_name != obj_name:
+                continue
+
+            # Found the target object — determine its data region boundaries
+            name_end = name_start + name_len
+            next_mu = bytes(self.data).find(b'\x4d\x75', name_end + 10)
+            if next_mu < 0:
+                next_mu = min(name_end + 500, len(self.data))
+
+            target_region_size = next_mu - name_end
+
+            if len(source_data) > target_region_size:
+                logger.warning(
+                    f"copy_data_region: source data for '{obj_name}' is "
+                    f"{len(source_data)} bytes but target only has "
+                    f"{target_region_size} bytes — skipping"
+                )
+                return False
+
+            # Copy source data into target, pad remainder with 0x00
+            self.data[name_end:name_end + len(source_data)] = source_data
+            # Zero-fill any remaining space
+            remaining = target_region_size - len(source_data)
+            if remaining > 0:
+                self.data[name_end + len(source_data):next_mu] = b'\x00' * remaining
+
+            logger.info(
+                f"copy_data_region: copied {len(source_data)} bytes for "
+                f"'{obj_name}' (target had {target_region_size} bytes)"
+            )
+            return True
+
+        logger.debug(f"copy_data_region: object '{obj_name}' not found in target binary")
+        return False
 
     def save(self, path: Path):
         """Write the modified .pan to a file."""

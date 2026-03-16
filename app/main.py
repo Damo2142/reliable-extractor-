@@ -462,12 +462,31 @@ async def binary_data(category: str, variant_id: str):
     else:
         raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
 
+    # Get arrays and tables, stripping raw data_region (not JSON-serializable)
+    arrays = []
+    for arr in pan.get_arrays():
+        arrays.append({
+            'name': arr['name'],
+            'values': arr['values'],
+            'value_count': arr['value_count'],
+        })
+    tables = []
+    for tbl in pan.get_tables():
+        tables.append({
+            'name': tbl['name'],
+            'rows': tbl['rows'],
+            'values': tbl['values'],
+            'value_count': tbl['value_count'],
+        })
+
     return {
         "variant_id": variant_id,
         "object_count": len(pan.objects),
         "loops": pan.get_loops(),
         "trends": pan.get_trends(),
         "points": pan.get_point_details(),
+        "arrays": arrays,
+        "tables": tables,
         "summary": {cat: len(items) for cat, items in pan.get_all_objects().items()},
     }
 
