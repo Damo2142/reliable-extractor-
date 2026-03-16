@@ -1650,42 +1650,317 @@ async def composer_variant_metadata():
     return composer.build_variant_metadata()
 
 
+# ─── Modular Library Endpoints ────────────────────────────────────────────────
+
+MODULES_ROOT = Path("/srv/dfa/shared/files/vendors/reliable/modules")
+
+def _load_module_index():
+    """Load the modules index.json."""
+    idx_path = MODULES_ROOT / "index.json"
+    if not idx_path.exists():
+        return {}
+    return json.loads(idx_path.read_text())
+
+
+def _load_module(category: str, module_id: str) -> dict | None:
+    """Load a single module JSON file."""
+    mod_path = MODULES_ROOT / category / f"{module_id}.json"
+    if not mod_path.exists():
+        return None
+    return json.loads(mod_path.read_text())
+
+
+def _recommend_controller(equip_type: str, io_totals: dict) -> str:
+    """Recommend a controller model based on equipment type and I/O counts."""
+    total_ai = io_totals.get('AI', 0)
+    total_ao = io_totals.get('AO', 0)
+    total_bi = io_totals.get('BI', 0)
+    total_bo = io_totals.get('BO', 0)
+    total_io = total_ai + total_ao + total_bi + total_bo
+
+    if equip_type in ('VAV', 'VVT'):
+        if total_ao > 5:
+            return 'MACH-ProZone-88'
+        elif total_ao > 3:
+            return 'RC-FLEXair-36-A-M'
+        else:
+            return 'RC-FLEXair-34-A-F'
+    elif equip_type in ('AHU', 'RTU', 'DOAS'):
+        if total_io > 16:
+            return 'MACH-ProSys-88'
+        elif total_io > 12:
+            return 'MACH-Pro2-88'
+        else:
+            return 'MACH-Pro1-88'
+    elif equip_type == 'FCU':
+        return 'RC-FLEXone-B4B' if total_io <= 8 else 'RC-FLEXone-B8B'
+    elif equip_type in ('PLANT', 'MASTER'):
+        return 'MACH-ProSys-88'
+    elif equip_type == 'EF':
+        if total_ao > 0:
+            return 'MACH-Pro1-44'
+        return 'RC-FLEXone-B4B'
+    else:
+        return 'MACH-Pro1-88'
+
+
+@app.get("/api/composer/modules")
+async def composer_list_modules():
+    """List all available modules grouped by category.
+    Returns categories with module summaries (id, name, description, tags, io_summary, status).
+    """
+    index = _load_module_index()
+    categories_data = index.get("categories", {})
+    result = {}
+
+    for cat_key, cat_info in categories_data.items():
+        module_ids = cat_info.get("modules", [])
+        modules = []
+        for mod_id in module_ids:
+            mod = _load_module(cat_key, mod_id)
+            if mod:
+                modules.append({
+                    "id": mod.get("id", mod_id),
+                    "name": mod.get("name", mod_id),
+                    "description": mod.get("description", ""),
+                    "tags": mod.get("tags", []),
+                    "io_summary": mod.get("io_summary", {}),
+                    "status": mod.get("status", "placeholder"),
+                    "compatible_equipment": mod.get("compatible_equipment", []),
+                    "requires": mod.get("requires", []),
+                    "conflicts_with": mod.get("conflicts_with", []),
+                })
+        result[cat_key] = {
+            "label": cat_info.get("label", cat_key),
+            "modules": modules,
+            "count": len(modules),
+        }
+
+    return {
+        "categories": result,
+        "total_modules": index.get("module_count", 0),
+        "complete_count": index.get("complete_count", 0),
+        "placeholder_count": index.get("placeholder_count", 0),
+    }
+
+
+@app.get("/api/composer/modules/{category}/{module_id}")
+async def composer_get_module(category: str, module_id: str):
+    """Get full detail for a single module."""
+    mod = _load_module(category, module_id)
+    if mod is None:
+        raise HTTPException(404, f"Module {category}/{module_id} not found")
+    return mod
+
+
+@app.post("/api/composer/build-from-modules")
+async def composer_build_from_modules(body: dict = None):
+    """Build a composed controller configuration from modular library pieces.
+
+    Body: {
+        "equipment_type": "AHU",
+        "configuration": "vav_dat",
+        "selected_modules": ["sf_vfd_static", ...],  (optional override)
+        "device_name": "{device-name}",
+        "device_id": "900"
+    }
+
+    Returns composed configuration in the same format as /api/composer/compose.
+    """
+    if not body or "equipment_type" not in body:
+        raise HTTPException(400, "Must provide 'equipment_type'")
+
+    equip_type = body["equipment_type"].upper()
+    configuration = body.get("configuration", "")
+    selected_override = body.get("selected_modules", None)
+    device_name = body.get("device_name", "{device-name}")
+    device_id = body.get("device_id", "900")
+
+    index = _load_module_index()
+
+    # Resolve module list
+    if selected_override:
+        module_ids = selected_override
+    else:
+        rules = index.get("equipment_rules", {})
+        equip_rules = rules.get(equip_type, {})
+        config_rule = equip_rules.get(configuration)
+        if not config_rule:
+            raise HTTPException(404, f"No equipment rule for {equip_type}/{configuration}")
+        module_ids = list(config_rule.get("required", []))
+        # Add optional modules based on options
+        options = body.get("options", {})
+        opt_map = config_rule.get("optional_by_option", {})
+        for opt_key, mod_id in opt_map.items():
+            # opt_key is like "cooling.chilled_water" — check if that option is selected
+            parts = opt_key.split(".", 1)
+            if len(parts) == 2:
+                cat_key, val = parts
+                user_val = options.get(cat_key, "")
+                if str(user_val).lower() == val.lower():
+                    if mod_id not in module_ids:
+                        module_ids.append(mod_id)
+            elif opt_key in options and options[opt_key]:
+                if mod_id not in module_ids:
+                    module_ids.append(mod_id)
+
+    # Load all modules
+    categories_data = index.get("categories", {})
+    # Build a lookup: module_id -> category
+    mod_category_map = {}
+    for cat_key, cat_info in categories_data.items():
+        for mid in cat_info.get("modules", []):
+            mod_category_map[mid] = cat_key
+
+    loaded_modules = []
+    missing = []
+    for mod_id in module_ids:
+        cat = mod_category_map.get(mod_id)
+        if not cat:
+            missing.append(mod_id)
+            continue
+        mod = _load_module(cat, mod_id)
+        if mod:
+            loaded_modules.append(mod)
+        else:
+            missing.append(mod_id)
+
+    if not loaded_modules:
+        raise HTTPException(400, f"No modules could be loaded. Missing: {missing}")
+
+    # Merge into a single composition
+    # Instance numbering: programs get sequential instances, points get sequential per type
+    all_programs = []
+    all_points = []
+    all_loops = []
+    io_totals = {}
+    prog_instance = 1
+    point_instances = {}  # type -> next instance
+
+    # Standard starting instances for BACnet objects
+    INSTANCE_STARTS = {
+        'AI': 1, 'AO': 1, 'AV': 1,
+        'BI': 1, 'BO': 1, 'BV': 1,
+        'MO': 1, 'MV': 1,
+    }
+    point_instances = dict(INSTANCE_STARTS)
+    loop_instance = 1
+
+    for mod in loaded_modules:
+        # Programs
+        for prog in mod.get("programs", []):
+            name = prog.get("name", f"PGR{prog_instance}")
+            if device_name and device_name != "{device-name}":
+                name = name.replace("{device-name}", device_name)
+            all_programs.append({
+                "name": name,
+                "instance": prog_instance,
+                "code": prog.get("code", ""),
+                "description": prog.get("description", ""),
+                "source_module": mod.get("id", ""),
+            })
+            prog_instance += 1
+
+        # Points
+        for pt in mod.get("points", []):
+            pt_type = pt.get("type", "AV")
+            inst = point_instances.get(pt_type, 1)
+            pt_name = pt.get("name", f"{pt_type}{inst}")
+            if device_name and device_name != "{device-name}":
+                pt_name = pt_name.replace("{device-name}", device_name)
+            all_points.append({
+                "type": pt_type,
+                "instance": inst,
+                "name": pt_name,
+                "description": pt.get("description", ""),
+                "io_type": pt.get("io_type", "software"),
+                "source_module": mod.get("id", ""),
+            })
+            point_instances[pt_type] = inst + 1
+
+        # Loops
+        for lp in mod.get("loops", []):
+            lp_name = lp.get("name", f"LOOP{loop_instance}")
+            if device_name and device_name != "{device-name}":
+                lp_name = lp_name.replace("{device-name}", device_name)
+            all_loops.append({
+                "name": lp_name,
+                "instance": loop_instance,
+                "input": lp.get("input", ""),
+                "setpoint": lp.get("setpoint", ""),
+                "output": lp.get("output", ""),
+                "description": lp.get("description", ""),
+                "source_module": mod.get("id", ""),
+            })
+            loop_instance += 1
+
+        # I/O totals
+        for k, v in mod.get("io_summary", {}).items():
+            io_totals[k] = io_totals.get(k, 0) + v
+
+    # Build objects dict grouped by type (compatible with compose output format)
+    objects = {}
+    for pt in all_points:
+        t = pt["type"]
+        if t not in objects:
+            objects[t] = []
+        objects[t].append(pt)
+    # Add programs
+    objects["PROGRAM"] = all_programs
+    # Add loops
+    objects["LOOP"] = all_loops
+
+    comp_id = f"{device_name or 'composed'}_{equip_type}_{configuration}".replace("{device-name}", "template")
+    rec_controller = _recommend_controller(equip_type, io_totals)
+
+    result = {
+        "id": comp_id,
+        "device_name": device_name,
+        "device_id": device_id,
+        "equipment_type": equip_type,
+        "configuration": configuration,
+        "objects": objects,
+        "modules_used": [m.get("id", "") for m in loaded_modules],
+        "module_count": len(loaded_modules),
+        "io_summary": io_totals,
+        "recommended_controller": rec_controller,
+        "program_count": len(all_programs),
+        "point_count": len(all_points),
+        "loop_count": len(all_loops),
+        "missing_modules": missing,
+        "stamp": "Created by DFA Composer -- SBS Controls Division",
+    }
+
+    # Cache for generate endpoints
+    composer._last_composition = result
+    return result
+
+
 @app.post("/api/composer/auto-match")
 async def composer_auto_match(body: dict = None):
-    """Auto-match library variants/programs to an equipment configuration.
+    """Auto-match modules to an equipment configuration (modular library version).
 
     Body: {
         "equipment_type": "AHU",
         "options": {
+            "control_strategy": "vav_dat",
             "supply_fan": "vfd",
-            "return_fan": "vfd",
+            "return_fan": "none",
             "cooling": "chilled_water",
             "heating": "hot_water",
-            "preheat": "hot_water",
-            "economizer": "enthalpy",
-            "energy_recovery": "none",
-            "co2": false,
-            "humidity": "none",
-            "space_temp": true,
-            "sensor": "smart_net"
+            ...
         }
     }
 
     Returns: {
-        "matches": [
-            {
-                "variant_id": "...",
-                "category": "...",
-                "score": 95,
-                "friendly_label": "...",
-                "description": "...",
-                "function_tags": [...],
-                "programs": [...],
-                "point_summary": {"AI": 5, "AO": 3, ...},
-                "recommended_controller": "..."
-            }
-        ],
-        "programs_by_function": { ... }
+        "equipment_type": "AHU",
+        "configuration": "vav_dat",
+        "modules": [ ... ],
+        "io_summary": { ... },
+        "recommended_controller": "...",
+        "total_programs": N,
+        "total_points": N,
+        "total_loops": N,
     }
     """
     if not body or "equipment_type" not in body:
@@ -1694,11 +1969,139 @@ async def composer_auto_match(body: dict = None):
     equip_type = body["equipment_type"].upper()
     options = body.get("options", {})
 
-    # Get all variant metadata and programs
+    index = _load_module_index()
+    rules = index.get("equipment_rules", {})
+    categories_data = index.get("categories", {})
+
+    # Build module_id -> category lookup
+    mod_category_map = {}
+    for cat_key, cat_info in categories_data.items():
+        for mid in cat_info.get("modules", []):
+            mod_category_map[mid] = cat_key
+
+    equip_rules = rules.get(equip_type, {})
+    if not equip_rules:
+        # Fallback: try the old variant-based matching
+        return await _legacy_auto_match(body)
+
+    # Determine configuration from options
+    configuration = options.get("control_strategy", "") or options.get("configuration", "")
+    if not configuration and equip_type == 'RTU':
+        configuration = 'standard'
+    elif not configuration and equip_type == 'EF':
+        configuration = 'standard'
+    elif not configuration and equip_type == 'MASTER':
+        configuration = 'standard'
+
+    # If no explicit configuration, pick the first available
+    if not configuration and equip_rules:
+        configuration = list(equip_rules.keys())[0]
+
+    config_rule = equip_rules.get(configuration)
+    if not config_rule:
+        # Try first available
+        configuration = list(equip_rules.keys())[0]
+        config_rule = equip_rules[configuration]
+
+    # Build module list
+    required_ids = list(config_rule.get("required", []))
+    optional_ids = []
+    opt_map = config_rule.get("optional_by_option", {})
+
+    for opt_key, mod_id in opt_map.items():
+        parts = opt_key.split(".", 1)
+        if len(parts) == 2:
+            cat_key, val = parts
+            user_val = options.get(cat_key, "")
+            if str(user_val).lower() == val.lower():
+                optional_ids.append(mod_id)
+        elif opt_key in options and options[opt_key] and str(options[opt_key]).lower() not in ('none', 'false', '0', ''):
+            optional_ids.append(mod_id)
+
+    all_module_ids = required_ids + optional_ids
+
+    # Load module summaries
+    modules_info = []
+    io_totals = {}
+    total_programs = 0
+    total_points = 0
+    total_loops = 0
+
+    for mod_id in all_module_ids:
+        cat = mod_category_map.get(mod_id)
+        mod = _load_module(cat, mod_id) if cat else None
+        is_required = mod_id in required_ids
+
+        if mod:
+            io_s = mod.get("io_summary", {})
+            for k, v in io_s.items():
+                io_totals[k] = io_totals.get(k, 0) + v
+            total_programs += len(mod.get("programs", []))
+            total_points += len(mod.get("points", []))
+            total_loops += len(mod.get("loops", []))
+
+            modules_info.append({
+                "id": mod.get("id", mod_id),
+                "name": mod.get("name", mod_id),
+                "description": mod.get("description", ""),
+                "category": cat or "",
+                "tags": mod.get("tags", []),
+                "io_summary": io_s,
+                "status": mod.get("status", "placeholder"),
+                "required": is_required,
+                "programs": [{"name": p.get("name", ""), "description": p.get("description", "")} for p in mod.get("programs", [])],
+            })
+        else:
+            modules_info.append({
+                "id": mod_id,
+                "name": mod_id,
+                "description": "Module not found",
+                "category": "",
+                "tags": [],
+                "io_summary": {},
+                "status": "missing",
+                "required": is_required,
+                "programs": [],
+            })
+
+    rec_controller = _recommend_controller(equip_type, io_totals)
+
+    # Also build list of all available optional modules (not selected) for display
+    available_optional = []
+    for opt_key, mod_id in opt_map.items():
+        if mod_id not in all_module_ids:
+            cat = mod_category_map.get(mod_id)
+            mod = _load_module(cat, mod_id) if cat else None
+            available_optional.append({
+                "id": mod_id,
+                "option_key": opt_key,
+                "name": mod.get("name", mod_id) if mod else mod_id,
+                "description": mod.get("description", "") if mod else "",
+                "status": mod.get("status", "unknown") if mod else "missing",
+            })
+
+    return {
+        "equipment_type": equip_type,
+        "configuration": configuration,
+        "configuration_description": config_rule.get("description", ""),
+        "modules": modules_info,
+        "available_optional": available_optional,
+        "io_summary": io_totals,
+        "recommended_controller": rec_controller,
+        "total_programs": total_programs,
+        "total_points": total_points,
+        "total_loops": total_loops,
+    }
+
+
+async def _legacy_auto_match(body: dict):
+    """Fallback: legacy variant-based auto-matching for equipment types without modular rules."""
+    equip_type = body["equipment_type"].upper()
+    options = body.get("options", {})
+
     all_meta = composer.build_variant_metadata()
     all_programs = composer.build_program_index()
 
-    # Group programs by variant
     programs_by_variant = {}
     for p in all_programs:
         vid = p.get("source_variant", "")
@@ -1706,7 +2109,6 @@ async def composer_auto_match(body: dict = None):
             programs_by_variant[vid] = []
         programs_by_variant[vid].append(p)
 
-    # Equipment type to category mapping
     equip_category_map = {
         'AHU': ['AHU', 'SBS_AHU', 'SBS_SPCAHU'],
         'VAV': ['VAV', 'SBS_VAV'],
@@ -1717,10 +2119,8 @@ async def composer_auto_match(body: dict = None):
         'VVT': ['VVT'],
         'UH': ['UH'],
     }
-
     target_categories = equip_category_map.get(equip_type, [equip_type])
 
-    # Option-to-tag mapping for scoring
     option_tag_map = {
         'supply_fan': {'vfd': ['Supply Fan'], 'single': ['Supply Fan']},
         'return_fan': {'vfd': ['Return Fan'], 'single': ['Return Fan']},
@@ -1756,7 +2156,6 @@ async def composer_auto_match(body: dict = None):
         'space_temp': {True: ['Supply Air Temp'], 'yes': ['Supply Air Temp']},
     }
 
-    # Build desired tags from options
     desired_tags = set()
     for opt_key, opt_val in options.items():
         if opt_val and opt_val != 'none' and opt_key in option_tag_map:
@@ -1766,37 +2165,26 @@ async def composer_auto_match(body: dict = None):
             else:
                 tags = tag_lookup.get(str(opt_val).lower(), [])
             desired_tags.update(tags)
-
-    # Always include base tags
     desired_tags.update(['Configuration', 'Network/BACnet', 'Operating Mode', 'Occupancy'])
 
     matches = []
-
     for variant_id, meta in all_meta.items():
         cat = meta.get("category", "")
         if cat not in target_categories:
             continue
-
         vtags = set(meta.get("function_tags", []))
         progs = programs_by_variant.get(variant_id, [])
         if not progs:
             continue
-
-        # Score: how many desired tags does this variant have?
         matched_tags = desired_tags & vtags
         extra_tags = vtags - desired_tags - {'Configuration', 'Network/BACnet', 'Schedule',
                                               'Data Arrays', 'Unit Conversion', 'Setpoints',
                                               'Operating Mode', 'Occupancy'}
-        # Base score from matched tags
         if len(desired_tags) > 0:
             tag_score = len(matched_tags) / len(desired_tags) * 80
         else:
             tag_score = 50
-
-        # Penalty for extra undesired features (mild)
         tag_score -= len(extra_tags) * 3
-
-        # Bonus for friendly label match
         label = (meta.get("friendly_label", "") + " " + meta.get("description", "")).lower()
         label_bonus = 0
         if equip_type.lower() in label:
@@ -1805,17 +2193,14 @@ async def composer_auto_match(body: dict = None):
             if opt_val and isinstance(opt_val, str) and opt_val.lower().replace('_', ' ') in label:
                 label_bonus += 3
         tag_score += min(label_bonus, 15)
-
         score = max(0, min(100, round(tag_score)))
 
-        # Point summary
         point_summary = {}
         for p in progs:
             deps = p.get("dependencies", {})
             for ptype, insts in deps.items():
                 point_summary[ptype] = point_summary.get(ptype, 0) + len(insts)
 
-        # Recommend controller model based on I/O count
         total_ai = point_summary.get('AI', 0)
         total_ao = point_summary.get('AO', 0)
         total_bi = point_summary.get('BI', 0)
@@ -1823,19 +2208,13 @@ async def composer_auto_match(body: dict = None):
         total_io = total_ai + total_ao + total_bi + total_bo
 
         if equip_type in ('VAV', 'VVT'):
-            if total_ao > 5:
-                rec_ctrl = 'MACH-ProZone-88'
-            elif total_ao > 3:
-                rec_ctrl = 'RC-FLEXair-36-A-M'
-            else:
-                rec_ctrl = 'RC-FLEXair-34-A-F'
+            if total_ao > 5: rec_ctrl = 'MACH-ProZone-88'
+            elif total_ao > 3: rec_ctrl = 'RC-FLEXair-36-A-M'
+            else: rec_ctrl = 'RC-FLEXair-34-A-F'
         elif equip_type in ('AHU', 'RTU'):
-            if total_io > 16:
-                rec_ctrl = 'MACH-ProSys-88'
-            elif total_io > 12:
-                rec_ctrl = 'MACH-Pro2-88'
-            else:
-                rec_ctrl = 'MACH-Pro1-88'
+            if total_io > 16: rec_ctrl = 'MACH-ProSys-88'
+            elif total_io > 12: rec_ctrl = 'MACH-Pro2-88'
+            else: rec_ctrl = 'MACH-Pro1-88'
         elif equip_type == 'FCU':
             rec_ctrl = 'RC-FLEXone-B4B' if total_io <= 8 else 'RC-FLEXone-B8B'
         elif equip_type == 'PLANT':
@@ -1844,9 +2223,7 @@ async def composer_auto_match(body: dict = None):
             rec_ctrl = 'MACH-Pro1-88'
 
         matches.append({
-            "variant_id": variant_id,
-            "category": cat,
-            "score": score,
+            "variant_id": variant_id, "category": cat, "score": score,
             "friendly_label": meta.get("friendly_label", ""),
             "description": meta.get("description", ""),
             "function_tags": sorted(vtags),
@@ -1863,12 +2240,10 @@ async def composer_auto_match(body: dict = None):
             "missing_tags": sorted(desired_tags - vtags),
         })
 
-    # Sort by score descending
     matches.sort(key=lambda m: m["score"], reverse=True)
 
-    # Also build a function-grouped program list (all programs that match ANY variant in the target categories)
     programs_by_function = {}
-    for m in matches[:5]:  # Top 5 matches
+    for m in matches[:5]:
         for p in m["programs"]:
             for tag in p.get("function_tags", []):
                 if tag not in programs_by_function:
@@ -1884,8 +2259,9 @@ async def composer_auto_match(body: dict = None):
         "equipment_type": equip_type,
         "options": options,
         "desired_tags": sorted(desired_tags),
-        "matches": matches[:20],  # Top 20
+        "matches": matches[:20],
         "programs_by_function": programs_by_function,
+        "legacy_mode": True,
     }
 
 
