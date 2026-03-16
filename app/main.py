@@ -1650,6 +1650,245 @@ async def composer_variant_metadata():
     return composer.build_variant_metadata()
 
 
+@app.post("/api/composer/auto-match")
+async def composer_auto_match(body: dict = None):
+    """Auto-match library variants/programs to an equipment configuration.
+
+    Body: {
+        "equipment_type": "AHU",
+        "options": {
+            "supply_fan": "vfd",
+            "return_fan": "vfd",
+            "cooling": "chilled_water",
+            "heating": "hot_water",
+            "preheat": "hot_water",
+            "economizer": "enthalpy",
+            "energy_recovery": "none",
+            "co2": false,
+            "humidity": "none",
+            "space_temp": true,
+            "sensor": "smart_net"
+        }
+    }
+
+    Returns: {
+        "matches": [
+            {
+                "variant_id": "...",
+                "category": "...",
+                "score": 95,
+                "friendly_label": "...",
+                "description": "...",
+                "function_tags": [...],
+                "programs": [...],
+                "point_summary": {"AI": 5, "AO": 3, ...},
+                "recommended_controller": "..."
+            }
+        ],
+        "programs_by_function": { ... }
+    }
+    """
+    if not body or "equipment_type" not in body:
+        raise HTTPException(400, "Must provide 'equipment_type'")
+
+    equip_type = body["equipment_type"].upper()
+    options = body.get("options", {})
+
+    # Get all variant metadata and programs
+    all_meta = composer.build_variant_metadata()
+    all_programs = composer.build_program_index()
+
+    # Group programs by variant
+    programs_by_variant = {}
+    for p in all_programs:
+        vid = p.get("source_variant", "")
+        if vid not in programs_by_variant:
+            programs_by_variant[vid] = []
+        programs_by_variant[vid].append(p)
+
+    # Equipment type to category mapping
+    equip_category_map = {
+        'AHU': ['AHU', 'SBS_AHU', 'SBS_SPCAHU'],
+        'VAV': ['VAV', 'SBS_VAV'],
+        'FCU': ['FCU'],
+        'RTU': ['RTU'],
+        'WSHP': ['WSHP'],
+        'PLANT': ['SBS_PLANTS'],
+        'VVT': ['VVT'],
+        'UH': ['UH'],
+    }
+
+    target_categories = equip_category_map.get(equip_type, [equip_type])
+
+    # Option-to-tag mapping for scoring
+    option_tag_map = {
+        'supply_fan': {'vfd': ['Supply Fan'], 'single': ['Supply Fan']},
+        'return_fan': {'vfd': ['Return Fan'], 'single': ['Return Fan']},
+        'cooling': {
+            'chilled_water': ['Chilled Water', 'Cooling', 'Valve Control'],
+            '1_stage_dx': ['Cooling', 'Staging'],
+            '2_stage_dx': ['Cooling', 'Staging'],
+            'modulating_dx': ['Cooling'],
+        },
+        'heating': {
+            'hot_water': ['Hot Water', 'Heating', 'Valve Control'],
+            'electric': ['Heating', 'Staging'],
+            'gas': ['Heating', 'Staging'],
+        },
+        'preheat': {'hot_water': ['Hot Water', 'Heating']},
+        'economizer': {
+            'enthalpy': ['Economizer', 'Mixed Air Damper'],
+            'dry_bulb': ['Economizer', 'Mixed Air Damper'],
+            'differential': ['Economizer', 'Mixed Air Damper'],
+        },
+        'energy_recovery': {'wheel': ['Energy Recovery'], 'plate': ['Energy Recovery']},
+        'reheat': {
+            'hot_water_mod': ['Hot Water', 'Heating', 'Valve Control'],
+            'hot_water_float': ['Hot Water', 'Heating', 'Valve Control'],
+            'electric': ['Heating'],
+        },
+        'co2': {True: ['CO2 Control'], 'yes': ['CO2 Control']},
+        'humidity': {
+            'humidification': ['Humidification'],
+            'dehumidification': ['Dehumidification'],
+            'both': ['Humidification', 'Dehumidification'],
+        },
+        'space_temp': {True: ['Supply Air Temp'], 'yes': ['Supply Air Temp']},
+    }
+
+    # Build desired tags from options
+    desired_tags = set()
+    for opt_key, opt_val in options.items():
+        if opt_val and opt_val != 'none' and opt_key in option_tag_map:
+            tag_lookup = option_tag_map[opt_key]
+            if isinstance(opt_val, bool):
+                tags = tag_lookup.get(True, [])
+            else:
+                tags = tag_lookup.get(str(opt_val).lower(), [])
+            desired_tags.update(tags)
+
+    # Always include base tags
+    desired_tags.update(['Configuration', 'Network/BACnet', 'Operating Mode', 'Occupancy'])
+
+    matches = []
+
+    for variant_id, meta in all_meta.items():
+        cat = meta.get("category", "")
+        if cat not in target_categories:
+            continue
+
+        vtags = set(meta.get("function_tags", []))
+        progs = programs_by_variant.get(variant_id, [])
+        if not progs:
+            continue
+
+        # Score: how many desired tags does this variant have?
+        matched_tags = desired_tags & vtags
+        extra_tags = vtags - desired_tags - {'Configuration', 'Network/BACnet', 'Schedule',
+                                              'Data Arrays', 'Unit Conversion', 'Setpoints',
+                                              'Operating Mode', 'Occupancy'}
+        # Base score from matched tags
+        if len(desired_tags) > 0:
+            tag_score = len(matched_tags) / len(desired_tags) * 80
+        else:
+            tag_score = 50
+
+        # Penalty for extra undesired features (mild)
+        tag_score -= len(extra_tags) * 3
+
+        # Bonus for friendly label match
+        label = (meta.get("friendly_label", "") + " " + meta.get("description", "")).lower()
+        label_bonus = 0
+        if equip_type.lower() in label:
+            label_bonus += 5
+        for opt_val in options.values():
+            if opt_val and isinstance(opt_val, str) and opt_val.lower().replace('_', ' ') in label:
+                label_bonus += 3
+        tag_score += min(label_bonus, 15)
+
+        score = max(0, min(100, round(tag_score)))
+
+        # Point summary
+        point_summary = {}
+        for p in progs:
+            deps = p.get("dependencies", {})
+            for ptype, insts in deps.items():
+                point_summary[ptype] = point_summary.get(ptype, 0) + len(insts)
+
+        # Recommend controller model based on I/O count
+        total_ai = point_summary.get('AI', 0)
+        total_ao = point_summary.get('AO', 0)
+        total_bi = point_summary.get('BI', 0)
+        total_bo = point_summary.get('BO', 0)
+        total_io = total_ai + total_ao + total_bi + total_bo
+
+        if equip_type in ('VAV', 'VVT'):
+            if total_ao > 5:
+                rec_ctrl = 'MACH-ProZone-88'
+            elif total_ao > 3:
+                rec_ctrl = 'RC-FLEXair-36-A-M'
+            else:
+                rec_ctrl = 'RC-FLEXair-34-A-F'
+        elif equip_type in ('AHU', 'RTU'):
+            if total_io > 16:
+                rec_ctrl = 'MACH-ProSys-88'
+            elif total_io > 12:
+                rec_ctrl = 'MACH-Pro2-88'
+            else:
+                rec_ctrl = 'MACH-Pro1-88'
+        elif equip_type == 'FCU':
+            rec_ctrl = 'RC-FLEXone-B4B' if total_io <= 8 else 'RC-FLEXone-B8B'
+        elif equip_type == 'PLANT':
+            rec_ctrl = 'MACH-ProSys-88'
+        else:
+            rec_ctrl = 'MACH-Pro1-88'
+
+        matches.append({
+            "variant_id": variant_id,
+            "category": cat,
+            "score": score,
+            "friendly_label": meta.get("friendly_label", ""),
+            "description": meta.get("description", ""),
+            "function_tags": sorted(vtags),
+            "programs": [{
+                "program_name": p.get("program_name", ""),
+                "program_instance": p.get("program_instance", ""),
+                "source_variant": p.get("source_variant", ""),
+                "source_category": p.get("source_category", ""),
+                "function_tags": p.get("function_tags", []),
+            } for p in progs],
+            "point_summary": point_summary,
+            "recommended_controller": rec_ctrl,
+            "matched_tags": sorted(matched_tags),
+            "missing_tags": sorted(desired_tags - vtags),
+        })
+
+    # Sort by score descending
+    matches.sort(key=lambda m: m["score"], reverse=True)
+
+    # Also build a function-grouped program list (all programs that match ANY variant in the target categories)
+    programs_by_function = {}
+    for m in matches[:5]:  # Top 5 matches
+        for p in m["programs"]:
+            for tag in p.get("function_tags", []):
+                if tag not in programs_by_function:
+                    programs_by_function[tag] = []
+                programs_by_function[tag].append({
+                    "program_name": p["program_name"],
+                    "source_variant": p["source_variant"],
+                    "source_category": p["source_category"],
+                    "program_instance": p["program_instance"],
+                })
+
+    return {
+        "equipment_type": equip_type,
+        "options": options,
+        "desired_tags": sorted(desired_tags),
+        "matches": matches[:20],  # Top 20
+        "programs_by_function": programs_by_function,
+    }
+
+
 @app.get("/api/composer/blanks")
 async def composer_list_blanks():
     """List available blank controller model templates for .pan/.panx generation."""
