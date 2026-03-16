@@ -2102,6 +2102,41 @@ async def composer_generate_template_package(body: dict = None):
                             zf.write(matches[0], arcname)
                             added_assets.add(arcname.lower())
 
+                # 5. Generate and add Excel point schedule
+                try:
+                    from openpyxl import Workbook
+                    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                    wb = Workbook()
+                    ws = wb.active
+                    ws.title = "Point Schedule"
+                    headers_xl = ["Type", "Instance", "Name", "Present Value", "Units", "Description"]
+                    header_fill = PatternFill(start_color="1E3A5F", end_color="1E3A5F", fill_type="solid")
+                    header_font = Font(color="FFFFFF", bold=True, size=10)
+                    for col, h in enumerate(headers_xl, 1):
+                        cell = ws.cell(row=1, column=col, value=h)
+                        cell.fill = header_fill
+                        cell.font = header_font
+                    row_idx = 2
+                    objects = data.get("objects", {})
+                    for ptype in ["AI","AO","AV","BI","BO","BV","MO","MV","LOOP","PROGRAM","SCHEDULE","TREND","ARRAY","TABLE"]:
+                        for pt in objects.get(ptype, []):
+                            ws.cell(row=row_idx, column=1, value=ptype)
+                            ws.cell(row=row_idx, column=2, value=pt.get("instance",""))
+                            ws.cell(row=row_idx, column=3, value=pt.get("name",""))
+                            ws.cell(row=row_idx, column=4, value=pt.get("present_value",""))
+                            ws.cell(row=row_idx, column=5, value=pt.get("units",""))
+                            ws.cell(row=row_idx, column=6, value=pt.get("description",""))
+                            row_idx += 1
+                    for col in range(1, 7):
+                        ws.column_dimensions[chr(64+col)].width = [8, 10, 40, 14, 12, 40][col-1]
+                    excel_buf = io.BytesIO()
+                    wb.save(excel_buf)
+                    excel_buf.seek(0)
+                    zf.writestr(f"{comp_id}_point_schedule.xlsx", excel_buf.read())
+                    logger.info("Added Excel point schedule to template package")
+                except Exception as exc:
+                    logger.warning(f"Could not add Excel to template package: {exc}")
+
         buf.seek(0)
         return StreamingResponse(
             buf,
