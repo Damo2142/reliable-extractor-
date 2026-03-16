@@ -1095,6 +1095,50 @@ class Composer:
         logger.info(f"Saved composition: {save_path}")
         return save_path
 
+    def build_variant_metadata(self) -> dict:
+        """Build enriched metadata for every variant: friendly label, function tags,
+        compatible equipment, and description.
+
+        Returns dict: { variant_id: { description, friendly_label, function_tags, compatible_with } }
+        """
+        descs = self.build_variant_descriptions()
+        meta = {}
+
+        if not self.cfg.library_root.exists():
+            return meta
+
+        for cat_dir in sorted(self.cfg.library_root.iterdir()):
+            if not cat_dir.is_dir() or cat_dir.name.startswith("_"):
+                continue
+            for jf in sorted(cat_dir.glob("*.json")):
+                try:
+                    data = json.loads(jf.read_text())
+                except Exception:
+                    continue
+                variant_id = data.get("id", jf.stem)
+                objects = data.get("objects", {})
+                programs = objects.get("PROGRAM", [])
+
+                ftags = get_all_function_tags_for_variant(programs)
+                compat = get_compatible_equipment(ftags)
+                friendly = VARIANT_FRIENDLY_LABELS.get(variant_id, "")
+
+                meta[variant_id] = {
+                    "description": descs.get(variant_id, ""),
+                    "friendly_label": friendly,
+                    "function_tags": ftags,
+                    "compatible_with": compat,
+                    "category": cat_dir.name,
+                }
+
+        return meta
+
+    def _cat_folder(self, cat_key: str) -> str:
+        """Reverse-map category key (e.g. 'SBS_AHU') to upload folder name."""
+        inv = {v: k for k, v in self.cfg.CATEGORIES.items()}
+        return inv.get(cat_key, cat_key)
+
+
     def list_compositions(self) -> list:
         """List all saved compositions."""
         save_dir = self.cfg.library_root / "COMPOSED"
