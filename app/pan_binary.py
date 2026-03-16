@@ -1084,10 +1084,28 @@ def enrich_library_entry(pan_path: Path, library_json: dict) -> dict:
     binary_points = {p['name']: p for p in parser.get_points()}
 
     # Enrich loops with binary bindings and PID params
-    binary_loops = {l['instance']: l for l in parser.get_loops()}
+    # Match by name (more reliable than instance — binary may not have numbered instances)
+    binary_loops_by_name = {}
+    binary_loops_by_inst = {}
+    for bl in parser.get_loops():
+        binary_loops_by_name[bl['name']] = bl
+        if bl['instance']:
+            binary_loops_by_inst[bl['instance']] = bl
+
     for loop in objects.get('LOOP', []):
+        lib_name = loop.get('name', '')
         inst = loop.get('instance', '')
-        bl = binary_loops.get(inst)
+        # Try matching by name first, then by instance
+        bl = binary_loops_by_name.get(lib_name)
+        if not bl:
+            # Try matching name ignoring template markers
+            bare_name = lib_name.replace('{device-name}', '').lstrip('-')
+            for bn, bloop in binary_loops_by_name.items():
+                if bare_name and bare_name in bn:
+                    bl = bloop
+                    break
+        if not bl:
+            bl = binary_loops_by_inst.get(inst)
         if bl:
             if bl.get('input_ref'):
                 loop['input_ref'] = bl['input_ref']
