@@ -1080,52 +1080,102 @@ class Composer:
 
         objects = composition.get("objects", {})
 
-        # Restore loop bindings from library data
+        # Restore LOOP data regions from source .panx binaries
+        # PFG generates loops with NO ObjID refs — completely empty shells.
+        # The source .pan has the full loop structure (386 bytes) with:
+        #   - ObjID refs at offsets 71 (output) and 265 (input)
+        #   - PID parameters, present values, action mode
+        # We copy the entire loop data region from source, like PFU does.
+        meta = composition.get("meta", {})
+        source_cache = {}  # variant_key -> PanBinary
+
+        # Build a lookup of which source variant each loop came from
+        # Use the composition's source tracking
         lib_loops = objects.get("LOOP", [])
-        for lib_loop in lib_loops:
-            loop_name = lib_loop.get("name", "")
-            if not loop_name:
+        sources_list = meta.get("sources", [])
+
+        # Find the primary variant (most programs come from here)
+        primary_variant = meta.get("primary_variant", "")
+
+        # Try to load source binary for the primary variant
+        def _load_source(variant_key):
+            if variant_key in source_cache:
+                return source_cache[variant_key]
+            parts = variant_key.split("/", 1) if "/" in variant_key else []
+            if len(parts) != 2:
+                return None
+            cat_key, var_id = parts
+            folder_name = self._cat_folder(cat_key)
+            cat_dir = self.cfg.upload_root / folder_name
+            src = next(cat_dir.rglob(f"{var_id}.panx"), None) or next(cat_dir.rglob(f"{var_id}.pan"), None)
+            if src:
+                try:
+                    source_cache[variant_key] = PanBinary.from_panx(src) if str(src).endswith('.panx') else PanBinary.from_file(src)
+                    return source_cache[variant_key]
+                except Exception as e:
+                    logger.warning(f"Failed to load source binary {src}: {e}")
+            return None
+
+        # Try all variant sources to find loop data
+        variant_keys = set()
+        if primary_variant:
+            variant_keys.add(primary_variant)
+        for s in sources_list:
+            src_str = s.get("from", "")
+            if "/" in src_str:
+                variant_keys.add(src_str)
+        # Also check array_table_sources for variant keys
+        for vk in meta.get("array_table_sources", {}).values():
+            if "/" in str(vk):
+                variant_keys.add(str(vk))
+
+        # Build source object lookup from ALL available source binaries.
+        # Byte-level copy for anything PFG XML roundtrip misses:
+        # LOOP (bindings), TABLE (in/out rows), ARRAY (values),
+        # TREND (multi-point refs), SCHEDULE (weekly data), etc.
+        source_objects = {}  # bare_name -> (source_obj, variant_key)
+        for vk in variant_keys:
+            src_pan = _load_source(vk)
+            if not src_pan:
+                continue
+            for sobj in src_pan.objects:
+                sname = sobj['name'].strip('\x00')
+                bare = sname.replace('{device-name}', '').lstrip('-')
+                import re as _re2
+                bare = _re2.sub(r'^\d+-', '', bare) if bare else bare
+                if bare and len(sobj.get('data_region', b'')) > 20:
+                    source_objects[bare] = (sobj, vk)
+
+        # For each object in the PFG-generated .pan, check if the source
+        # has a richer version. If the source data region is larger (has more
+        # data that PFG dropped), do a byte-level copy.
+        for target_obj in parser.objects:
+            tname = target_obj['name'].strip('\x00')
+            tbare = tname.replace('{device-name}', '').lstrip('-')
+            target_size = len(target_obj.get('data_region', b''))
+
+            src_match = source_objects.get(tbare)
+            if not src_match:
+                for sbare, sdata in source_objects.items():
+                    if sbare in tbare or tbare in sbare:
+                        src_match = sdata
+                        break
+
+            if not src_match:
                 continue
 
-            # Get binary-enriched binding data from library
-            output_ref = lib_loop.get("output_ref", "")
-            input_ref = lib_loop.get("input_ref", "")
-            setpoint_ref = lib_loop.get("setpoint_ref", "")
+            src_obj, vk = src_match
+            source_size = len(src_obj.get('data_region', b''))
 
-            if not output_ref and not input_ref:
-                continue
-
-            # Parse ref strings like "AV37" -> (type="AV", instance=37)
-            def parse_ref(ref_str):
-                if not ref_str:
-                    return None, None
-                import re as _re
-                m = _re.match(r'^([A-Z]+)(\d+)$', ref_str)
-                if m:
-                    return m.group(1), int(m.group(2))
-                return None, None
-
-            # Try to set loop bindings in the generated .pan
-            # Find the loop object by name in the generated binary
-            for obj in parser.objects:
-                if obj['category'] != 'LOOP':
-                    continue
-                obj_name = obj['name'].strip('\x00')
-                # Match by name (ignoring template markers)
-                bare_lib = loop_name.replace('{device-name}', '').lstrip('-')
-                bare_obj = obj_name.replace('{device-name}', '').lstrip('-')
-                if bare_lib and bare_lib in bare_obj:
-                    # Found matching loop — try to patch bindings
-                    in_type, in_inst = parse_ref(input_ref)
-                    sp_type, sp_inst = parse_ref(setpoint_ref)
-                    if in_type and in_inst:
-                        writer.set_loop_binding(
-                            obj_name,
-                            input_type=in_type, input_instance=in_inst,
-                            setpoint_type=sp_type, setpoint_instance=sp_inst,
-                        )
-                        patched += 1
-                    break
+            # Only copy if source has MORE data than PFG generated
+            # (meaning PFG stripped something)
+            if source_size > target_size + 10:
+                if writer.copy_data_region(tname, src_obj['data_region']):
+                    patched += 1
+                    logger.info(
+                        f"Binary post-process: restored '{tname}' "
+                        f"({source_size} bytes from source vs {target_size} in PFG) from {vk}"
+                    )
 
         # Restore present values from library
         for ptype in ['AO', 'AV', 'BO', 'BV', 'MO', 'MV']:
