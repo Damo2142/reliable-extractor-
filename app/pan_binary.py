@@ -1128,6 +1128,12 @@ def enrich_library_entry(pan_path: Path, library_json: dict) -> dict:
                         if f"{ptype}{p.get('instance','')}" == bl['output_ref']:
                             loop['output_name'] = p.get('name', '')
                             break
+            # Direct setpoint value (for loops without a setpoint ObjID ref)
+            if bl.get('setpoint_value') is not None:
+                loop['setpoint_value'] = bl['setpoint_value']
+            # Present value from binary
+            if bl.get('present_value') is not None:
+                loop['binary_present_value'] = bl['present_value']
             # PID parameters from binary
             if 'proportional' in bl:
                 loop['binary_proportional'] = bl['proportional']
