@@ -1915,10 +1915,19 @@ async def composer_build_from_modules(body: dict = None):
 
     result = {
         "id": comp_id,
-        "device_name": device_name,
-        "device_id": device_id,
-        "equipment_type": equip_type,
-        "configuration": configuration,
+        "category": "COMPOSED",
+        "format": "modular",
+        "description": f"{equip_type} {configuration} - Modular Build",
+        "meta": {
+            "composed": True,
+            "device_id": device_id,
+            "device_name": device_name,
+            "equipment_type": equip_type,
+            "configuration": configuration,
+            "recommended_controller": rec_controller,
+            "modules_used": [m.get("id", "") for m in loaded_modules],
+            "stamp": "Created by DFA Composer -- SBS Controls Division",
+        },
         "objects": objects,
         "modules_used": [m.get("id", "") for m in loaded_modules],
         "module_count": len(loaded_modules),
@@ -1928,8 +1937,44 @@ async def composer_build_from_modules(body: dict = None):
         "point_count": len(all_points),
         "loop_count": len(all_loops),
         "missing_modules": missing,
-        "stamp": "Created by DFA Composer -- SBS Controls Division",
+        "graphics": [],
+        "grp_files": {},
+        "bas_files": {},
+        "counts": io_totals,
     }
+
+    # Map modular config to best matching source variant for .pan generation
+    # This enables the single-variant binary copy path (PFU-style, zero data loss)
+    VARIANT_MAP = {
+        # AHU configs
+        "AHU/vav_dat": ("SBS_AHU", "1003"),
+        "AHU/cv_space": ("SBS_SPCAHU", "2001"),
+        "AHU/single_zone_vfd": ("SBS_SPCAHU", "ahu1"),
+        # RTU
+        "RTU/standard": ("RTU", "RTU-ISA11221"),
+        # VAV configs
+        "VAV/single_duct_reheat": ("VAV", "VAV-E-IS1000ME"),
+        "VAV/single_duct_cooling_only": ("VAV", "VAV-E-IS10002E"),
+        "VAV/single_duct_electric_reheat": ("VAV", "VAV-E-IS10002E"),
+        "VAV/fan_powered_parallel": ("SBS_VAV", "1213"),
+        # FCU configs
+        "FCU/4pipe": ("FCU", "FCU-ITA11MM0E"),
+        "FCU/2pipe_chw": ("FCU", "FCU-ISA11MM0E"),
+        "FCU/2pipe_hw": ("FCU", "FCU-IST11MM0E"),
+        # Plant
+        "PLANT/hw_plant": ("SBS_PLANTS", "1201"),
+        "PLANT/chw_plant": ("SBS_PLANTS", "1201"),
+        # Master
+        "MASTER/standard": ("SBS_MASTER", "1000"),
+        # EF
+        "EF/standard": ("AHU", "AHU-IS1DOMM"),
+    }
+    variant_key = f"{equip_type}/{configuration}"
+    source_info = VARIANT_MAP.get(variant_key)
+    if source_info:
+        result["meta"]["source_variant"] = f"{source_info[0]}/{source_info[1]}"
+        result["meta"]["sources"] = [{"from": f"{source_info[0]}/{source_info[1]}", "program": "all"}]
+        result["meta"]["primary_variant"] = f"{source_info[0]}/{source_info[1]}"
 
     # Cache for generate endpoints
     composer._last_composition = result
