@@ -2007,21 +2007,91 @@ class Composer:
     def generate_pan(self, composition: dict, blank_model: str = None) -> Path:
         """Generate a .pan file from a composed controller.
 
-        Pipeline:
+        Pipeline (standard — multi-variant):
           1. Generate changes XML from composition
           2. Extract blank .pan from the specified controller model template
           3. Run PFG: blank .pan + changes XML -> output .pan
+          4. Binary post-process to restore data PFG drops
 
-        Args:
-            composition: composed controller JSON
-            blank_model: controller model name (e.g. "RC-FLEXair-34-A-F")
-                         Must match a folder in blanks/
+        Pipeline (optimized — single-variant):
+          If all programs come from one source variant, bypass PFG entirely
+          and do a PFU-style binary copy. This preserves ALL data (loops,
+          arrays, tables, trends) with zero loss.
 
         Returns path to generated .pan in _output dir.
         """
         import shutil
         import time
 
+        meta = composition.get("meta", {})
+        sources = meta.get("sources", [])
+        device_id = meta.get("device_id", "900")
+        device_name = meta.get("device_name", "{device-name}")
+
+        # Check if all programs come from a single source variant
+        source_variants = set()
+        for s in sources:
+            src = s.get("from", "")
+            if "/" in src:
+                source_variants.add(src)
+
+        # Single-variant optimization: bypass PFG, use PFU-style binary copy
+        if len(source_variants) == 1:
+            variant_key = list(source_variants)[0]
+            parts = variant_key.split("/", 1)
+            if len(parts) == 2:
+                cat_key, var_id = parts
+                folder_name = self._cat_folder(cat_key)
+                cat_dir = self.cfg.upload_root / folder_name
+                src_file = next(cat_dir.rglob(f"{var_id}.panx"), None) or next(cat_dir.rglob(f"{var_id}.pan"), None)
+
+                if src_file:
+                    try:
+                        from app.pan_binary import PanWriter
+                        writer = PanWriter.from_panx(src_file) if str(src_file).endswith('.panx') else PanWriter.from_file(src_file)
+
+                        # Set device ID
+                        writer.set_device_id(int(device_id))
+
+                        # Detect source device name for renaming
+                        from app.pan_binary import PanBinary
+                        parser = PanBinary(bytes(writer.data))
+                        prefixes = {}
+                        for obj in parser.objects:
+                            name = obj['name']
+                            if '-' in name:
+                                prefix = name.split('-')[0].strip()
+                                if prefix and len(prefix) > 1:
+                                    prefixes[prefix] = prefixes.get(prefix, 0) + 1
+                        source_name = max(prefixes, key=prefixes.get) if prefixes else ""
+
+                        # Rename if device_name is specified and not template mode
+                        if device_name and device_name != "{device-name}" and source_name:
+                            if len(device_name) == len(source_name):
+                                writer.rename_device(source_name, device_name)
+
+                        # Save
+                        output_dir = self.cfg.library_root / "COMPOSED" / "_output"
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                        comp_id = composition.get("id", "composed")
+                        final_pan = output_dir / f"{comp_id}.pan"
+                        writer.save(final_pan)
+
+                        # Generate companion values document
+                        values_doc = output_dir / f"{comp_id}_values.txt"
+                        self._generate_values_document(composition, values_doc)
+
+                        logger.info(
+                            f"Single-variant optimization: bypassed PFG, "
+                            f"binary copy from {src_file.name} -> {final_pan.name} "
+                            f"(zero data loss)"
+                        )
+                        return final_pan
+
+                    except Exception as e:
+                        logger.warning(f"Single-variant binary copy failed, falling back to PFG: {e}")
+
+        # Standard multi-variant path: PFG + binary post-process
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent))
         from generator import generate_xml

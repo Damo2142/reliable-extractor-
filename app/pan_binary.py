@@ -1039,17 +1039,11 @@ class PanWriter:
             target_region_size = next_mu - name_end
 
             if len(source_data) > target_region_size:
-                # Source is larger — need to expand the binary by inserting bytes
-                # This is safe because .pan format uses pattern scanning (Mu headers),
-                # not absolute offsets, to locate objects.
-                extra_bytes = len(source_data) - target_region_size
-                # Insert space by expanding the bytearray at the insertion point
-                insert_point = name_end + target_region_size
-                self.data[insert_point:insert_point] = b'\x00' * extra_bytes
-                logger.info(
-                    f"copy_data_region: expanded binary by {extra_bytes} bytes for '{obj_name}' "
-                    f"(source={len(source_data)}, target was={target_region_size})"
+                logger.debug(
+                    f"copy_data_region: source for '{obj_name}' is {len(source_data)} bytes "
+                    f"but target only has {target_region_size} — skipping (cannot expand safely)"
                 )
+                return False
                 return False
 
             # Copy source data into target, pad remainder with 0x00
