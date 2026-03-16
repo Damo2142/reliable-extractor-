@@ -1045,6 +1045,93 @@ class Composer:
                     })
         return result
 
+    def _binary_post_process(self, pan_path: Path, composition: dict):
+        """Post-process a PFG-generated .pan to restore data lost in XML roundtrip.
+
+        PFG generates .pan from XML, but the XML export/import cycle drops:
+        - Loop input/setpoint/output ObjID bindings
+        - Present values for some object types
+        - Array/table data in programs
+
+        This method reads the generated .pan, patches in data from the
+        composition's source library entries (which have binary-enriched data),
+        and writes the corrected .pan back.
+        """
+        from app.pan_binary import PanBinary, PanWriter
+
+        writer = PanWriter(pan_path.read_bytes())
+        parser = PanBinary(writer.data)
+        patched = 0
+
+        objects = composition.get("objects", {})
+
+        # Restore loop bindings from library data
+        lib_loops = objects.get("LOOP", [])
+        for lib_loop in lib_loops:
+            loop_name = lib_loop.get("name", "")
+            if not loop_name:
+                continue
+
+            # Get binary-enriched binding data from library
+            output_ref = lib_loop.get("output_ref", "")
+            input_ref = lib_loop.get("input_ref", "")
+            setpoint_ref = lib_loop.get("setpoint_ref", "")
+
+            if not output_ref and not input_ref:
+                continue
+
+            # Parse ref strings like "AV37" -> (type="AV", instance=37)
+            def parse_ref(ref_str):
+                if not ref_str:
+                    return None, None
+                import re as _re
+                m = _re.match(r'^([A-Z]+)(\d+)$', ref_str)
+                if m:
+                    return m.group(1), int(m.group(2))
+                return None, None
+
+            # Try to set loop bindings in the generated .pan
+            # Find the loop object by name in the generated binary
+            for obj in parser.objects:
+                if obj['category'] != 'LOOP':
+                    continue
+                obj_name = obj['name'].strip('\x00')
+                # Match by name (ignoring template markers)
+                bare_lib = loop_name.replace('{device-name}', '').lstrip('-')
+                bare_obj = obj_name.replace('{device-name}', '').lstrip('-')
+                if bare_lib and bare_lib in bare_obj:
+                    # Found matching loop — try to patch bindings
+                    in_type, in_inst = parse_ref(input_ref)
+                    sp_type, sp_inst = parse_ref(setpoint_ref)
+                    if in_type and in_inst:
+                        writer.set_loop_binding(
+                            obj_name,
+                            input_type=in_type, input_instance=in_inst,
+                            setpoint_type=sp_type, setpoint_instance=sp_inst,
+                        )
+                        patched += 1
+                    break
+
+        # Restore present values from library
+        for ptype in ['AO', 'AV', 'BO', 'BV', 'MO', 'MV']:
+            for pt in objects.get(ptype, []):
+                pt_name = pt.get("name", "")
+                pv = pt.get("present_value")
+                if pt_name and pv is not None:
+                    try:
+                        pv_float = float(pv)
+                        if pv_float != 0.0:  # Don't overwrite with zeros
+                            if writer.set_present_value(pt_name, pv_float):
+                                patched += 1
+                    except (ValueError, TypeError):
+                        pass
+
+        if patched > 0:
+            writer.save(pan_path)
+            logger.info(f"Binary post-processing: patched {patched} values/bindings in {pan_path.name}")
+        else:
+            logger.info("Binary post-processing: no patches needed")
+
     def _generate_values_document(self, composition: dict, output_path: Path):
         """Generate a companion text document listing all configured values.
 
@@ -1634,6 +1721,15 @@ class Composer:
             final_pan = output_dir / f"{comp_id}.pan"
             shutil.copy2(output_pan, final_pan)
             logger.info(f"Generated .pan: {final_pan}")
+
+            # Step 4: Binary post-processing — restore data PFG XML roundtrip loses
+            # PFG generates from XML which drops: loop bindings, array data,
+            # trend multi-refs, some schedule details. If we have source .pan
+            # binaries, patch the missing data back in.
+            try:
+                self._binary_post_process(final_pan, composition)
+            except Exception as e:
+                logger.warning(f"Binary post-processing failed (non-fatal): {e}")
 
             # Generate companion values document
             values_doc = output_dir / f"{comp_id}_values.txt"
