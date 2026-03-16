@@ -790,6 +790,190 @@ async def binary_bulk(body: dict = None):
     )
 
 
+# ─── #24: Change Tracking / Snapshots ─────────────────────────────────────────
+
+SNAPSHOT_ROOT = Path("/srv/dfa/shared/files/vendors/reliable/library-dev/.snapshots")
+
+
+@app.post("/api/binary/snapshot")
+async def binary_snapshot(body: dict = None):
+    """Save a named snapshot of a variant's current binary state.
+
+    Body: {
+        "category": "VAV",
+        "variant_id": "VAV-IS10001",
+        "notes": "Before tuning loop gains",
+        "created_by": "dave"
+    }
+    """
+    import hashlib
+    from app.pan_binary import PanBinary
+
+    if not body or 'category' not in body or 'variant_id' not in body:
+        raise HTTPException(400, "Must provide 'category' and 'variant_id'")
+
+    category = body['category']
+    variant_id = body['variant_id']
+
+    # Find the source .pan/.panx
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    # Compute file hash
+    file_hash = hashlib.md5(bytes(pan.data)).hexdigest()
+
+    # Gather metrics
+    all_objs = pan.get_all_objects()
+    object_count = len(pan.objects)
+    loop_count = len(all_objs.get('LOOP', []))
+    point_count = sum(len(v) for k, v in all_objs.items()
+                      if k in ('AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV'))
+
+    # Loop summary
+    loops = pan.get_loops()
+    loop_summary = []
+    for lp in loops:
+        loop_summary.append({
+            "name": lp.get('name', ''),
+            "input": lp.get('input_ref', ''),
+            "setpoint": lp.get('setpoint_ref', '') or str(lp.get('setpoint_value', '')),
+            "output": lp.get('output_ref', ''),
+        })
+
+    # Build snapshot
+    from datetime import datetime
+    ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+    snapshot_id = f"{variant_id}_{ts}"
+
+    snapshot = {
+        "snapshot_id": snapshot_id,
+        "variant_id": variant_id,
+        "category": category,
+        "file_hash": file_hash,
+        "object_count": object_count,
+        "loop_count": loop_count,
+        "point_count": point_count,
+        "loop_summary": loop_summary,
+        "created_at": datetime.now().isoformat(),
+        "created_by": body.get('created_by', ''),
+        "notes": body.get('notes', ''),
+    }
+
+    # Save snapshot
+    snap_dir = SNAPSHOT_ROOT / category / variant_id
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    snap_file = snap_dir / f"{ts}.json"
+    snap_file.write_text(json.dumps(snapshot, indent=2))
+
+    return snapshot
+
+
+@app.get("/api/binary/history/{category}/{variant_id}")
+async def binary_history(category: str, variant_id: str):
+    """List all snapshots for a variant, newest first."""
+    snap_dir = SNAPSHOT_ROOT / category / variant_id
+    if not snap_dir.exists():
+        return {"variant_id": variant_id, "category": category, "snapshots": []}
+
+    snapshots = []
+    for f in sorted(snap_dir.glob("*.json"), reverse=True):
+        try:
+            data = json.loads(f.read_text())
+            snapshots.append(data)
+        except Exception:
+            continue
+
+    return {
+        "variant_id": variant_id,
+        "category": category,
+        "snapshot_count": len(snapshots),
+        "snapshots": snapshots,
+    }
+
+
+@app.get("/api/binary/history/compare/{snapshot1}/{snapshot2}")
+async def binary_history_compare(snapshot1: str, snapshot2: str):
+    """Compare two snapshots by their snapshot_id.
+
+    snapshot_id format: {variant_id}_{YYYYMMDD-HHMMSS}
+    Searches all snapshot directories to find the matching files.
+    """
+    def find_snapshot(snap_id: str) -> dict | None:
+        for cat_dir in SNAPSHOT_ROOT.iterdir():
+            if not cat_dir.is_dir():
+                continue
+            for var_dir in cat_dir.iterdir():
+                if not var_dir.is_dir():
+                    continue
+                for f in var_dir.glob("*.json"):
+                    try:
+                        data = json.loads(f.read_text())
+                        if data.get('snapshot_id') == snap_id:
+                            return data
+                    except Exception:
+                        continue
+        return None
+
+    s1 = find_snapshot(snapshot1)
+    s2 = find_snapshot(snapshot2)
+
+    if not s1:
+        raise HTTPException(404, f"Snapshot not found: {snapshot1}")
+    if not s2:
+        raise HTTPException(404, f"Snapshot not found: {snapshot2}")
+
+    # Compare metrics
+    comparison = {
+        "snapshot1": s1,
+        "snapshot2": s2,
+        "changes": {
+            "file_hash_changed": s1['file_hash'] != s2['file_hash'],
+            "object_count_delta": s2['object_count'] - s1['object_count'],
+            "loop_count_delta": s2['loop_count'] - s1['loop_count'],
+            "point_count_delta": s2['point_count'] - s1['point_count'],
+        },
+        "loop_changes": [],
+    }
+
+    # Compare loop summaries
+    loops1 = {lp['name']: lp for lp in s1.get('loop_summary', [])}
+    loops2 = {lp['name']: lp for lp in s2.get('loop_summary', [])}
+
+    all_loop_names = set(loops1.keys()) | set(loops2.keys())
+    for name in sorted(all_loop_names):
+        l1 = loops1.get(name)
+        l2 = loops2.get(name)
+        if l1 is None:
+            comparison['loop_changes'].append({"name": name, "change": "added"})
+        elif l2 is None:
+            comparison['loop_changes'].append({"name": name, "change": "removed"})
+        elif l1 != l2:
+            comparison['loop_changes'].append({
+                "name": name, "change": "modified",
+                "before": l1, "after": l2,
+            })
+
+    # If both snapshots are from the same variant and we have the .pan files,
+    # try a full binary diff
+    if (s1['category'] == s2['category'] and
+        s1['variant_id'] == s2['variant_id'] and
+        s1['file_hash'] != s2['file_hash']):
+        comparison['changes']['note'] = (
+            "Binary content differs. Use the Controller Diff tool for full object-level comparison."
+        )
+
+    return comparison
+
+
 # ─── #22: Field Diagnostic ───────────────────────────────────────────────────
 
 @app.post("/api/binary/diagnose")
@@ -1916,6 +2100,615 @@ async def composer_values_excel(comp_id: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{comp_id}_values.xlsx"'}
     )
+
+
+# ─── #16 + #23: Auto-Commissioning & Wiring Verification ─────────────────────
+
+def _load_pan_from_ref(ref: dict):
+    """Helper: load a PanBinary from a category/variant_id reference."""
+    from app.pan_binary import PanBinary
+    folder = engine._cat_folder(ref['category'])
+    cat_dir = engine.cfg.upload_root / folder
+    src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+          next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"Controller not found: {ref['variant_id']}")
+    if str(src).endswith('.panx'):
+        return PanBinary.from_panx(src)
+    return PanBinary.from_file(src)
+
+
+def _load_pan_from_upload(data: bytes, filename: str):
+    """Helper: load a PanBinary from uploaded file bytes."""
+    from app.pan_binary import PanBinary
+    if filename.endswith('.panx'):
+        import zipfile as _zf
+        import io as _io
+        with _zf.ZipFile(_io.BytesIO(data)) as z:
+            pan_name = [n for n in z.namelist() if n.endswith('.pan')][0]
+            return PanBinary(z.read(pan_name))
+    return PanBinary(data)
+
+
+def _get_device_name(pan) -> str:
+    """Helper: detect device name prefix from a PanBinary."""
+    prefixes = {}
+    for obj in pan.objects:
+        name = obj['name'].strip().strip('\x00')
+        parts = name.split('-')
+        if len(parts) >= 3:
+            prefix = f"{parts[0]}-{parts[1]}"
+            if prefix and len(prefix) > 2:
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+    return max(prefixes, key=prefixes.get) if prefixes else "unknown"
+
+
+def _commission_check_logic(design_pan, asbuilt_pan, tolerance: float = 0.5) -> dict:
+    """Core commissioning comparison logic used by the endpoint.
+
+    Compares a design (template) .pan against an as-built (field) .pan and
+    returns a comprehensive commissioning verification report including
+    wiring verification (#23).
+    """
+    result = {
+        'device_id_match': True,
+        'device_id': {},
+        'object_summary': {},
+        'missing_in_asbuilt': [],
+        'extra_in_asbuilt': [],
+        'present_value_differences': [],
+        'loop_binding_differences': [],
+        'pid_differences': [],
+        'out_of_service_issues': [],
+        'unusual_values': [],
+        'wiring_verification': [],
+        'wiring_summary': {},
+        'action_items': [],
+        'score': 0.0,
+    }
+
+    # --- Device ID comparison ---
+    design_id = struct.unpack('<I', design_pan.data[4:8])[0] if len(design_pan.data) >= 8 else 0
+    asbuilt_id = struct.unpack('<I', asbuilt_pan.data[4:8])[0] if len(asbuilt_pan.data) >= 8 else 0
+    result['device_id'] = {'design': design_id, 'as_built': asbuilt_id}
+    if design_id != asbuilt_id:
+        result['device_id_match'] = False
+
+    design_name = _get_device_name(design_pan)
+    asbuilt_name = _get_device_name(asbuilt_pan)
+    result['device_id']['design_name'] = design_name
+    result['device_id']['as_built_name'] = asbuilt_name
+
+    # --- Build object maps ---
+    # Use the last part of the name (after device prefix) for matching
+    def strip_prefix(name, prefix):
+        if name.startswith(prefix + '-'):
+            return name[len(prefix) + 1:]
+        return name
+
+    design_points = {}
+    for p in design_pan.get_point_details():
+        key = strip_prefix(p['name'], design_name)
+        design_points[key] = p
+
+    asbuilt_points = {}
+    for p in asbuilt_pan.get_point_details():
+        key = strip_prefix(p['name'], asbuilt_name)
+        asbuilt_points[key] = p
+
+    # All design objects by stripped name
+    design_all = {}
+    for obj in design_pan.objects:
+        key = strip_prefix(obj['name'], design_name)
+        design_all[key] = obj
+
+    asbuilt_all = {}
+    for obj in asbuilt_pan.objects:
+        key = strip_prefix(obj['name'], asbuilt_name)
+        asbuilt_all[key] = obj
+
+    # --- Object count summary ---
+    design_cats = {}
+    for obj in design_pan.objects:
+        design_cats[obj['category']] = design_cats.get(obj['category'], 0) + 1
+    asbuilt_cats = {}
+    for obj in asbuilt_pan.objects:
+        asbuilt_cats[obj['category']] = asbuilt_cats.get(obj['category'], 0) + 1
+    result['object_summary'] = {'design': design_cats, 'as_built': asbuilt_cats}
+
+    # --- Missing / Extra objects ---
+    design_keys = set(design_all.keys())
+    asbuilt_keys = set(asbuilt_all.keys())
+    result['missing_in_asbuilt'] = sorted(design_keys - asbuilt_keys)
+    result['extra_in_asbuilt'] = sorted(asbuilt_keys - design_keys)
+
+    if result['missing_in_asbuilt']:
+        result['action_items'].append({
+            'severity': 'error',
+            'message': f"{len(result['missing_in_asbuilt'])} object(s) from design are missing in as-built",
+            'details': result['missing_in_asbuilt'][:10],
+        })
+    if result['extra_in_asbuilt']:
+        result['action_items'].append({
+            'severity': 'info',
+            'message': f"{len(result['extra_in_asbuilt'])} extra object(s) in as-built not in design",
+            'details': result['extra_in_asbuilt'][:10],
+        })
+
+    # --- Present value differences ---
+    total_points = 0
+    matching_points = 0
+    common_keys = set(design_points.keys()) & set(asbuilt_points.keys())
+
+    for key in sorted(common_keys):
+        dp = design_points[key]
+        ap = asbuilt_points[key]
+        dpv = dp.get('present_value')
+        apv = ap.get('present_value')
+
+        if dpv is not None and apv is not None:
+            total_points += 1
+            diff = abs(dpv - apv)
+            if diff <= tolerance:
+                matching_points += 1
+            else:
+                result['present_value_differences'].append({
+                    'name': key,
+                    'design_value': round(dpv, 4),
+                    'as_built_value': round(apv, 4),
+                    'difference': round(diff, 4),
+                })
+
+    # --- Out-of-service checks ---
+    design_oos = set()
+    for key, p in design_points.items():
+        if p.get('out_of_service'):
+            design_oos.add(key)
+
+    for key, p in asbuilt_points.items():
+        if p.get('out_of_service') and key not in design_oos:
+            result['out_of_service_issues'].append({
+                'name': key,
+                'message': 'Out-of-service in as-built but not in design',
+                'present_value': p.get('present_value'),
+            })
+
+    if result['out_of_service_issues']:
+        result['action_items'].append({
+            'severity': 'warning',
+            'message': f"{len(result['out_of_service_issues'])} point(s) out-of-service in field that should be active",
+            'details': [i['name'] for i in result['out_of_service_issues']],
+        })
+
+    # --- Unusual values check ---
+    for key, p in asbuilt_points.items():
+        pv = p.get('present_value')
+        if pv is None:
+            continue
+        units = p.get('units_name', '') or ''
+        issues = []
+        # Negative temperatures
+        if 'deg' in units.lower() and pv < -40:
+            issues.append(f"Negative temperature: {pv}")
+        # Output > 100%
+        if ('percent' in units.lower() or 'open' in units.lower()) and pv > 100:
+            issues.append(f"Output exceeds 100%: {pv}")
+        # Negative output percentage
+        if ('percent' in units.lower() or 'open' in units.lower()) and pv < 0:
+            issues.append(f"Negative output: {pv}")
+        # Extremely large values
+        if abs(pv) > 10000:
+            issues.append(f"Unusually large value: {pv}")
+
+        if issues:
+            result['unusual_values'].append({
+                'name': key,
+                'present_value': round(pv, 4),
+                'units': units,
+                'issues': issues,
+            })
+
+    if result['unusual_values']:
+        result['action_items'].append({
+            'severity': 'warning',
+            'message': f"{len(result['unusual_values'])} point(s) with unusual values need investigation",
+            'details': [f"{i['name']}: {', '.join(i['issues'])}" for i in result['unusual_values']],
+        })
+
+    # --- Loop binding + PID differences ---
+    design_loops = {l.get('instance', ''): l for l in design_pan.get_loops()}
+    asbuilt_loops = {l.get('instance', ''): l for l in asbuilt_pan.get_loops()}
+
+    all_loop_insts = set(design_loops.keys()) | set(asbuilt_loops.keys())
+    for inst in sorted(all_loop_insts):
+        dl = design_loops.get(inst, {})
+        al = asbuilt_loops.get(inst, {})
+
+        # Binding differences
+        for field in ['input_ref', 'setpoint_ref', 'output_ref']:
+            dv = dl.get(field, '')
+            av = al.get(field, '')
+            if dv != av:
+                result['loop_binding_differences'].append({
+                    'loop': f"LOOP{inst}",
+                    'field': field.replace('_ref', ''),
+                    'design': dv or 'not set',
+                    'as_built': av or 'not set',
+                })
+
+        # PID parameter differences
+        for param in ['proportional', 'integral', 'derivative']:
+            dp_val = dl.get(param)
+            ap_val = al.get(param)
+            if dp_val is not None and ap_val is not None:
+                if abs(dp_val - ap_val) > 0.001:
+                    result['pid_differences'].append({
+                        'loop': f"LOOP{inst}",
+                        'parameter': param,
+                        'design': dp_val,
+                        'as_built': ap_val,
+                    })
+
+    if result['loop_binding_differences']:
+        result['action_items'].append({
+            'severity': 'error',
+            'message': f"{len(result['loop_binding_differences'])} loop binding difference(s) - verify wiring",
+            'details': [f"{d['loop']} {d['field']}: design={d['design']}, field={d['as_built']}"
+                       for d in result['loop_binding_differences']],
+        })
+
+    if result['pid_differences']:
+        result['action_items'].append({
+            'severity': 'warning',
+            'message': f"{len(result['pid_differences'])} PID parameter difference(s)",
+            'details': [f"{d['loop']} {d['parameter']}: design={d['design']}, field={d['as_built']}"
+                       for d in result['pid_differences']],
+        })
+
+    # --- #23: Wiring Verification ---
+    # For each loop, check if input ref points to a valid object and whether
+    # it's a hardware point (AI/AO) vs software point (AV)
+    # Build instance lookup for as-built objects
+    asbuilt_obj_instances = set()
+    for obj in asbuilt_pan.objects:
+        for ref in obj.get('refs', []):
+            if ref['type'] != 'NULL':
+                asbuilt_obj_instances.add(f"{ref['type']}{ref['instance']}")
+    # Also add objects by category name matching
+    for obj in asbuilt_pan.objects:
+        name = obj['name'].upper()
+        cat = obj['category']
+        # Try to extract type+instance from name patterns
+        import re as _re_wv
+        m = _re_wv.search(r'(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|TREND|SCHEDULE|PROGRAM)(\d+)', name)
+        if m:
+            asbuilt_obj_instances.add(f"{m.group(1)}{m.group(2)}")
+
+    loops_verified = 0
+    loops_need_attention = 0
+    total_loops = len(asbuilt_loops)
+
+    for inst, al in asbuilt_loops.items():
+        wiring_entry = {
+            'loop': f"LOOP{inst}",
+            'name': al.get('name', ''),
+            'status': 'ok',
+            'issues': [],
+        }
+
+        input_ref = al.get('input_ref', '')
+        input_type = al.get('input_type', '')
+        setpoint_ref = al.get('setpoint_ref', '')
+        output_ref = al.get('output_ref', '')
+
+        # Check if input is AV (software) vs AI (hardware sensor)
+        if input_type == 'AV':
+            wiring_entry['issues'].append(
+                f"Input {input_ref} is an Analog Value (software point) - "
+                f"field wiring should use AI (hardware sensor)"
+            )
+            wiring_entry['status'] = 'attention'
+
+        # Check if setpoint ref is a valid object
+        if setpoint_ref:
+            setpoint_type = al.get('setpoint_type', '')
+            # Setpoints are typically AV which is fine
+            pass
+
+        # Check for references to non-existent instances
+        for ref_field, ref_val in [('input', input_ref), ('setpoint', setpoint_ref), ('output', output_ref)]:
+            if ref_val and ref_val != 'NULL':
+                # Check if the referenced object exists in the as-built
+                found = False
+                for obj in asbuilt_pan.objects:
+                    obj_name = obj['name'].upper()
+                    if ref_val.upper() in obj_name or ref_val.upper().replace(' ', '') in obj_name.replace(' ', ''):
+                        found = True
+                        break
+                # Also check refs
+                if not found and ref_val in asbuilt_obj_instances:
+                    found = True
+                # Relax: if we can't find it by name, it may still be valid
+                # (instance numbers don't always appear in names)
+                if not found:
+                    wiring_entry['issues'].append(
+                        f"{ref_field.capitalize()} reference {ref_val} may not exist in as-built controller"
+                    )
+                    wiring_entry['status'] = 'attention'
+
+        if wiring_entry['issues']:
+            loops_need_attention += 1
+        else:
+            loops_verified += 1
+
+        result['wiring_verification'].append(wiring_entry)
+
+    result['wiring_summary'] = {
+        'total_loops': total_loops,
+        'verified': loops_verified,
+        'need_attention': loops_need_attention,
+        'message': f"{loops_verified} of {total_loops} loops verified, {loops_need_attention} need field attention",
+    }
+
+    if loops_need_attention > 0:
+        result['action_items'].append({
+            'severity': 'warning',
+            'message': result['wiring_summary']['message'],
+            'details': [f"{w['loop']}: {'; '.join(w['issues'])}"
+                       for w in result['wiring_verification'] if w['status'] == 'attention'],
+        })
+
+    # --- Commissioning Score ---
+    # Score components: object presence, value matching, loop bindings, OOS
+    score_components = []
+
+    # Object presence score
+    total_design_objs = len(design_keys)
+    if total_design_objs > 0:
+        present_count = len(design_keys & asbuilt_keys)
+        score_components.append(present_count / total_design_objs)
+
+    # Value matching score
+    if total_points > 0:
+        score_components.append(matching_points / total_points)
+
+    # Loop binding score
+    total_loop_fields = len(all_loop_insts) * 3  # input, setpoint, output per loop
+    if total_loop_fields > 0:
+        binding_issues = len(result['loop_binding_differences'])
+        score_components.append(max(0, (total_loop_fields - binding_issues) / total_loop_fields))
+
+    # OOS penalty
+    if len(asbuilt_points) > 0:
+        oos_count = len(result['out_of_service_issues'])
+        score_components.append(max(0, (len(asbuilt_points) - oos_count) / len(asbuilt_points)))
+
+    if score_components:
+        result['score'] = round(sum(score_components) / len(score_components) * 100, 1)
+    else:
+        result['score'] = 0.0
+
+    # Score grade
+    if result['score'] >= 95:
+        result['grade'] = 'PASS'
+    elif result['score'] >= 80:
+        result['grade'] = 'CONDITIONAL'
+    else:
+        result['grade'] = 'FAIL'
+
+    result['action_items'].append({
+        'severity': 'info',
+        'message': f"Commissioning score: {result['score']}% ({result['grade']})",
+        'details': [],
+    })
+
+    return result
+
+
+@app.post("/api/binary/commission-check")
+async def binary_commission_check(body: dict = None):
+    """Compare a design (template) .pan against an as-built (field) .pan.
+
+    JSON body with category/variant pairs:
+    {
+        "design": {"category": "SBS_AHU", "variant_id": "1003"},
+        "as_built": {"category": "SBS_AHU", "variant_id": "PS-AHU-ERW-0100"},
+        "tolerance": 0.5
+    }
+
+    Returns comprehensive commissioning report with wiring verification.
+    """
+    from app.pan_binary import PanBinary
+
+    if not body or 'design' not in body or 'as_built' not in body:
+        raise HTTPException(400, "Must provide 'design' and 'as_built' controller references")
+
+    tolerance = body.get('tolerance', 0.5)
+    try:
+        design_pan = _load_pan_from_ref(body['design'])
+        asbuilt_pan = _load_pan_from_ref(body['as_built'])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load controllers: {e}")
+
+    try:
+        report = _commission_check_logic(design_pan, asbuilt_pan, tolerance)
+        return report
+    except Exception as e:
+        logger.exception("Commission check failed")
+        raise HTTPException(500, f"Commission check failed: {e}")
+
+
+@app.post("/api/binary/commission-check/upload")
+async def binary_commission_check_upload(
+    design_file: UploadFile = File(...),
+    asbuilt_file: UploadFile = File(...),
+):
+    """Compare uploaded design and as-built .pan/.panx files.
+
+    Upload two files via multipart form: design_file and asbuilt_file.
+    Returns comprehensive commissioning report with wiring verification.
+    """
+    try:
+        design_data = await design_file.read()
+        asbuilt_data = await asbuilt_file.read()
+        design_pan = _load_pan_from_upload(design_data, design_file.filename or "design.pan")
+        asbuilt_pan = _load_pan_from_upload(asbuilt_data, asbuilt_file.filename or "asbuilt.pan")
+    except Exception as e:
+        raise HTTPException(400, f"Failed to parse uploaded files: {e}")
+
+    try:
+        report = _commission_check_logic(design_pan, asbuilt_pan, tolerance=0.5)
+        return report
+    except Exception as e:
+        logger.exception("Commission check failed")
+        raise HTTPException(500, f"Commission check failed: {e}")
+
+
+# ─── #21: Program State Management ───────────────────────────────────────────
+
+@app.get("/api/binary/programs/{category}/{variant_id}")
+async def binary_programs_list(category: str, variant_id: str):
+    """List all programs with their enabled state from the .pan binary.
+
+    Returns program names, enabled/disabled state, data sizes, and ref counts.
+    """
+    from app.pan_binary import PanBinary
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    programs = pan.get_programs()
+
+    enabled_count = sum(1 for p in programs if p.get('enabled', False))
+    disabled_count = sum(1 for p in programs if p.get('enabled') is False)
+
+    return {
+        "variant_id": variant_id,
+        "category": category,
+        "program_count": len(programs),
+        "enabled_count": enabled_count,
+        "disabled_count": disabled_count,
+        "programs": programs,
+    }
+
+
+@app.post("/api/binary/programs/toggle")
+async def binary_program_toggle(body: dict = None):
+    """Toggle a program's enabled/disabled state in the .pan binary.
+
+    Body: {
+        "category": "SBS_AHU",
+        "variant_id": "1003",
+        "program_name": "MYS-AHU3-PRG1",
+        "enabled": true
+    }
+
+    Returns the modified .pan file as a download.
+    Uses PanWriter to modify the program-enabled property (0x0A).
+    """
+    from app.pan_binary import PanBinary, PanWriter
+
+    if not body or 'category' not in body or 'variant_id' not in body or 'program_name' not in body:
+        raise HTTPException(400, "Must provide 'category', 'variant_id', and 'program_name'")
+
+    category = body['category']
+    variant_id = body['variant_id']
+    program_name = body['program_name']
+    target_enabled = body.get('enabled', None)  # None = toggle, True/False = set explicitly
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+    src = next(cat_dir.rglob(f"{variant_id}.panx"), None) or \
+          next(cat_dir.rglob(f"{variant_id}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    try:
+        if str(src).endswith('.panx'):
+            writer = PanWriter.from_panx(src)
+        else:
+            writer = PanWriter.from_file(src)
+
+        # Find the program object in the binary
+        import re as _re_prg
+        found = False
+        program_name_bytes = program_name.encode('utf-8')
+
+        for m in _re_prg.finditer(b'\x4d\x75(.)', bytes(writer.data)):
+            name_len = m.group(1)[0]
+            if name_len < 2 or name_len > 200:
+                continue
+            name_start = m.start() + 3
+            name_bytes = writer.data[name_start:name_start + name_len]
+            try:
+                name = name_bytes.decode('utf-8').strip('\x00')
+            except (UnicodeDecodeError, ValueError):
+                continue
+
+            if name.strip() != program_name.strip():
+                continue
+
+            # Found the program - now find property 0x0A in its data region
+            name_end = name_start + name_len
+            next_mu = bytes(writer.data).find(b'\x4d\x75', name_end + 10)
+            if next_mu < 0:
+                next_mu = min(name_end + 500, len(writer.data))
+
+            data_region_start = name_end
+            data_region_end = next_mu
+
+            # Search for property 0x0A (program-enabled)
+            for i in range(data_region_start, min(data_region_end, data_region_start + 300)):
+                if i + 2 < len(writer.data) and writer.data[i] == 0x0A and writer.data[i + 1] == 0x91:
+                    current_state = writer.data[i + 2]
+                    if target_enabled is None:
+                        # Toggle
+                        new_state = 0 if current_state == 1 else 1
+                    else:
+                        new_state = 1 if target_enabled else 0
+
+                    writer.data[i + 2] = new_state
+                    found = True
+                    break
+
+            if found:
+                break
+
+        if not found:
+            raise HTTPException(404, f"Program '{program_name}' not found or has no enable property")
+
+        out_path = Path(f"/tmp/program_toggle_{variant_id}.pan")
+        writer.save(out_path)
+
+        new_state_str = "enabled" if (target_enabled if target_enabled is not None else new_state == 1) else "disabled"
+
+        return FileResponse(
+            out_path,
+            filename=f"{variant_id}_program_{new_state_str}.pan",
+            media_type="application/octet-stream",
+            headers={
+                "X-Program-Name": program_name,
+                "X-New-State": new_state_str,
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Program toggle failed")
+        raise HTTPException(500, f"Program toggle failed: {e}")
 
 
 # ─── Background Task ─────────────────────────────────────────────────────────
