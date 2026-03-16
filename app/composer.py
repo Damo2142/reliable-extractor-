@@ -26,6 +26,138 @@ from app.config import Config
 
 logger = logging.getLogger(__name__)
 
+# Program function tags — maps program name patterns to human-readable function tags
+# These help techs find programs by function regardless of source category
+PROGRAM_FUNCTION_TAGS = {
+    'CFG': ['Configuration', 'config'],
+    'CONFIG': ['Configuration', 'config'],
+    'SP': ['Setpoints', 'setpoint'],
+    'MODE': ['Operating Mode', 'mode', 'occupied', 'unoccupied'],
+    'OCC': ['Occupancy', 'schedule', 'occupied'],
+    'SF': ['Supply Fan', 'fan', 'airflow'],
+    'RF': ['Return Fan', 'fan', 'airflow'],
+    'ECON': ['Economizer', 'damper', 'free-cooling'],
+    'MAD': ['Mixed Air Damper', 'damper'],
+    'SAT': ['Supply Air Temp', 'temperature', 'cooling'],
+    'DSP': ['Duct Static Pressure', 'pressure', 'airflow'],
+    'HW': ['Hot Water', 'heating', 'valve'],
+    'HTG': ['Heating', 'heating', 'valve'],
+    'CHW': ['Chilled Water', 'cooling', 'valve'],
+    'CLG': ['Cooling', 'cooling'],
+    'VLV': ['Valve Control', 'valve'],
+    'DMP': ['Damper Control', 'damper'],
+    'FLO': ['Flow Control', 'airflow', 'cfm'],
+    'PRESS': ['Pressure Control', 'pressure'],
+    'FRZ': ['Freeze Protection', 'safety'],
+    'ALARM': ['Alarm', 'safety', 'monitoring'],
+    'FAULT': ['Fault Detection', 'diagnostics', 'monitoring'],
+    'NET': ['Network/BACnet', 'communication', 'network'],
+    'SCHED': ['Schedule', 'schedule', 'time'],
+    'ARRAY': ['Data Arrays', 'configuration'],
+    'ARRAYS': ['Data Arrays', 'configuration'],
+    'VARS': ['Network/BACnet', 'communication', 'network'],
+    'MWU': ['Morning Warmup', 'heating', 'mode'],
+    'MCD': ['Morning Cooldown', 'cooling', 'mode'],
+    'CONV': ['Unit Conversion', 'configuration'],
+    'PGR': ['Staging', 'sequencing'],
+    'LEAD': ['Lead/Lag', 'sequencing', 'plant'],
+    'PUMP': ['Pump Control', 'pump', 'plant'],
+    'BOILER': ['Boiler Control', 'heating', 'plant'],
+    'HWP': ['Hot Water Pump', 'pump', 'heating'],
+    'CHWP': ['Chilled Water Pump', 'pump', 'cooling'],
+    'ERW': ['Energy Recovery', 'energy', 'heat-recovery'],
+    'CO2': ['CO2 Control', 'ventilation', 'iaq'],
+    'DEHUM': ['Dehumidification', 'humidity'],
+    'HUMID': ['Humidification', 'humidity'],
+}
+
+VARIANT_FRIENDLY_LABELS = {
+    # SBS variants — decode the cryptic codes
+    '1003': 'SBS Standard AHU — HW Preheat, CHW, Economizer, SF+RF',
+    '1000': 'SBS Master Controller — Zone Networking + Scheduling',
+    '1201': 'SBS Plant Controller — HW/CHW, 2 Primary HWP, 1 Chiller, Cascade Boilers',
+    '1213': 'SBS Parallel Fan VAV — Mod HW Reheat, Factory Damper, Wallplate',
+    '1224': 'SBS Parallel Fan VAV — Mod HW Reheat, Factory Damper, SS3 + Humidity + CO2',
+    '2001': 'SBS Space Temp AHU — HW Preheat, HWP, CHW, Economizer, Space Control',
+    'ahu1': 'SBS Space Temp AHU — HW Preheat, HWP, CHW, Economizer, Space Control (v2)',
+    'PS-AHU-ERW-0100': 'SBS Premium AHU — HW Preheat, CHW, Dehumid, Economizer, Energy Recovery',
+}
+
+# Equipment compatibility — which equipment types can use programs with these function tags
+_FUNCTION_EQUIPMENT_MAP = {
+    'Supply Fan': ['AHU', 'RTU', 'FCU'],
+    'Return Fan': ['AHU', 'RTU'],
+    'Economizer': ['AHU', 'RTU'],
+    'Mixed Air Damper': ['AHU', 'RTU'],
+    'Supply Air Temp': ['AHU', 'RTU'],
+    'Duct Static Pressure': ['AHU', 'RTU'],
+    'Hot Water': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP'],
+    'Heating': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP'],
+    'Chilled Water': ['AHU', 'RTU', 'FCU', 'WSHP'],
+    'Cooling': ['AHU', 'RTU', 'VAV', 'FCU', 'WSHP'],
+    'Valve Control': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP'],
+    'Damper Control': ['AHU', 'RTU', 'VAV', 'VVT'],
+    'Flow Control': ['AHU', 'RTU', 'VAV', 'VVT'],
+    'Pump Control': ['PLANT'],
+    'Hot Water Pump': ['PLANT'],
+    'Chilled Water Pump': ['PLANT'],
+    'Boiler Control': ['PLANT'],
+    'Lead/Lag': ['PLANT'],
+    'Energy Recovery': ['AHU', 'RTU'],
+    'CO2 Control': ['AHU', 'RTU', 'VAV'],
+    'Dehumidification': ['AHU', 'RTU'],
+    'Humidification': ['AHU', 'RTU'],
+    'Freeze Protection': ['AHU', 'RTU'],
+    'Configuration': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP', 'VVT', 'PLANT'],
+    'Network/BACnet': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP', 'VVT', 'PLANT'],
+    'Operating Mode': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP', 'VVT'],
+    'Occupancy': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP', 'VVT'],
+    'Schedule': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP', 'VVT', 'PLANT'],
+    'Data Arrays': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP', 'VVT', 'PLANT'],
+    'Morning Warmup': ['AHU', 'RTU'],
+    'Morning Cooldown': ['AHU', 'RTU'],
+    'Unit Conversion': ['AHU', 'RTU', 'VAV', 'FCU', 'UH', 'WSHP', 'VVT', 'PLANT'],
+    'Staging': ['AHU', 'RTU', 'PLANT'],
+}
+
+
+def get_function_tags_for_program(program_name: str) -> list:
+    """Extract function tags from a program name based on name patterns."""
+    tags = []
+    # Strip the {device-name}- prefix and -PRGxx suffix
+    name = re.sub(r'^\{device-name\}-', '', program_name)
+    name = re.sub(r'-PRG\d+$', '', name)
+    # Split on hyphens and underscores to get tokens
+    tokens = re.split(r'[-_]', name.upper())
+    seen = set()
+    for token in tokens:
+        if token in PROGRAM_FUNCTION_TAGS:
+            label = PROGRAM_FUNCTION_TAGS[token][0]
+            if label not in seen:
+                tags.append(label)
+                seen.add(label)
+    return tags
+
+
+def get_all_function_tags_for_variant(programs: list) -> list:
+    """Get deduplicated, sorted list of all function tags across a variant's programs."""
+    all_tags = set()
+    for prog in programs:
+        pname = prog.get('name', '') if isinstance(prog, dict) else prog
+        for tag in get_function_tags_for_program(pname):
+            all_tags.add(tag)
+    return sorted(all_tags)
+
+
+def get_compatible_equipment(function_tags: list) -> list:
+    """Derive equipment compatibility from function tags."""
+    equip = set()
+    for tag in function_tags:
+        if tag in _FUNCTION_EQUIPMENT_MAP:
+            equip.update(_FUNCTION_EQUIPMENT_MAP[tag])
+    return sorted(equip)
+
+
 # Regex patterns for Control-BASIC point references
 # Matches: AV7, AI1, AO2, BI6, BO2, BV24, MO7, MV16, LOOP1, SCHED1
 POINT_REF_PATTERN = re.compile(
@@ -156,18 +288,23 @@ class Composer:
                     # Clean dependency instances to sorted lists
                     dep_summary = {k: sorted(v) for k, v in refs.items()}
 
+                    prog_name = prog.get("name", "")
+                    ftags = get_function_tags_for_program(prog_name)
+
                     index.append({
                         "source_category": category,
                         "source_variant": variant_id,
                         "source_description": variant_desc,
+                        "friendly_label": VARIANT_FRIENDLY_LABELS.get(variant_id, ""),
                         "program_instance": prog.get("instance", ""),
-                        "program_name": prog.get("name", ""),
+                        "program_name": prog_name,
                         "program_description": prog.get("description", ""),
                         "code_preview": code[:200],
                         "code_lines": len(code.split("\n")),
                         "dependencies": dep_summary,
                         "dependency_details": dep_details,
                         "network_refs": net_refs,
+                        "function_tags": ftags,
                     })
 
         return index
@@ -297,6 +434,44 @@ class Composer:
                 pass
 
         return descs
+
+    def build_variant_metadata(self) -> dict:
+        """Build enriched metadata for every variant: friendly label, function tags,
+        compatible equipment, and description.
+
+        Returns dict: { variant_id: { description, friendly_label, function_tags, compatible_with } }
+        """
+        descs = self.build_variant_descriptions()
+        meta = {}
+
+        if not self.cfg.library_root.exists():
+            return meta
+
+        for cat_dir in sorted(self.cfg.library_root.iterdir()):
+            if not cat_dir.is_dir() or cat_dir.name.startswith("_"):
+                continue
+            for jf in sorted(cat_dir.glob("*.json")):
+                try:
+                    data = json.loads(jf.read_text())
+                except Exception:
+                    continue
+                variant_id = data.get("id", jf.stem)
+                objects = data.get("objects", {})
+                programs = objects.get("PROGRAM", [])
+
+                ftags = get_all_function_tags_for_variant(programs)
+                compat = get_compatible_equipment(ftags)
+                friendly = VARIANT_FRIENDLY_LABELS.get(variant_id, "")
+
+                meta[variant_id] = {
+                    "description": descs.get(variant_id, ""),
+                    "friendly_label": friendly,
+                    "function_tags": ftags,
+                    "compatible_with": compat,
+                    "category": cat_dir.name,
+                }
+
+        return meta
 
     def _cat_folder(self, cat_key: str) -> str:
         """Reverse-map category key (e.g. 'SBS_AHU') to upload folder name."""

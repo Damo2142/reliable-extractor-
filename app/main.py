@@ -1643,6 +1643,13 @@ async def composer_variant_descriptions():
     return composer.build_variant_descriptions()
 
 
+@app.get("/api/composer/variant-metadata")
+async def composer_variant_metadata():
+    """Get enriched metadata for all variants: friendly labels, function tags,
+    compatible equipment types, and descriptions."""
+    return composer.build_variant_metadata()
+
+
 @app.get("/api/composer/blanks")
 async def composer_list_blanks():
     """List available blank controller model templates for .pan/.panx generation."""
