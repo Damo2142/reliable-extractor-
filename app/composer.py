@@ -26,6 +26,58 @@ from app.config import Config
 
 logger = logging.getLogger(__name__)
 
+# Regex patterns for Control-BASIC point references
+# Matches: AV7, AI1, AO2, BI6, BO2, BV24, MO7, MV16, LOOP1, SCHED1
+POINT_REF_PATTERN = re.compile(
+    r'\b(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|SCHED)(\d+)\b'
+)
+
+# For network/cross-device references like 1001BI1 or 1001DEV1001:120
+NETWORK_REF_PATTERN = re.compile(
+    r'\b(\d+)(AI|AO|AV|BI|BO|BV|MO|MV|DEV)(\d+)\b'
+)
+
+POINT_TYPES = ["AI", "AO", "AV", "BI", "BO", "BV", "MO", "MV"]
+ALL_OBJECT_TYPES = POINT_TYPES + [
+    "PROGRAM", "LOOP", "TREND", "SCHEDULE", "CALENDAR",
+    "SMARTSENSOR", "SYSTEMGROUP", "TABLE", "ARRAY"
+]
+
+
+def parse_code_references(code: str) -> dict:
+    """Parse Control-BASIC code and extract all local point/loop references.
+
+    Returns dict like:
+        {"AI": {1, 4}, "AV": {7, 8, 9}, "LOOP": {1}, "SCHED": {1}, ...}
+    """
+    refs = {}
+    for match in POINT_REF_PATTERN.finditer(code):
+        ptype = match.group(1)
+        instance = int(match.group(2))
+        refs.setdefault(ptype, set()).add(instance)
+    return refs
+
+
+def parse_network_references(code: str) -> list:
+    """Extract cross-device references like 1001BI1 from program code.
+
+    These are reads from other controllers on the network and should be
+    preserved as-is (not remapped).
+    """
+    network_refs = []
+    for match in NETWORK_REF_PATTERN.finditer(code):
+        device_id = match.group(1)
+        ptype = match.group(2)
+        instance = match.group(3)
+        network_refs.append({
+            "device_id": device_id,
+            "type": ptype,
+            "instance": instance,
+            "raw": match.group(0),
+        })
+    return network_refs
+
+
 # Program function tags — maps program name patterns to human-readable function tags
 # These help techs find programs by function regardless of source category
 PROGRAM_FUNCTION_TAGS = {
@@ -210,6 +262,7 @@ def parse_network_references(code: str) -> list:
     return network_refs
 
 
+
 class Composer:
     def __init__(self, config: Config):
         self.cfg = config
@@ -288,23 +341,20 @@ class Composer:
                     # Clean dependency instances to sorted lists
                     dep_summary = {k: sorted(v) for k, v in refs.items()}
 
-                    prog_name = prog.get("name", "")
-                    ftags = get_function_tags_for_program(prog_name)
-
                     index.append({
                         "source_category": category,
                         "source_variant": variant_id,
                         "source_description": variant_desc,
                         "friendly_label": VARIANT_FRIENDLY_LABELS.get(variant_id, ""),
+                        "function_tags": get_function_tags_for_program(prog.get("name", "")),
                         "program_instance": prog.get("instance", ""),
-                        "program_name": prog_name,
+                        "program_name": prog.get("name", ""),
                         "program_description": prog.get("description", ""),
                         "code_preview": code[:200],
                         "code_lines": len(code.split("\n")),
                         "dependencies": dep_summary,
                         "dependency_details": dep_details,
                         "network_refs": net_refs,
-                        "function_tags": ftags,
                     })
 
         return index
@@ -434,44 +484,6 @@ class Composer:
                 pass
 
         return descs
-
-    def build_variant_metadata(self) -> dict:
-        """Build enriched metadata for every variant: friendly label, function tags,
-        compatible equipment, and description.
-
-        Returns dict: { variant_id: { description, friendly_label, function_tags, compatible_with } }
-        """
-        descs = self.build_variant_descriptions()
-        meta = {}
-
-        if not self.cfg.library_root.exists():
-            return meta
-
-        for cat_dir in sorted(self.cfg.library_root.iterdir()):
-            if not cat_dir.is_dir() or cat_dir.name.startswith("_"):
-                continue
-            for jf in sorted(cat_dir.glob("*.json")):
-                try:
-                    data = json.loads(jf.read_text())
-                except Exception:
-                    continue
-                variant_id = data.get("id", jf.stem)
-                objects = data.get("objects", {})
-                programs = objects.get("PROGRAM", [])
-
-                ftags = get_all_function_tags_for_variant(programs)
-                compat = get_compatible_equipment(ftags)
-                friendly = VARIANT_FRIENDLY_LABELS.get(variant_id, "")
-
-                meta[variant_id] = {
-                    "description": descs.get(variant_id, ""),
-                    "friendly_label": friendly,
-                    "function_tags": ftags,
-                    "compatible_with": compat,
-                    "category": cat_dir.name,
-                }
-
-        return meta
 
     def _cat_folder(self, cat_key: str) -> str:
         """Reverse-map category key (e.g. 'SBS_AHU') to upload folder name."""
@@ -768,16 +780,7 @@ class Composer:
             src_meta = data.get("meta", {})
             if src_meta:
                 if "GroupAssets" in src_meta:
-                    # Normalize backslash paths to forward slashes for Linux compatibility
-                    normalized_ga = []
-                    for ga in src_meta["GroupAssets"]:
-                        ga_copy = dict(ga)
-                        if "Asset" in ga_copy:
-                            ga_copy["Asset"] = ga_copy["Asset"].replace("\\", "/")
-                        if "JobPath" in ga_copy:
-                            ga_copy["JobPath"] = ga_copy["JobPath"].replace("\\", "/")
-                        normalized_ga.append(ga_copy)
-                    all_meta.setdefault("GroupAssets", []).extend(normalized_ga)
+                    all_meta.setdefault("GroupAssets", []).extend(src_meta["GroupAssets"])
                 if "ViewAssets" in src_meta:
                     all_meta.setdefault("ViewAssets", []).extend(src_meta["ViewAssets"])
                 if "Model" in src_meta and "Model" not in all_meta:
@@ -1049,20 +1052,6 @@ class Composer:
                 "from": src,
             })
 
-        # Build ARRAY/TABLE source mapping for binary post-processing
-        # Maps object name -> source variant key (e.g. "VAV/VAV-IS10001")
-        array_table_sources = {}
-        for arr in arrays:
-            src = arr.get("_source", "")
-            name = arr.get("name", "")
-            if src and name:
-                array_table_sources[name] = src
-        for tbl in tables:
-            src = tbl.get("_source", "")
-            name = tbl.get("name", "")
-            if src and name:
-                array_table_sources[name] = src
-
         composed_meta = dict(all_meta)
         composed_meta.update({
             "composed": True,
@@ -1070,7 +1059,6 @@ class Composer:
             "device_id": device_id,
             "device_name": device_name,
             "graphics_sources": all_graphics_sources,
-            "array_table_sources": array_table_sources,
         })
 
         result = {
@@ -1085,9 +1073,6 @@ class Composer:
             "grp_files": all_grp_files,
             "counts": counts,
         }
-
-        # Validate that all referenced graphics exist on disk
-        self._validate_graphics(result)
 
         logger.info(
             f"Composed {len(programs)} programs, "
@@ -1109,74 +1094,6 @@ class Composer:
         save_path.write_text(json.dumps(composition, indent=2))
         logger.info(f"Saved composition: {save_path}")
         return save_path
-
-    def _validate_graphics(self, composition: dict):
-        """Validate that all graphics referenced in GroupAssets and GRP files exist on disk.
-
-        Logs warnings for missing files but does not block composition.
-        """
-        meta = composition.get("meta", {})
-        graphics_sources = meta.get("graphics_sources", [])
-        grp_files = composition.get("grp_files", {})
-        shared_dir = self.cfg.assets_root / "_shared"
-
-        # Build list of asset directories to search
-        asset_dirs = []
-        seen_variants = set()
-        for gs in graphics_sources:
-            vkey = f"{gs.get('from_category', '')}/{gs.get('from_variant', '')}"
-            if vkey not in seen_variants:
-                seen_variants.add(vkey)
-                d = self.cfg.assets_root / gs.get("from_category", "") / gs.get("from_variant", "")
-                if d.exists():
-                    asset_dirs.append(d)
-        if shared_dir.exists():
-            asset_dirs.append(shared_dir)
-
-        # Collect all referenced files from GRP JSONs
-        referenced = set()
-        import json as _json
-        for grp_name, grp_data in grp_files.items():
-            text = _json.dumps(grp_data)
-            for m in re.finditer(
-                r'"(?:external_file|gel_filename|image|background_image)"\s*:\s*"([^"]+)"', text
-            ):
-                val = m.group(1).replace('\\\\', '/').replace('\\', '/').replace('pic/', '')
-                if val and '.' in val:
-                    referenced.add(val)
-
-        # Collect from GroupAssets
-        for ga in meta.get("GroupAssets", []):
-            job_path = ga.get("JobPath", "").replace('\\', '/').replace('pic/', '')
-            if job_path and '.' in job_path:
-                referenced.add(job_path)
-
-        # Check each referenced file
-        missing = []
-        found = 0
-        for ref in sorted(referenced):
-            ref_norm = ref.replace('\\', '/')
-            exists = False
-            for d in asset_dirs:
-                if (d / ref_norm).exists():
-                    exists = True
-                    break
-                # Fallback: search by filename only
-                if list(d.rglob(Path(ref_norm).name)):
-                    exists = True
-                    break
-            if exists:
-                found += 1
-            else:
-                missing.append(ref)
-
-        if missing:
-            logger.warning(
-                f"Graphics validation: {len(missing)} referenced files not found on disk: "
-                + ", ".join(missing[:20])
-                + (f" ... and {len(missing)-20} more" if len(missing) > 20 else "")
-            )
-        logger.info(f"Graphics validation: {found}/{found + len(missing)} referenced files found")
 
     def list_compositions(self) -> list:
         """List all saved compositions."""
@@ -1234,286 +1151,6 @@ class Composer:
                         "path": str(panx_files[0]),
                     })
         return result
-
-    def _binary_post_process(self, pan_path: Path, composition: dict):
-        """Post-process a PFG-generated .pan to restore data lost in XML roundtrip.
-
-        PFG generates .pan from XML, but the XML export/import cycle drops:
-        - Loop input/setpoint/output ObjID bindings
-        - Present values for some object types
-        - Array/table data in programs
-
-        This method reads the generated .pan, patches in data from the
-        composition's source library entries (which have binary-enriched data),
-        and writes the corrected .pan back.
-        """
-        from app.pan_binary import PanBinary, PanWriter
-        import struct
-
-        writer = PanWriter(pan_path.read_bytes())
-        parser = PanBinary(writer.data)
-        patched = 0
-
-        objects = composition.get("objects", {})
-
-        # Restore LOOP data regions from source .panx binaries
-        # PFG generates loops with NO ObjID refs — completely empty shells.
-        # The source .pan has the full loop structure (386 bytes) with:
-        #   - ObjID refs at offsets 71 (output) and 265 (input)
-        #   - PID parameters, present values, action mode
-        # We copy the entire loop data region from source, like PFU does.
-        meta = composition.get("meta", {})
-        source_cache = {}  # variant_key -> PanBinary
-
-        # Build a lookup of which source variant each loop came from
-        # Use the composition's source tracking
-        lib_loops = objects.get("LOOP", [])
-        sources_list = meta.get("sources", [])
-
-        # Find the primary variant (most programs come from here)
-        primary_variant = meta.get("primary_variant", "")
-
-        # Try to load source binary for the primary variant
-        def _load_source(variant_key):
-            if variant_key in source_cache:
-                return source_cache[variant_key]
-            parts = variant_key.split("/", 1) if "/" in variant_key else []
-            if len(parts) != 2:
-                return None
-            cat_key, var_id = parts
-            folder_name = self._cat_folder(cat_key)
-            cat_dir = self.cfg.upload_root / folder_name
-            src = next(cat_dir.rglob(f"{var_id}.panx"), None) or next(cat_dir.rglob(f"{var_id}.pan"), None)
-            if src:
-                try:
-                    source_cache[variant_key] = PanBinary.from_panx(src) if str(src).endswith('.panx') else PanBinary.from_file(src)
-                    return source_cache[variant_key]
-                except Exception as e:
-                    logger.warning(f"Failed to load source binary {src}: {e}")
-            return None
-
-        # Try all variant sources to find loop data
-        variant_keys = set()
-        if primary_variant:
-            variant_keys.add(primary_variant)
-        for s in sources_list:
-            src_str = s.get("from", "")
-            if "/" in src_str:
-                variant_keys.add(src_str)
-        # Also check array_table_sources for variant keys
-        for vk in meta.get("array_table_sources", {}).values():
-            if "/" in str(vk):
-                variant_keys.add(str(vk))
-
-        # Build source object lookup from ALL available source binaries.
-        # Byte-level copy for anything PFG XML roundtrip misses:
-        # LOOP (bindings), TABLE (in/out rows), ARRAY (values),
-        # TREND (multi-point refs), SCHEDULE (weekly data), etc.
-        source_objects = {}  # bare_name -> (source_obj, variant_key)
-        for vk in variant_keys:
-            src_pan = _load_source(vk)
-            if not src_pan:
-                continue
-            for sobj in src_pan.objects:
-                sname = sobj['name'].strip('\x00')
-                bare = sname.replace('{device-name}', '').lstrip('-')
-                import re as _re2
-                bare = _re2.sub(r'^\d+-', '', bare) if bare else bare
-                if bare and len(sobj.get('data_region', b'')) > 20:
-                    source_objects[bare] = (sobj, vk)
-
-        # For each object in the PFG-generated .pan, check if the source
-        # has a richer version. If the source data region is larger (has more
-        # data that PFG dropped), do a byte-level copy.
-        for target_obj in parser.objects:
-            tname = target_obj['name'].strip('\x00')
-            tbare = tname.replace('{device-name}', '').lstrip('-')
-            target_size = len(target_obj.get('data_region', b''))
-
-            src_match = source_objects.get(tbare)
-            if not src_match:
-                for sbare, sdata in source_objects.items():
-                    if sbare in tbare or tbare in sbare:
-                        src_match = sdata
-                        break
-
-            if not src_match:
-                continue
-
-            src_obj, vk = src_match
-            source_size = len(src_obj.get('data_region', b''))
-
-            # Only copy if source has MORE data than PFG generated
-            # (meaning PFG stripped something)
-            if source_size > target_size + 10:
-                if writer.copy_data_region(tname, src_obj['data_region']):
-                    patched += 1
-                    logger.info(
-                        f"Binary post-process: restored '{tname}' "
-                        f"({source_size} bytes from source vs {target_size} in PFG) from {vk}"
-                    )
-
-        # Restore present values from library
-        for ptype in ['AO', 'AV', 'BO', 'BV', 'MO', 'MV']:
-            for pt in objects.get(ptype, []):
-                pt_name = pt.get("name", "")
-                pv = pt.get("present_value")
-                if pt_name and pv is not None:
-                    try:
-                        pv_float = float(pv)
-                        if pv_float != 0.0:  # Don't overwrite with zeros
-                            if writer.set_present_value(pt_name, pv_float):
-                                patched += 1
-                    except (ValueError, TypeError):
-                        pass
-
-        # Restore ARRAY and TABLE data regions from source .panx binaries
-        # The XML roundtrip through PFG drops all ARRAY values and TABLE in/out pairs.
-        # We find the source .panx for each ARRAY/TABLE, parse its binary, and copy
-        # the raw data region into the PFG-generated .pan.
-        meta = composition.get("meta", {})
-        array_table_sources = meta.get("array_table_sources", {})
-
-        if array_table_sources:
-            # Cache parsed source binaries to avoid re-reading
-            source_binary_cache = {}  # variant_key -> PanBinary
-
-            for obj_name, variant_key in array_table_sources.items():
-                try:
-                    if variant_key not in source_binary_cache:
-                        # variant_key is "CATEGORY/variant_id" e.g. "VAV/VAV-IS10001"
-                        parts = variant_key.split("/", 1)
-                        if len(parts) != 2:
-                            continue
-                        cat_key, var_id = parts
-                        folder_name = self._cat_folder(cat_key)
-                        cat_dir = self.cfg.upload_root / folder_name
-
-                        # Find source .panx or .pan
-                        src_panx = next(cat_dir.rglob(f"{var_id}.panx"), None)
-                        src_pan = next(cat_dir.rglob(f"{var_id}.pan"), None)
-
-                        if src_panx:
-                            source_binary_cache[variant_key] = PanBinary.from_panx(src_panx)
-                        elif src_pan:
-                            source_binary_cache[variant_key] = PanBinary.from_file(src_pan)
-                        else:
-                            logger.warning(
-                                f"Binary post-process: source .panx/.pan not found for "
-                                f"{variant_key} in {cat_dir}"
-                            )
-                            continue
-
-                    source_pan = source_binary_cache[variant_key]
-
-                    # Find the matching object in the source binary by name
-                    # Names may differ by device prefix, so match on the suffix
-                    # (e.g. source has "1001-AY1", target has "{device-name}-AY1")
-                    source_obj = None
-                    obj_suffix = obj_name.split('}')[-1] if '}' in obj_name else obj_name
-                    # Strip leading dash from suffix for matching
-                    obj_suffix_bare = obj_suffix.lstrip('-')
-
-                    for sobj in source_pan.objects:
-                        sname = sobj['name']
-                        s_suffix = sname.split('}')[-1] if '}' in sname else sname
-                        s_suffix_bare = s_suffix.lstrip('-')
-                        # Also try stripping numeric device prefix
-                        # e.g. "1001-AY1" -> "-AY1" -> "AY1"
-                        import re as _re
-                        s_stripped = _re.sub(r'^\d+-', '', sname)
-
-                        if (s_suffix_bare == obj_suffix_bare or
-                            s_stripped == obj_suffix_bare or
-                            sname.endswith(obj_suffix_bare)):
-                            source_obj = sobj
-                            break
-
-                    if source_obj is None:
-                        logger.debug(
-                            f"Binary post-process: no source object matching "
-                            f"'{obj_name}' (suffix '{obj_suffix_bare}') in {variant_key}"
-                        )
-                        continue
-
-                    # Instead of copying the entire data region (which can corrupt
-                    # structural metadata), write individual float values from the
-                    # source ARRAY/TABLE into the target using set_present_value.
-                    # PFG creates the correct object structure — we just fill in values.
-                    source_data = source_obj['data_region']
-                    if not source_data:
-                        continue
-
-                    # Extract float values from source data region (0x44 tag = float)
-                    source_floats = []
-                    i = 0
-                    while i < len(source_data) - 5:
-                        if source_data[i] == 0x44:
-                            try:
-                                val = struct.unpack('>f', source_data[i+1:i+5])[0]
-                                if val == val and -1e9 < val < 1e9:
-                                    source_floats.append((i, val))
-                            except struct.error:
-                                pass
-                            i += 5
-                        else:
-                            i += 1
-
-                    if not source_floats:
-                        continue
-
-                    # Find the target object and write floats at matching positions
-                    target_name = obj_name
-                    # Find in writer's data
-                    name_bytes = target_name.encode('utf-8')
-                    try:
-                        name_pos = bytes(writer.data).index(name_bytes + b'\x00')
-                    except ValueError:
-                        # Try without null terminator
-                        try:
-                            name_pos = bytes(writer.data).index(name_bytes)
-                        except ValueError:
-                            continue
-
-                    name_end = name_pos + len(name_bytes) + 1
-                    # Find target data region
-                    next_mu = bytes(writer.data).find(b'\x4d\x75', name_end + 10)
-                    if next_mu < 0:
-                        next_mu = min(name_end + 500, len(writer.data))
-
-                    target_region = writer.data[name_end:next_mu]
-
-                    # Find float slots in target and overwrite with source values
-                    float_idx = 0
-                    ti = 0
-                    while ti < len(target_region) - 5 and float_idx < len(source_floats):
-                        if target_region[ti] == 0x44:
-                            # Write source float value here
-                            abs_pos = name_end + ti + 1
-                            writer.data[abs_pos:abs_pos + 4] = struct.pack('>f', source_floats[float_idx][1])
-                            float_idx += 1
-                            ti += 5
-                        else:
-                            ti += 1
-
-                    if float_idx > 0:
-                        patched += float_idx
-                        logger.info(
-                            f"Binary post-process: restored {float_idx} float values for "
-                            f"'{obj_name}' from {variant_key}"
-                        )
-
-                except Exception as e:
-                    logger.warning(
-                        f"Binary post-process: failed to restore '{obj_name}' "
-                        f"from {variant_key}: {e}"
-                    )
-
-        if patched > 0:
-            writer.save(pan_path)
-            logger.info(f"Binary post-processing: patched {patched} values/bindings in {pan_path.name}")
-        else:
-            logger.info("Binary post-processing: no patches needed")
 
     def _generate_values_document(self, composition: dict, output_path: Path):
         """Generate a companion text document listing all configured values.
@@ -1611,7 +1248,8 @@ class Composer:
 
         loops = objects.get("LOOP", [])
         if loops:
-            lines.append(f"--- Loops (PID Settings + Binary Bindings) ---")
+            lines.append(f"--- Loops (PID Settings) ---")
+            lines.append(f"  ** IMPORTANT: Input and Setpoint must be configured in RC Studio **")
             lines.append(f"{'Inst':>5}  {'Name':<30}  {'P':>8}  {'I':>8}  {'D':>8}  {'Bias':>8}  {'DB':>8}  {'Action':>8}  {'I-Units':>8}")
             lines.append(f"{'-'*5}  {'-'*30}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}")
             for l in sorted(loops, key=lambda x: int(x.get("instance", 0))):
@@ -1623,40 +1261,23 @@ class Composer:
                     f"{l.get('deadband',''):>8}  {l.get('action',''):>8}  "
                     f"{l.get('integralunits',''):>8}"
                 )
-                # Check binary-enriched data first (from library enrichment)
-                has_binary = False
-                if l.get('output_ref') or l.get('input_ref') or l.get('setpoint_ref') or l.get('setpoint_value') is not None:
-                    has_binary = True
-                    if l.get('output_ref'):
-                        out_name = l.get('output_name', '')
-                        lines.append(f"         -> Output:   {l['output_ref']}" + (f" ({out_name})" if out_name else ""))
-                    if l.get('input_ref'):
-                        inp_name = l.get('input_name', '')
-                        lines.append(f"         -> Input:    {l['input_ref']}" + (f" ({inp_name})" if inp_name else ""))
-                    if l.get('setpoint_ref'):
-                        sp_name = l.get('setpoint_name', '')
-                        lines.append(f"         -> Setpoint: {l['setpoint_ref']}" + (f" ({sp_name})" if sp_name else ""))
-                    elif l.get('setpoint_value') is not None:
-                        lines.append(f"         -> Setpoint: {l['setpoint_value']:.1f} (direct value)")
-                    if l.get('binary_proportional') is not None:
-                        lines.append(f"         -> PID (binary): P={l.get('binary_proportional','-')} I={l.get('binary_integral','-')} D={l.get('binary_derivative','-')}")
-
-                if not has_binary:
-                    # Fallback: try to suggest input/setpoint from loop name
-                    loop_mnem = name.split("-", 1)[1] if "-" in name else name
-                    prefix = name.rsplit("-" + loop_mnem.split("-")[0], 1)[0] if "-" in name else device_name
-                    import re as _re_lm
-                    loop_mnem_clean = _re_lm.sub(r'\d+$', '', loop_mnem)
-                    binding = _loop_bindings.get(loop_mnem) or _loop_bindings.get(loop_mnem_clean)
-                    if binding:
-                        inp_name = f"{prefix}-{binding['input']}"
-                        sp_name = f"{prefix}-{binding['setpoint']}"
-                        inp_ref = all_points.get(inp_name, f"? ({binding['input']})")
-                        sp_ref = all_points.get(sp_name, f"? ({binding['setpoint']})")
-                        lines.append(f"         -> Input: {inp_ref} ({inp_name})")
-                        lines.append(f"         -> Setpoint: {sp_ref} ({sp_name})")
-                    else:
-                        lines.append(f"         -> Input/Setpoint: not available in library data")
+                # Try to suggest input/setpoint from loop name
+                loop_mnem = name.split("-", 1)[1] if "-" in name else name
+                prefix = name.rsplit("-" + loop_mnem.split("-")[0], 1)[0] if "-" in name else device_name
+                # Strip trailing instance number from mnemonic (DSP-LOOP1 -> DSP-LOOP)
+                import re as _re_lm
+                loop_mnem_clean = _re_lm.sub(r'\d+$', '', loop_mnem)
+                binding = _loop_bindings.get(loop_mnem) or _loop_bindings.get(loop_mnem_clean)
+                if binding:
+                    # Find matching points
+                    inp_name = f"{prefix}-{binding['input']}"
+                    sp_name = f"{prefix}-{binding['setpoint']}"
+                    inp_ref = all_points.get(inp_name, f"? ({binding['input']})")
+                    sp_ref = all_points.get(sp_name, f"? ({binding['setpoint']})")
+                    lines.append(f"         -> Input: {inp_ref} ({inp_name})")
+                    lines.append(f"         -> Setpoint: {sp_ref} ({sp_name})")
+                else:
+                    lines.append(f"         -> Input/Setpoint: must be configured manually")
             lines.append("")
 
         # ── Programs ──
@@ -2007,91 +1628,21 @@ class Composer:
     def generate_pan(self, composition: dict, blank_model: str = None) -> Path:
         """Generate a .pan file from a composed controller.
 
-        Pipeline (standard — multi-variant):
+        Pipeline:
           1. Generate changes XML from composition
           2. Extract blank .pan from the specified controller model template
           3. Run PFG: blank .pan + changes XML -> output .pan
-          4. Binary post-process to restore data PFG drops
 
-        Pipeline (optimized — single-variant):
-          If all programs come from one source variant, bypass PFG entirely
-          and do a PFU-style binary copy. This preserves ALL data (loops,
-          arrays, tables, trends) with zero loss.
+        Args:
+            composition: composed controller JSON
+            blank_model: controller model name (e.g. "RC-FLEXair-34-A-F")
+                         Must match a folder in blanks/
 
         Returns path to generated .pan in _output dir.
         """
         import shutil
         import time
 
-        meta = composition.get("meta", {})
-        sources = meta.get("sources", [])
-        device_id = meta.get("device_id", "900")
-        device_name = meta.get("device_name", "{device-name}")
-
-        # Check if all programs come from a single source variant
-        source_variants = set()
-        for s in sources:
-            src = s.get("from", "")
-            if "/" in src:
-                source_variants.add(src)
-
-        # Single-variant optimization: bypass PFG, use PFU-style binary copy
-        if len(source_variants) == 1:
-            variant_key = list(source_variants)[0]
-            parts = variant_key.split("/", 1)
-            if len(parts) == 2:
-                cat_key, var_id = parts
-                folder_name = self._cat_folder(cat_key)
-                cat_dir = self.cfg.upload_root / folder_name
-                src_file = next(cat_dir.rglob(f"{var_id}.panx"), None) or next(cat_dir.rglob(f"{var_id}.pan"), None)
-
-                if src_file:
-                    try:
-                        from app.pan_binary import PanWriter
-                        writer = PanWriter.from_panx(src_file) if str(src_file).endswith('.panx') else PanWriter.from_file(src_file)
-
-                        # Set device ID
-                        writer.set_device_id(int(device_id))
-
-                        # Detect source device name for renaming
-                        from app.pan_binary import PanBinary
-                        parser = PanBinary(bytes(writer.data))
-                        prefixes = {}
-                        for obj in parser.objects:
-                            name = obj['name']
-                            if '-' in name:
-                                prefix = name.split('-')[0].strip()
-                                if prefix and len(prefix) > 1:
-                                    prefixes[prefix] = prefixes.get(prefix, 0) + 1
-                        source_name = max(prefixes, key=prefixes.get) if prefixes else ""
-
-                        # Rename if device_name is specified and not template mode
-                        if device_name and device_name != "{device-name}" and source_name:
-                            if len(device_name) == len(source_name):
-                                writer.rename_device(source_name, device_name)
-
-                        # Save
-                        output_dir = self.cfg.library_root / "COMPOSED" / "_output"
-                        output_dir.mkdir(parents=True, exist_ok=True)
-                        comp_id = composition.get("id", "composed")
-                        final_pan = output_dir / f"{comp_id}.pan"
-                        writer.save(final_pan)
-
-                        # Generate companion values document
-                        values_doc = output_dir / f"{comp_id}_values.txt"
-                        self._generate_values_document(composition, values_doc)
-
-                        logger.info(
-                            f"Single-variant optimization: bypassed PFG, "
-                            f"binary copy from {src_file.name} -> {final_pan.name} "
-                            f"(zero data loss)"
-                        )
-                        return final_pan
-
-                    except Exception as e:
-                        logger.warning(f"Single-variant binary copy failed, falling back to PFG: {e}")
-
-        # Standard multi-variant path: PFG + binary post-process
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent))
         from generator import generate_xml
@@ -2191,15 +1742,6 @@ class Composer:
             shutil.copy2(output_pan, final_pan)
             logger.info(f"Generated .pan: {final_pan}")
 
-            # Step 4: Binary post-processing — restore data PFG XML roundtrip loses
-            # PFG generates from XML which drops: loop bindings, array data,
-            # trend multi-refs, some schedule details. If we have source .pan
-            # binaries, patch the missing data back in.
-            try:
-                self._binary_post_process(final_pan, composition)
-            except Exception as e:
-                logger.warning(f"Binary post-processing failed (non-fatal): {e}")
-
             # Generate companion values document
             values_doc = output_dir / f"{comp_id}_values.txt"
             self._generate_values_document(composition, values_doc)
@@ -2256,20 +1798,14 @@ class Composer:
             if meta.get("HardPointConfig"):
                 panx_meta["HardPointConfig"] = meta["HardPointConfig"]
             if meta.get("GroupAssets"):
-                # Deduplicate GroupAssets by Asset path (normalize slashes for comparison)
+                # Deduplicate GroupAssets by Asset path
                 seen_assets = set()
                 deduped = []
                 for ga in meta["GroupAssets"]:
-                    # Normalize backslashes to forward slashes
-                    ga_norm = dict(ga)
-                    if "Asset" in ga_norm:
-                        ga_norm["Asset"] = ga_norm["Asset"].replace("\\", "/")
-                    if "JobPath" in ga_norm:
-                        ga_norm["JobPath"] = ga_norm["JobPath"].replace("\\", "/")
-                    key = ga_norm.get("Asset", "")
+                    key = ga.get("Asset", "")
                     if key not in seen_assets:
                         seen_assets.add(key)
-                        deduped.append(ga_norm)
+                        deduped.append(ga)
                 panx_meta["GroupAssets"] = deduped
             panx_meta["ViewAssets"] = meta.get("ViewAssets", [])
 
