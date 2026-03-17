@@ -2300,6 +2300,33 @@ async def composer_values_excel(comp_id: str):
     if prog_rows:
         add_sheet("Programs", ["Instance", "Name", "Enabled", "Code"], prog_rows)
 
+    # Arrays
+    array_rows = []
+    for a in sorted(objects.get("ARRAY", []), key=lambda x: int(x.get("instance", 0))):
+        name = a.get("name", "").replace("{device-name}", device_name)
+        vals = a.get("values", [])
+        if vals:
+            for idx, v in enumerate(vals):
+                array_rows.append([int(a.get("instance", 0)) if idx == 0 else "", name if idx == 0 else "", idx, v])
+        else:
+            array_rows.append([int(a.get("instance", 0)), name, "", ""])
+    if array_rows:
+        add_sheet("Arrays", ["Instance", "Name", "Index", "Value"], array_rows)
+
+    # Tables
+    table_rows = []
+    for t in sorted(objects.get("TABLE", []), key=lambda x: int(x.get("instance", 0))):
+        name = t.get("name", "").replace("{device-name}", device_name)
+        tbl_data = t.get("rows", [])
+        if tbl_data:
+            for ri, r in enumerate(tbl_data):
+                table_rows.append([int(t.get("instance", 0)) if ri == 0 else "", name if ri == 0 else "",
+                                  t.get("unit", "") if ri == 0 else "", ri + 1, r.get("in", ""), r.get("out", "")])
+        else:
+            table_rows.append([int(t.get("instance", 0)), name, t.get("unit", ""), "", "", ""])
+    if table_rows:
+        add_sheet("Tables", ["Instance", "Name", "Unit", "Row #", "Input", "Output"], table_rows)
+
     # Trends
     trend_rows = []
     for t in sorted(objects.get("TREND", []), key=lambda x: int(x.get("instance", 0))):
