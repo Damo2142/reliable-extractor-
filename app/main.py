@@ -1822,6 +1822,30 @@ def _generate_excel_from_composition(comp_data):
                         l.get("output_ref", l.get("suggested_output", ""))])
         add_sheet("Loops", headers, rows)
 
+    # Arrays sheet
+    arrays = objects.get("ARRAY", [])
+    if arrays:
+        headers = ["Instance", "Name", "Size", "Unit", "Values"]
+        rows = []
+        for a in sorted(arrays, key=lambda x: int(x.get("instance", 0))):
+            name = a.get("name", "").replace("{device-name}", device_name)
+            vals = a.get("values", [])
+            val_str = ", ".join(str(v) for v in vals) if vals else ""
+            rows.append([int(a.get("instance", 0)), name, a.get("size", ""), a.get("unit", ""), val_str])
+        add_sheet("Arrays", headers, rows)
+
+    # Tables sheet
+    tables = objects.get("TABLE", [])
+    if tables:
+        headers = ["Instance", "Name", "Description", "Size", "Values"]
+        rows = []
+        for t in sorted(tables, key=lambda x: int(x.get("instance", 0))):
+            name = t.get("name", "").replace("{device-name}", device_name)
+            vals = t.get("values", [])
+            val_str = ", ".join(str(v) for v in vals) if vals else ""
+            rows.append([int(t.get("instance", 0)), name, t.get("description", ""), t.get("size", ""), val_str])
+        add_sheet("Tables", headers, rows)
+
     # Programs sheet
     progs = objects.get("PROGRAM", [])
     if progs:
