@@ -2136,28 +2136,40 @@ async def composer_values_excel(comp_id: str):
         if not rows:
             return
 
-        # Build dict by instance for gap filling
-        by_inst = {}
-        for row in rows:
-            by_inst[row[0]] = row
+        # Check if all row[0] values are integers (point-style with gap filling)
+        all_int = all(isinstance(row[0], int) for row in rows)
 
-        max_inst = max(by_inst.keys())
-        r = 2
-        for inst in range(1, max_inst + 1):
-            if inst in by_inst:
-                for c, val in enumerate(by_inst[inst], 1):
-                    cell = ws.cell(row=r, column=c, value=val)
+        if all_int:
+            # Build dict by instance for gap filling
+            by_inst = {}
+            for row in rows:
+                by_inst[row[0]] = row
+
+            max_inst = max(by_inst.keys())
+            r = 2
+            for inst in range(1, max_inst + 1):
+                if inst in by_inst:
+                    for c, val in enumerate(by_inst[inst], 1):
+                        cell = ws.cell(row=r, column=c, value=val)
+                        cell.border = thin_border
+                else:
+                    # Empty row — just instance number, greyed out
+                    cell = ws.cell(row=r, column=1, value=inst)
                     cell.border = thin_border
-            else:
-                # Empty row — just instance number, greyed out
-                cell = ws.cell(row=r, column=1, value=inst)
-                cell.border = thin_border
                 cell.fill = empty_fill
                 for c in range(2, len(headers) + 1):
                     cell = ws.cell(row=r, column=c, value="")
                     cell.border = thin_border
                     cell.fill = empty_fill
             r += 1
+        else:
+            # Direct row writing (arrays, tables, loops with continuation rows)
+            r = 2
+            for row in rows:
+                for c, val in enumerate(row, 1):
+                    cell = ws.cell(row=r, column=c, value=val)
+                    cell.border = thin_border
+                r += 1
 
         # Auto-width
         for c in range(1, len(headers) + 1):
@@ -2286,8 +2298,22 @@ async def composer_values_excel(comp_id: str):
                          l.get("integralunits", ""),
                          input_pt, setpoint_pt, output_pt])
     if loop_rows:
-        add_sheet("Loops", ["Instance", "Name", "P", "I", "D", "Bias", "Deadband", "Action", "I-Units",
-                           "Input (suggested)", "Setpoint (suggested)", "Output"], loop_rows)
+        # Force direct write (no gap filling) — loop instances may skip
+        loop_headers = ["Instance", "Name", "P", "I", "D", "Bias", "Deadband", "Action", "I-Units",
+                       "Input (suggested)", "Setpoint (suggested)", "Output"]
+        ws_loops = wb.create_sheet("Loops")
+        for c, h in enumerate(loop_headers, 1):
+            cell = ws_loops.cell(row=1, column=c, value=h)
+            cell.font = header_font_white
+            cell.fill = header_fill
+            cell.border = thin_border
+        for ri, row in enumerate(loop_rows, 2):
+            for c, val in enumerate(row, 1):
+                cell = ws_loops.cell(row=ri, column=c, value=val)
+                cell.border = thin_border
+        for c in range(1, len(loop_headers) + 1):
+            max_len = max(len(str(ws_loops.cell(r, c).value or '')) for r in range(1, len(loop_rows) + 2))
+            ws_loops.column_dimensions[ws_loops.cell(1, c).column_letter].width = min(max_len + 3, 50)
 
     # Programs
     prog_rows = []
