@@ -27,9 +27,9 @@ from app.config import Config
 logger = logging.getLogger(__name__)
 
 # Regex patterns for Control-BASIC point references
-# Matches: AV7, AI1, AO2, BI6, BO2, BV24, MO7, MV16, LOOP1, SCHED1
+# Matches: AV7, AI1, AO2, BI6, BO2, BV24, MO7, MV16, LOOP1, SCHED1, AY1, TBL1
 POINT_REF_PATTERN = re.compile(
-    r'\b(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|SCHED)(\d+)\b'
+    r'\b(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|SCHED|AY|TBL)(\d+)\b'
 )
 
 # For network/cross-device references like 1001BI1 or 1001DEV1001:120
@@ -211,9 +211,9 @@ def get_compatible_equipment(function_tags: list) -> list:
 
 
 # Regex patterns for Control-BASIC point references
-# Matches: AV7, AI1, AO2, BI6, BO2, BV24, MO7, MV16, LOOP1, SCHED1
+# Matches: AV7, AI1, AO2, BI6, BO2, BV24, MO7, MV16, LOOP1, SCHED1, AY1, TBL1
 POINT_REF_PATTERN = re.compile(
-    r'\b(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|SCHED)(\d+)\b'
+    r'\b(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|SCHED|AY|TBL)(\d+)\b'
 )
 
 # For network/cross-device references like 1001BI1 or 1001DEV1001:120
@@ -533,6 +533,16 @@ class Composer:
             mnemonic = self._get_mnemonic(obj)
             if mnemonic:
                 mapping[("SCHED", inst)] = mnemonic
+        for obj in objects.get("ARRAY", []):
+            inst = int(obj.get("instance", 0))
+            mnemonic = self._get_mnemonic(obj)
+            if mnemonic:
+                mapping[("AY", inst)] = mnemonic
+        for obj in objects.get("TABLE", []):
+            inst = int(obj.get("instance", 0))
+            mnemonic = self._get_mnemonic(obj)
+            if mnemonic:
+                mapping[("TBL", inst)] = mnemonic
         return mapping
 
     def compose(self, selections: list, device_name: str = "{device-name}",
@@ -579,6 +589,8 @@ class Composer:
         mnemonic_points = {}    # "AV:FLO-SP" -> point_obj (with _mnemonic set)
         mnemonic_loops = {}     # "LOOP:FLO-CTRL-LOOP" -> loop_obj
         mnemonic_scheds = {}    # "SCHED:LOCAL-SCHED" -> schedule_obj
+        mnemonic_arrays = {}    # "AY:OST-HTG-AY" -> array_obj
+        mnemonic_tables = {}    # "TBL:OA-FLO-TBL" -> table_obj
 
         # Per-program remap: maps (program_index, type, old_instance) -> mnemonic_key
         # This lets us rewrite code references later
@@ -589,8 +601,6 @@ class Composer:
         all_calendars = {}
         all_smartsensors = {}
         all_systemgroups = {}
-        all_tables = {}
-        all_arrays = {}
 
         # Graphics, meta, and GRP JSONs
         all_graphics = []
@@ -722,6 +732,42 @@ class Composer:
                                 mnemonic_scheds[mnem_key] = sched_obj
                                 break
 
+            # ── Collect arrays (AY) by mnemonic ──
+            if "AY" in refs:
+                for inst in refs["AY"]:
+                    mnemonic = inst_to_mnemonic.get(("AY", inst))
+                    if not mnemonic:
+                        mnemonic = f"AY{inst}"
+                    mnem_key = f"AY:{mnemonic}"
+                    program_ref_map[(sel_idx, "AY", inst)] = mnem_key
+
+                    if mnem_key not in mnemonic_arrays:
+                        for obj in objects.get("ARRAY", []):
+                            if int(obj.get("instance", 0)) == inst:
+                                arr_obj = dict(obj)
+                                arr_obj["_source"] = key
+                                arr_obj["_mnemonic"] = mnemonic
+                                mnemonic_arrays[mnem_key] = arr_obj
+                                break
+
+            # ── Collect tables (TBL) by mnemonic ──
+            if "TBL" in refs:
+                for inst in refs["TBL"]:
+                    mnemonic = inst_to_mnemonic.get(("TBL", inst))
+                    if not mnemonic:
+                        mnemonic = f"TBL{inst}"
+                    mnem_key = f"TBL:{mnemonic}"
+                    program_ref_map[(sel_idx, "TBL", inst)] = mnem_key
+
+                    if mnem_key not in mnemonic_tables:
+                        for obj in objects.get("TABLE", []):
+                            if int(obj.get("instance", 0)) == inst:
+                                tbl_obj = dict(obj)
+                                tbl_obj["_source"] = key
+                                tbl_obj["_mnemonic"] = mnemonic
+                                mnemonic_tables[mnem_key] = tbl_obj
+                                break
+
             # Pull ALL trends from source (deduplicate by source+instance)
             for trend in objects.get("TREND", []):
                 trend_key = f"{key}:{trend.get('instance', '')}"
@@ -753,18 +799,6 @@ class Composer:
             for grp_name, grp_data in data.get("grp_files", {}).items():
                 if grp_name not in all_grp_files:
                     all_grp_files[grp_name] = grp_data
-
-            for tbl in objects.get("TABLE", []):
-                tbl_key = f"TBL:{tbl.get('instance', '')}"
-                if tbl_key not in all_tables:
-                    all_tables[tbl_key] = dict(tbl)
-                    all_tables[tbl_key]["_source"] = key
-
-            for arr in objects.get("ARRAY", []):
-                arr_key = f"ARR:{arr.get('instance', '')}"
-                if arr_key not in all_arrays:
-                    all_arrays[arr_key] = dict(arr)
-                    all_arrays[arr_key]["_source"] = key
 
             # Collect graphics
             for gfx in data.get("graphics", []):
@@ -849,6 +883,30 @@ class Composer:
                     sched_obj["_source"] = primary_key
                     sched_obj["_mnemonic"] = mnemonic
                     mnemonic_scheds[mnem_key] = sched_obj
+
+            for arr in objects.get("ARRAY", []):
+                inst = int(arr.get("instance", 0))
+                mnemonic = inst_to_mnemonic.get(("AY", inst))
+                if not mnemonic:
+                    mnemonic = f"AY{inst}"
+                mnem_key = f"AY:{mnemonic}"
+                if mnem_key not in mnemonic_arrays:
+                    arr_obj = dict(arr)
+                    arr_obj["_source"] = primary_key
+                    arr_obj["_mnemonic"] = mnemonic
+                    mnemonic_arrays[mnem_key] = arr_obj
+
+            for tbl in objects.get("TABLE", []):
+                inst = int(tbl.get("instance", 0))
+                mnemonic = inst_to_mnemonic.get(("TBL", inst))
+                if not mnemonic:
+                    mnemonic = f"TBL{inst}"
+                mnem_key = f"TBL:{mnemonic}"
+                if mnem_key not in mnemonic_tables:
+                    tbl_obj = dict(tbl)
+                    tbl_obj["_source"] = primary_key
+                    tbl_obj["_mnemonic"] = mnemonic
+                    mnemonic_tables[mnem_key] = tbl_obj
 
             for trend in objects.get("TREND", []):
                 trend_key = f"{primary_key}:{trend.get('instance', '')}"
@@ -937,13 +995,17 @@ class Composer:
         for i, sg in enumerate(systemgroups, 1):
             sg["instance"] = str(i)
 
-        tables = list(all_tables.values())
-        for i, tbl in enumerate(tables, 1):
-            tbl["instance"] = str(i)
-
-        arrays = list(all_arrays.values())
-        for i, arr in enumerate(arrays, 1):
+        # Assign array instances
+        arrays_list = list(mnemonic_arrays.items())
+        for i, (mnem_key, arr) in enumerate(arrays_list, 1):
+            mnem_to_new_inst[mnem_key] = i
             arr["instance"] = str(i)
+
+        # Assign table instances
+        tables_list = list(mnemonic_tables.items())
+        for i, (mnem_key, tbl) in enumerate(tables_list, 1):
+            mnem_to_new_inst[mnem_key] = i
+            tbl["instance"] = str(i)
 
         # ── Phase 3: Rewrite program code with new instance numbers ──
         # Build per-program remap: (old_type, old_inst) -> new_inst
@@ -1039,8 +1101,8 @@ class Composer:
         objects["CALENDAR"] = [clean(c) for c in calendars]
         objects["SMARTSENSOR"] = [clean(s) for s in smartsensors]
         objects["SYSTEMGROUP"] = [clean(s) for s in systemgroups]
-        objects["TABLE"] = [clean(t) for t in tables]
-        objects["ARRAY"] = [clean(a) for a in arrays]
+        objects["TABLE"] = [clean(t) for _, t in tables_list]
+        objects["ARRAY"] = [clean(a) for _, a in arrays_list]
 
         counts = {k: len(v) for k, v in objects.items() if isinstance(v, list) and v}
 
