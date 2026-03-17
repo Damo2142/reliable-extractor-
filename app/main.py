@@ -1808,42 +1808,95 @@ def _generate_excel_from_composition(comp_data):
         if rows:
             add_sheet(sheet_name, headers, rows)
 
-    # Loops sheet
+    # Loops sheet — infer input/setpoint/output from point names if not in data
     loops = objects.get("LOOP", [])
     if loops:
-        headers = ["Instance", "Name", "P", "I", "D", "Action", "Input", "Setpoint", "Output"]
+        # Build point name lookup for matching
+        point_lookup = {}  # mnemonic -> "TYPE:instance (name)"
+        for ptype in ['AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV']:
+            for p in objects.get(ptype, []):
+                pname = p.get("name", "")
+                mnem = pname.replace("{device-name}-", "").replace(device_name + "-", "") if pname else ""
+                if mnem:
+                    point_lookup[mnem.upper()] = f"{ptype}:{p.get('instance','')} ({pname.replace('{device-name}', device_name)})"
+
+        headers = ["Instance", "Name", "P", "I", "D", "Bias", "Deadband", "Action", "I-Units",
+                   "Input (Controlled Variable)", "Setpoint", "Output (Manipulated Variable)"]
         rows = []
         for l in sorted(loops, key=lambda x: int(x.get("instance", 0))):
             name = l.get("name", "").replace("{device-name}", device_name)
+            raw_name = l.get("name", "").replace("{device-name}-", "")
+
+            # Try to get refs from data first, then infer from name
+            input_ref = l.get("input_ref", l.get("suggested_input", ""))
+            setpoint_ref = l.get("setpoint_ref", l.get("suggested_setpoint", ""))
+            output_ref = l.get("output_ref", l.get("suggested_output", ""))
+
+            # Infer from loop name if refs are empty
+            if not input_ref or not output_ref:
+                import re as _re_loop
+                # Extract mnemonic from loop name: e.g. "DSP-LOOP1" -> "DSP"
+                loop_mnem_match = _re_loop.match(r'(.+?)-?LOOP\d*$', raw_name, _re_loop.I)
+                if loop_mnem_match:
+                    loop_mnem = loop_mnem_match.group(1).upper()
+                    # Search for matching points
+                    for pt_mnem, pt_ref in point_lookup.items():
+                        if not input_ref and pt_mnem == loop_mnem and pt_ref.startswith('AI:'):
+                            input_ref = pt_ref
+                        elif not input_ref and loop_mnem in pt_mnem and pt_ref.startswith('AI:'):
+                            input_ref = pt_ref
+                        elif not setpoint_ref and (loop_mnem + '-SPT') in pt_mnem and pt_ref.startswith('AV:'):
+                            setpoint_ref = pt_ref
+                        elif not setpoint_ref and loop_mnem in pt_mnem and 'SPT' in pt_mnem and pt_ref.startswith('AV:'):
+                            setpoint_ref = pt_ref
+                        elif not output_ref and loop_mnem in pt_mnem and pt_ref.startswith('AO:'):
+                            output_ref = pt_ref
+
+            action_text = "Direct" if str(l.get("action", "")) == "1" else "Reverse" if str(l.get("action", "")) == "0" else str(l.get("action", ""))
+
             rows.append([int(l.get("instance", 0)), name,
                         l.get("proportional", ""), l.get("integral", ""), l.get("derivative", ""),
-                        l.get("action", ""), l.get("input_ref", l.get("suggested_input", "")),
-                        l.get("setpoint_ref", l.get("setpoint_value", "")),
-                        l.get("output_ref", l.get("suggested_output", ""))])
+                        l.get("bias", ""), l.get("deadband", ""), action_text,
+                        l.get("integralunits", ""),
+                        input_ref, setpoint_ref, output_ref])
         add_sheet("Loops", headers, rows)
 
-    # Arrays sheet
+    # Arrays sheet — each value on its own row for clarity
     arrays = objects.get("ARRAY", [])
     if arrays:
-        headers = ["Instance", "Name", "Size", "Unit", "Values"]
+        headers = ["Instance", "Name", "Index", "Value"]
         rows = []
         for a in sorted(arrays, key=lambda x: int(x.get("instance", 0))):
             name = a.get("name", "").replace("{device-name}", device_name)
             vals = a.get("values", [])
-            val_str = ", ".join(str(v) for v in vals) if vals else ""
-            rows.append([int(a.get("instance", 0)), name, a.get("size", ""), a.get("unit", ""), val_str])
+            if vals:
+                for idx, v in enumerate(vals):
+                    rows.append([int(a.get("instance", 0)) if idx == 0 else "", name if idx == 0 else "", idx, v])
+            else:
+                rows.append([int(a.get("instance", 0)), name, "", ""])
         add_sheet("Arrays", headers, rows)
 
-    # Tables sheet
+    # Tables sheet — show in/out pairs
     tables = objects.get("TABLE", [])
     if tables:
-        headers = ["Instance", "Name", "Description", "Size", "Values"]
+        headers = ["Instance", "Name", "Unit", "Input Unit", "Row #", "Input", "Output"]
         rows = []
         for t in sorted(tables, key=lambda x: int(x.get("instance", 0))):
             name = t.get("name", "").replace("{device-name}", device_name)
-            vals = t.get("values", [])
-            val_str = ", ".join(str(v) for v in vals) if vals else ""
-            rows.append([int(t.get("instance", 0)), name, t.get("description", ""), t.get("size", ""), val_str])
+            tbl_rows = t.get("rows", [])
+            if tbl_rows:
+                for ri, r in enumerate(tbl_rows):
+                    rows.append([
+                        int(t.get("instance", 0)) if ri == 0 else "",
+                        name if ri == 0 else "",
+                        t.get("unit", "") if ri == 0 else "",
+                        t.get("inunit", "") if ri == 0 else "",
+                        ri + 1,
+                        r.get("in", ""),
+                        r.get("out", ""),
+                    ])
+            else:
+                rows.append([int(t.get("instance", 0)), name, t.get("unit", ""), t.get("inunit", ""), "", "", ""])
         add_sheet("Tables", headers, rows)
 
     # Programs sheet
