@@ -2902,3 +2902,450 @@ async def run_extraction(job_id: str, category_filter: Optional[str], selected_k
         job["status"] = "error"
         job["error"] = str(e)
         logger.exception("Extraction job failed")
+
+
+# ─── Door Label PDF Generation ──────────────────────────────────────────────
+
+# Controller terminal definitions — maps controller model to I/O terminal names
+# Instance numbers in BACnet map 1:1 to terminal positions
+CONTROLLER_TERMINALS = {
+    # RC-FLEXair family (VAV/terminal units)
+    'RCFA-M-36': {'inputs': ['IN:01', 'IN:02', 'IN:03'], 'analog_out': ['UO:01', 'UO:02', 'UO:03'], 'binary_out': ['BO:01', 'BO:02', 'BO:03'], 'label': 'RC-FLEXair 36'},
+    'RCFA-M-35': {'inputs': ['IN:01', 'IN:02', 'IN:03'], 'analog_out': ['UO:01', 'UO:02', 'UO:03', 'UO:04', 'UO:05'], 'binary_out': [], 'label': 'RC-FLEXair 35'},
+    'RCFA-M-34': {'inputs': ['IN:01', 'IN:02', 'IN:03'], 'analog_out': ['UO:01', 'UO:02', 'UO:03', 'UO:04'], 'binary_out': [], 'label': 'RC-FLEXair 34'},
+    'RCFA-M-33': {'inputs': ['IN:01', 'IN:02', 'IN:03'], 'analog_out': ['UO:01', 'UO:02', 'UO:03'], 'binary_out': [], 'label': 'RC-FLEXair 33'},
+    'RCFA-M-12': {'inputs': ['IN:01'], 'analog_out': [], 'binary_out': ['BO:01', 'BO:02'], 'label': 'RC-FLEXair 12'},
+    # RC-FLEXone family (equipment/room control)
+    'RCFO-36': {'inputs': ['FX:01', 'FX:02', 'FX:03', 'FX:04', 'FX:05', 'FX:06', 'IN:01', 'IN:02', 'IN:03', 'IN:04', 'IN:05', 'IN:06'], 'analog_out': ['FX:01', 'FX:02', 'FX:03', 'FX:04', 'FX:05', 'FX:06'], 'binary_out': [], 'label': 'RC-FLEXone 36'},
+    'RCFO-M-36': {'inputs': ['FX:01', 'FX:02', 'FX:03', 'FX:04', 'FX:05', 'FX:06', 'IN:01', 'IN:02', 'IN:03', 'IN:04', 'IN:05', 'IN:06'], 'analog_out': ['FX:01', 'FX:02', 'FX:03', 'FX:04', 'FX:05', 'FX:06'], 'binary_out': [], 'label': 'RC-FLEXone M-36'},
+    'RCFO-M-16': {'inputs': ['FX:01', 'FX:02', 'FX:03', 'FX:04', 'FX:05', 'FX:06', 'IN:01'], 'analog_out': ['FX:01', 'FX:02', 'FX:03', 'FX:04', 'FX:05', 'FX:06'], 'binary_out': [], 'label': 'RC-FLEXone M-16'},
+    # MACH-ProZone (VAV)
+    'MPZ-44': {'inputs': ['IN:01+/IN:01-', 'IN:02+/IN:02-', 'IN:03+/IN:03-', 'IN:04+/IN:04-'], 'analog_out': ['OUT:01+/OUT:01-', 'OUT:02+/OUT:02-', 'OUT:03+/OUT:03-', 'OUT:04+/OUT:04-'], 'binary_out': [], 'label': 'MACH-ProZone 44'},
+    'MPZ-88': {'inputs': ['IN:01+/IN:01-', 'IN:02+/IN:02-', 'IN:03+/IN:03-', 'IN:04+/IN:04-', 'IN:05+/IN:05-', 'IN:06+/IN:06-', 'IN:07+/IN:07-', 'IN:08+/IN:08-'], 'analog_out': ['OUT:01+/OUT:01-', 'OUT:02+/OUT:02-', 'OUT:03+/OUT:03-', 'OUT:04+/OUT:04-', 'OUT:05+/OUT:05-', 'OUT:06+/OUT:06-', 'OUT:07+/OUT:07-', 'OUT:08+/OUT:08-'], 'binary_out': [], 'label': 'MACH-ProZone 88'},
+    # MACH-ProAir
+    'MPA-33': {'inputs': ['UI:01', 'UI:02', 'UI:03', 'BI:01', 'BI:02', 'BI:03'], 'analog_out': ['AO:01', 'AO:02', 'AO:03'], 'binary_out': ['BO:01', 'BO:02', 'BO:03'], 'label': 'MACH-ProAir 33'},
+    'MPA-34': {'inputs': ['UI:01', 'UI:02', 'UI:03', 'BI:01', 'BI:02', 'BI:03'], 'analog_out': ['AO:01', 'AO:02', 'AO:03', 'AO:04'], 'binary_out': ['BO:01', 'BO:02', 'BO:03'], 'label': 'MACH-ProAir 34'},
+    'MPA-35': {'inputs': ['UI:01', 'UI:02', 'UI:03', 'BI:01', 'BI:02', 'BI:03', 'BI:04', 'BI:05'], 'analog_out': ['AO:01', 'AO:02', 'AO:03', 'AO:04', 'AO:05'], 'binary_out': ['BO:01', 'BO:02', 'BO:03', 'BO:04', 'BO:05'], 'label': 'MACH-ProAir 35'},
+    'MPA-36': {'inputs': ['UI:01', 'UI:02', 'UI:03', 'BI:01', 'BI:02', 'BI:03', 'BI:04', 'BI:05', 'BI:06', 'BI:07', 'BI:08'], 'analog_out': ['AO:01', 'AO:02', 'AO:03', 'AO:04', 'AO:05', 'AO:06'], 'binary_out': ['BO:01', 'BO:02', 'BO:03', 'BO:04', 'BO:05', 'BO:06', 'BO:07', 'BO:08'], 'label': 'MACH-ProAir 36'},
+    # MACH-ProSys
+    'MPS': {'inputs': ['UI:01', 'UI:02', 'UI:03', 'UI:04', 'UI:05', 'UI:06', 'UI:07', 'UI:08', 'BI:01', 'BI:02', 'BI:03', 'BI:04', 'BI:05', 'BI:06', 'BI:07', 'BI:08'], 'analog_out': ['AO:01', 'AO:02', 'AO:03', 'AO:04', 'AO:05', 'AO:06', 'AO:07', 'AO:08'], 'binary_out': ['BO:01', 'BO:02', 'BO:03', 'BO:04', 'BO:05', 'BO:06', 'BO:07', 'BO:08'], 'label': 'MACH-ProSys'},
+    # MACH-Pro2
+    'MP2': {'inputs': ['UI:01', 'UI:02', 'UI:03', 'UI:04', 'UI:05', 'UI:06', 'UI:07', 'UI:08', 'UI:09', 'UI:10', 'UI:11', 'UI:12'], 'analog_out': ['UO:01', 'UO:02', 'UO:03', 'UO:04', 'UO:05', 'UO:06', 'UO:07', 'UO:08'], 'binary_out': [], 'label': 'MACH-Pro2'},
+    # MACH-Pro1
+    'MP1': {'inputs': ['UI:01', 'UI:02', 'UI:03', 'UI:04', 'UI:05', 'UI:06', 'UI:07', 'UI:08'], 'analog_out': ['UO:01', 'UO:02', 'UO:03', 'UO:04', 'UO:05', 'UO:06', 'UO:07', 'UO:08'], 'binary_out': [], 'label': 'MACH-Pro1'},
+}
+
+# Map library Model field to controller model ID
+MODEL_NUM_TO_CONTROLLER = {
+    47: 'RCFA-M-36',  # FLEXair — hardpoint config determines actual variant
+    49: 'RCFO-M-36',  # FLEXone
+    19: 'MPZ-44',     # ProZone
+    28: 'MPS',        # ProSys (or MPA depending on I/O)
+    32: 'MPA-36',     # ProAir
+    40: 'MP2',        # Pro2
+    44: 'MP1',        # Pro1
+}
+
+# HardPointConfig to FLEXair variant
+HPC_TO_RCFA = {
+    '12-F': 'RCFA-M-12', '12-M': 'RCFA-M-12',
+    '33-F': 'RCFA-M-33', '33-M': 'RCFA-M-33',
+    '34-F': 'RCFA-M-34', '34-M': 'RCFA-M-34',
+    '35-F': 'RCFA-M-35', '35-M': 'RCFA-M-35',
+    '36-F': 'RCFA-M-36', '36-M': 'RCFA-M-36',
+}
+
+
+def _resolve_controller(meta: dict) -> str:
+    """Given variant meta, figure out the controller model."""
+    model_num = meta.get('Model')
+    hpc = meta.get('HardPointConfig', '')
+    if model_num == 47 and hpc:
+        return HPC_TO_RCFA.get(hpc, 'RCFA-M-36')
+    if model_num in MODEL_NUM_TO_CONTROLLER:
+        return MODEL_NUM_TO_CONTROLLER[model_num]
+    return 'MPS'  # default fallback
+
+
+def _build_io_table(variant_data: dict, device_name: str = "") -> list:
+    """Build I/O terminal mapping table from variant JSON data.
+    Returns list of dicts: {terminal, io_type, point_name, description}
+    """
+    meta = variant_data.get('meta', {})
+    objs = variant_data.get('objects', {})
+    controller_id = _resolve_controller(meta)
+    ctrl = CONTROLLER_TERMINALS.get(controller_id, CONTROLLER_TERMINALS.get('MPS'))
+
+    rows = []
+
+    # Map AI/BI objects to input terminals
+    ai_objs = sorted(objs.get('AI', []), key=lambda o: int(o.get('instance', 0)))
+    bi_objs = sorted(objs.get('BI', []), key=lambda o: int(o.get('instance', 0)))
+    ao_objs = sorted(objs.get('AO', []), key=lambda o: int(o.get('instance', 0)))
+    bo_objs = sorted(objs.get('BO', []), key=lambda o: int(o.get('instance', 0)))
+
+    # For FLEXair/FLEXone: AI maps to IN terminals, BI also maps to IN terminals
+    # For MPA/MPS: AI maps to UI terminals, BI maps to BI terminals
+    input_terminals = ctrl.get('inputs', [])
+    analog_out_terminals = ctrl.get('analog_out', [])
+    binary_out_terminals = ctrl.get('binary_out', [])
+
+    # Inputs: AI points go to input terminals by instance
+    for obj in ai_objs:
+        inst = int(obj.get('instance', 0))
+        term_idx = inst - 1
+        terminal = input_terminals[term_idx] if term_idx < len(input_terminals) else f'IN:{inst:02d}'
+        name = obj.get('name', '').replace('{device-name}', device_name) if device_name else obj.get('name', '')
+        rows.append({
+            'terminal': terminal,
+            'io_type': 'AI',
+            'point_name': name,
+            'description': obj.get('description', ''),
+        })
+
+    # Binary Inputs
+    for obj in bi_objs:
+        inst = int(obj.get('instance', 0))
+        # For MPA/MPS: BI terminals are separate, numbered BI:01+
+        if controller_id.startswith('MPA') or controller_id in ('MPS', 'MP2', 'MP1'):
+            # BI terminals come after UI terminals in the inputs list
+            ui_count = len([t for t in input_terminals if t.startswith('UI')])
+            term_idx = ui_count + inst - 1
+            terminal = input_terminals[term_idx] if term_idx < len(input_terminals) else f'BI:{inst:02d}'
+        else:
+            # FLEXair: BI shares IN terminals
+            term_idx = inst - 1
+            terminal = input_terminals[term_idx] if term_idx < len(input_terminals) else f'IN:{inst:02d}'
+        name = obj.get('name', '').replace('{device-name}', device_name) if device_name else obj.get('name', '')
+        rows.append({
+            'terminal': terminal,
+            'io_type': 'BI',
+            'point_name': name,
+            'description': obj.get('description', ''),
+        })
+
+    # Analog Outputs
+    for obj in ao_objs:
+        inst = int(obj.get('instance', 0))
+        term_idx = inst - 1
+        terminal = analog_out_terminals[term_idx] if term_idx < len(analog_out_terminals) else f'AO:{inst:02d}'
+        name = obj.get('name', '').replace('{device-name}', device_name) if device_name else obj.get('name', '')
+        rows.append({
+            'terminal': terminal,
+            'io_type': 'AO',
+            'point_name': name,
+            'description': obj.get('description', ''),
+        })
+
+    # Binary Outputs
+    for obj in bo_objs:
+        inst = int(obj.get('instance', 0))
+        term_idx = inst - 1
+        terminal = binary_out_terminals[term_idx] if term_idx < len(binary_out_terminals) else f'BO:{inst:02d}'
+        name = obj.get('name', '').replace('{device-name}', device_name) if device_name else obj.get('name', '')
+        rows.append({
+            'terminal': terminal,
+            'io_type': 'BO',
+            'point_name': name,
+            'description': obj.get('description', ''),
+        })
+
+    return rows
+
+
+def _get_label_template_file(controller_id: str) -> Optional[Path]:
+    """Find the matching RC label template Word doc for a controller model."""
+    templates_dir = Path('/srv/dfa/shared/files/vendors/reliable/label-templates')
+    if not templates_dir.exists():
+        return None
+
+    # Map controller models to template files
+    TEMPLATE_MAP = {
+        # RC-FLEXone/FLEXair → RCFO templates based on I/O config
+        'RCFO-36': 'RCFO-848-Door-Label-Template.docx',   # 8 IN, 4 FX, 8 OUT
+        'RCFO-M-36': 'RCFO-848-Door-Label-Template.docx',
+        'RCFO-M-16': 'RCFO-646-Door-Label-Template.docx', # 6 IN, 4 FX, 6 OUT
+        'RCFA-M-36': 'RCFO-444-Door-Label-Template.docx', # 4 fields (3UI+3UO+3BO = 9 pts, fits 444)
+        'RCFA-M-35': 'RCFO-444-Door-Label-Template.docx',
+        'RCFA-M-34': 'RCFO-444-Door-Label-Template.docx',
+        'RCFA-M-33': 'RCFO-242-Door-Label-Template.docx', # smaller configs
+        'RCFA-M-12': 'RCFO-242-Door-Label-Template.docx',
+        # MACH-Pro family → MP door label
+        'MPZ-44': 'MPZ_Door_Label_Template.docx',
+        'MPZ-88': 'MPZ_Door_Label_Template.docx',
+        'MPA-33': 'MP-DL_door_label_ver-E.doc',
+        'MPA-34': 'MP-DL_door_label_ver-E.doc',
+        'MPA-35': 'MP-DL_door_label_ver-E.doc',
+        'MPA-36': 'MP-DL_door_label_ver-E.doc',
+        'MPS': 'MP-DL_door_label_ver-E.doc',
+        'MP2': 'MP-DL_door_label_ver-E.doc',
+        'MP1': 'MP-DL_door_label_ver-E.doc',
+    }
+
+    filename = TEMPLATE_MAP.get(controller_id)
+    if filename:
+        path = templates_dir / filename
+        if path.exists():
+            return path
+    return None
+
+
+def _fill_label_template(template_path: Path, point_names: list, device_name: str = "") -> bytes:
+    """Fill an RC label template .docx by replacing ABCDEFGH placeholders with point names.
+    Returns the modified docx as bytes.
+
+    RC label templates have 4 labels per sheet (4 columns). Each label has N text boxes
+    (e.g., 12 for RCFO-444, 20 for RCFO-848) in a fixed layout. All text boxes contain
+    'ABCDEFGH' placeholder text. The Word format uses mc:AlternateContent with both
+    DrawingML (wp:anchor) and VML (v:textbox) representations — both contain w:t text.
+
+    Strategy: find all mc:AlternateContent blocks, parse positions from the DrawingML
+    anchor, sort by column then row, then replace ABCDEFGH in both representations.
+    """
+    import shutil
+    import tempfile
+    import zipfile
+    import re
+
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        extract_dir = Path(tmp_dir) / 'extracted'
+        with zipfile.ZipFile(template_path, 'r') as z:
+            z.extractall(extract_dir)
+
+        doc_xml = extract_dir / 'word' / 'document.xml'
+        xml_content = doc_xml.read_text(encoding='utf-8')
+
+        # Find all mc:AlternateContent blocks that contain ABCDEFGH
+        alt_pattern = re.compile(r'(<mc:AlternateContent\b[^>]*>.*?</mc:AlternateContent>)', re.DOTALL)
+        pos_h_pattern = re.compile(r'<wp:posOffset>(\d+)</wp:posOffset>.*?</wp:positionH>', re.DOTALL)
+        pos_v_pattern = re.compile(r'<wp:posOffset>(\d+)</wp:posOffset>.*?</wp:positionV>', re.DOTALL)
+        posH_block = re.compile(r'<wp:positionH[^>]*>(.*?)</wp:positionH>', re.DOTALL)
+        posV_block = re.compile(r'<wp:positionV[^>]*>(.*?)</wp:positionV>', re.DOTALL)
+
+        blocks = []
+        for m in alt_pattern.finditer(xml_content):
+            block = m.group(1)
+            if 'ABCDEFGH' not in block:
+                continue
+            # Get position from the DrawingML anchor
+            ph_block = posH_block.search(block)
+            pv_block = posV_block.search(block)
+            if not ph_block or not pv_block:
+                continue
+            ph_off = re.search(r'<wp:posOffset>(\d+)</wp:posOffset>', ph_block.group(1))
+            pv_off = re.search(r'<wp:posOffset>(\d+)</wp:posOffset>', pv_block.group(1))
+            if not ph_off or not pv_off:
+                continue
+            x = int(ph_off.group(1))
+            y = int(pv_off.group(1))
+            blocks.append((x, y, m.start(), m.end(), block))
+
+        if not blocks:
+            logger.warning("No ABCDEFGH text boxes found in template")
+            return template_path.read_bytes()
+
+        # Sort by column (x) then row (y)
+        blocks.sort(key=lambda b: (round(b[0] / (2.3 * 914400)), b[1]))
+
+        # Group into labels (columns)
+        labels = []
+        last_col_key = -1
+        for x, y, start, end, block in blocks:
+            col_key = round(x / (2.3 * 914400))
+            if col_key != last_col_key:
+                labels.append([])
+                last_col_key = col_key
+            labels[-1].append((x, y, start, end, block))
+
+        # Build replacement list — process in reverse order to preserve positions
+        edits = []
+        for label_blocks in labels:
+            for i, (x, y, start, end, block) in enumerate(label_blocks):
+                new_text = point_names[i] if i < len(point_names) else ''
+                # Replace ALL <w:t>ABCDEFGH</w:t> in both Choice and Fallback
+                new_block = block.replace('>ABCDEFGH</w:t>', f'>{new_text}</w:t>')
+                if new_block != block:
+                    edits.append((start, end, new_block))
+
+        # Apply in reverse order
+        edits.sort(key=lambda e: e[0], reverse=True)
+        for start, end, new_block in edits:
+            xml_content = xml_content[:start] + new_block + xml_content[end:]
+
+        doc_xml.write_text(xml_content, encoding='utf-8')
+
+        # Repackage
+        output = Path(tmp_dir) / 'output.docx'
+        with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zout:
+            for walk_root, dirs, files in os.walk(extract_dir):
+                for f in files:
+                    file_path = Path(walk_root) / f
+                    arcname = file_path.relative_to(extract_dir)
+                    zout.write(file_path, arcname)
+
+        return output.read_bytes()
+    finally:
+        shutil.rmtree(tmp_dir)
+
+
+def _generate_label_pdf(variant_data: dict, device_name: str = "", title: str = "") -> bytes:
+    """Generate a printable door label PDF for a controller variant (fallback when no RC template)."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / 'lib' / 'fpdf2_pkg'))
+    from fpdf import FPDF
+
+    meta = variant_data.get('meta', {})
+    controller_id = _resolve_controller(meta)
+    ctrl_info = CONTROLLER_TERMINALS.get(controller_id, {})
+    ctrl_label = ctrl_info.get('label', controller_id)
+
+    io_rows = _build_io_table(variant_data, device_name)
+    if not io_rows:
+        raise HTTPException(400, "No I/O points found in this variant")
+
+    inputs = [r for r in io_rows if r['io_type'] in ('AI', 'BI')]
+    outputs = [r for r in io_rows if r['io_type'] in ('AO', 'BO')]
+
+    pdf = FPDF(orientation='P', unit='mm', format='Letter')
+    pdf.set_auto_page_break(auto=False)
+    pdf.add_page()
+
+    # Header
+    pdf.set_fill_color(25, 55, 95)
+    pdf.rect(10, 10, 196, 18, 'F')
+    pdf.set_font('Helvetica', 'B', 14)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(14, 12)
+    pdf.cell(0, 7, f'DOOR LABEL  --  {ctrl_label}', ln=True)
+    pdf.set_font('Helvetica', '', 9)
+    pdf.set_xy(14, 19)
+    display_name = device_name if device_name else title
+    pdf.cell(0, 5, f'Device: {display_name}' if display_name else 'Template Label', ln=True)
+    pdf.set_font('Helvetica', 'B', 9)
+    pdf.set_xy(160, 13)
+    pdf.cell(40, 5, 'RELIABLE CONTROLS', align='R')
+    pdf.set_text_color(0, 0, 0)
+    y = 34
+
+    def draw_section(section_title, rows, start_y, fill_color):
+        sy = start_y
+        r, g, b = fill_color
+        pdf.set_fill_color(r, g, b)
+        pdf.set_font('Helvetica', 'B', 10)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_xy(10, sy)
+        pdf.cell(196, 7, f'  {section_title}', fill=True, ln=True)
+        sy += 8
+        pdf.set_fill_color(230, 235, 240)
+        pdf.set_text_color(60, 60, 60)
+        pdf.set_font('Helvetica', 'B', 8)
+        pdf.set_xy(10, sy)
+        for header, w in zip(['TERMINAL', 'TYPE', 'POINT NAME', 'DESCRIPTION'], [28, 16, 65, 87]):
+            pdf.cell(w, 6, f' {header}', border=1, fill=True)
+        pdf.ln()
+        sy += 6
+        pdf.set_text_color(0, 0, 0)
+        for ri, row in enumerate(rows):
+            if sy > 260:
+                pdf.add_page()
+                sy = 15
+            pdf.set_fill_color(248, 250, 252) if ri % 2 == 0 else pdf.set_fill_color(255, 255, 255)
+            pdf.set_xy(10, sy)
+            pdf.set_font('Courier', 'B', 8)
+            pdf.cell(28, 5.5, f' {row["terminal"]}', border='LTB', fill=True)
+            pdf.set_font('Courier', '', 7)
+            pdf.cell(16, 5.5, f' {row["io_type"]}', border='TB', fill=True)
+            pdf.set_font('Courier', 'B', 8)
+            pdf.cell(65, 5.5, f' {row["point_name"]}', border='TB', fill=True)
+            pdf.set_font('Courier', '', 7)
+            pdf.cell(87, 5.5, f' {row["description"]}', border='TBR', fill=True)
+            pdf.ln()
+            sy += 5.5
+        return sy + 4
+
+    if inputs:
+        y = draw_section('INPUTS', inputs, y, (34, 120, 60))
+    if outputs:
+        y = draw_section('OUTPUTS', outputs, y, (30, 80, 160))
+
+    pdf.set_font('Helvetica', 'I', 7)
+    pdf.set_text_color(140, 140, 140)
+    pdf.set_xy(10, 268)
+    pdf.cell(196, 4, f'Generated by DFA Platform  --  SBS Controls  --  {ctrl_label}  --  Print and affix to controller door', align='C')
+
+    return pdf.output()
+
+
+@app.get("/api/composer/label/{category}/{variant_id}")
+async def get_label(category: str, variant_id: str, device_name: str = "", format: str = "auto"):
+    """Generate a printable door label for a library variant.
+
+    format=auto: uses RC Word template if available, otherwise PDF
+    format=pdf: always generates PDF
+    format=docx: always generates filled Word template (404 if no template)
+    """
+    cat_path = cfg.library_root / category
+    json_path = cat_path / f"{variant_id}.json"
+    if not json_path.exists():
+        raise HTTPException(404, f"Variant {category}/{variant_id} not found")
+
+    variant_data = json.loads(json_path.read_text())
+    meta = variant_data.get('meta', {})
+    controller_id = _resolve_controller(meta)
+    title = variant_data.get('description', variant_id)
+
+    io_rows = _build_io_table(variant_data, device_name)
+    point_names = [r['point_name'] for r in io_rows]
+
+    template_path = _get_label_template_file(controller_id)
+
+    use_docx = (format == 'docx') or (format == 'auto' and template_path is not None)
+
+    if use_docx:
+        if template_path is None:
+            raise HTTPException(404, f"No RC label template found for controller {controller_id}")
+        docx_bytes = _fill_label_template(template_path, point_names, device_name)
+        fname = f"Door_Label_{device_name or variant_id}.docx"
+        return StreamingResponse(
+            iter([docx_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+        )
+    else:
+        pdf_bytes = _generate_label_pdf(variant_data, device_name=device_name, title=title)
+        fname = f"Door_Label_{device_name or variant_id}.pdf"
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+        )
+
+
+@app.get("/api/composer/label-data/{category}/{variant_id}")
+async def get_label_data(category: str, variant_id: str, device_name: str = ""):
+    """Return I/O terminal mapping data for a variant (JSON, for UI display)."""
+    cat_path = cfg.library_root / category
+    json_path = cat_path / f"{variant_id}.json"
+    if not json_path.exists():
+        raise HTTPException(404, f"Variant {category}/{variant_id} not found")
+
+    variant_data = json.loads(json_path.read_text())
+    meta = variant_data.get('meta', {})
+    controller_id = _resolve_controller(meta)
+    ctrl_info = CONTROLLER_TERMINALS.get(controller_id, {})
+
+    io_rows = _build_io_table(variant_data, device_name)
+    return {
+        "controller": controller_id,
+        "controller_label": ctrl_info.get('label', controller_id),
+        "variant_id": variant_id,
+        "category": category,
+        "device_name": device_name,
+        "io_points": io_rows,
+        "summary": {
+            "inputs": len([r for r in io_rows if r['io_type'] in ('AI', 'BI')]),
+            "outputs": len([r for r in io_rows if r['io_type'] in ('AO', 'BO')]),
+            "total": len(io_rows),
+        }
+    }
