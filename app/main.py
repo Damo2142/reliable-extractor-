@@ -3349,3 +3349,339 @@ async def get_label_data(category: str, variant_id: str, device_name: str = ""):
             "total": len(io_rows),
         }
     }
+
+
+# ─── Point-to-Point Verification PDF ────────────────────────────────────────
+
+# Map DFA equipment keys to library categories
+EQUIP_TO_LIB_CAT = {
+    'ahu_standard': 'AHU', 'ahu_doas': 'AHU', 'ahu_erw': 'AHU', 'ahu_rtu': 'RTU', 'ahu_other': 'AHU',
+    'rtu_sf_rf': 'RTU', 'rtu_sf_only': 'RTU', 'rtu_hp': 'RTU', 'rtu_doas': 'RTU',
+    'vav_hw_std': 'VAV', 'vav_cool': 'VAV', 'vav_dual': 'VAV', 'vav_elec': 'VAV', 'vav_hw_fp': 'VAV', 'vav_other': 'VAV',
+    'fcu': 'FCU', 'fcu_2pipe': 'FCU', 'fcu_4pipe': 'FCU',
+    'unit_heater': 'UH', 'wshp': 'WSHP', 'vvt': 'VVT', 'vvt_bypass': 'VVT',
+    'boiler': 'SBS_PLANTS', 'boiler_cascade_leader': 'SBS_PLANTS', 'boiler_cascade_follower': 'SBS_PLANTS',
+    'chiller': 'SBS_PLANTS', 'hwp_primary': 'SBS_PLANTS', 'hwp_secondary': 'SBS_PLANTS',
+    'chwp_primary': 'SBS_PLANTS', 'chwp_secondary': 'SBS_PLANTS', 'cwp': 'SBS_PLANTS',
+    'cooling_tower': 'SBS_PLANTS', 'hx': 'SBS_PLANTS',
+}
+
+TERMINAL_EQUIP = {'vav_hw_std', 'vav_cool', 'vav_dual', 'vav_elec', 'vav_hw_fp', 'vav_other',
+                  'fcu', 'fcu_2pipe', 'fcu_4pipe', 'unit_heater', 'vvt', 'vvt_bypass',
+                  'wshp', 'wshp_2pipe', 'wshp_4pipe', 'radiant'}
+
+# BACnet unit codes to display strings
+UNIT_LABELS = {
+    '2': 'deg-F', '62': 'deg-C', '7': '"WC', '15': 'CFM', '45': 'in',
+    '23': 'psi', '0': '', '3': 'deg-F', '98': '%RH',
+}
+
+
+def _get_variant_for_category(lib_cat: str) -> Optional[dict]:
+    """Load the first variant JSON for a library category."""
+    cat_path = cfg.library_root / lib_cat
+    if not cat_path.is_dir():
+        return None
+    jsons = [f for f in os.listdir(cat_path) if f.endswith('.json')]
+    if not jsons:
+        return None
+    return json.loads((cat_path / jsons[0]).read_text())
+
+
+@app.get("/api/composer/p2p-pdf")
+async def p2p_verification_pdf(
+    equipment: str = "",
+    device_name: str = "",
+    project_name: str = "",
+    project_number: str = "",
+    qty: int = 1,
+):
+    """Generate a Point-to-Point Verification PDF for an equipment type.
+
+    Uses library I/O data to create a verification sheet with programmed points
+    and blank columns for field readings.
+
+    For terminal units (VAV, FCU, etc.) with qty > 1, generates a bulk grid.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / 'lib' / 'fpdf2_pkg'))
+    from fpdf import FPDF
+
+    def _c(s):
+        if not isinstance(s, str): return str(s) if s else ''
+        return s.replace('\u2014', '-').replace('\u2013', '-').replace('\u2018', "'").replace('\u2019', "'")
+
+    lib_cat = EQUIP_TO_LIB_CAT.get(equipment)
+    if not lib_cat:
+        raise HTTPException(400, f"No library mapping for equipment type: {equipment}")
+
+    variant_data = _get_variant_for_category(lib_cat)
+    if not variant_data:
+        raise HTTPException(404, f"No library variant found for category: {lib_cat}")
+
+    dn = device_name or '{device-name}'
+    io_rows = _build_io_table(variant_data, dn)
+    if not io_rows:
+        raise HTTPException(400, "No I/O points found")
+
+    meta = variant_data.get('meta', {})
+    controller_id = _resolve_controller(meta)
+    ctrl_info = CONTROLLER_TERMINALS.get(controller_id, {})
+    ctrl_label = ctrl_info.get('label', controller_id)
+
+    # Get unit labels from variant objects
+    objs = variant_data.get('objects', {})
+    unit_map = {}
+    for otype in ['AI', 'AO', 'BI', 'BO']:
+        for o in objs.get(otype, []):
+            name = o.get('name', '').replace('{device-name}', dn)
+            unit_code = o.get('unit', '')
+            unit_map[name] = UNIT_LABELS.get(str(unit_code), '')
+
+    is_terminal = equipment in TERMINAL_EQUIP
+    equip_label = _c(equipment.replace('_', ' ').title())
+    proj = _c(project_name)
+    pnum = _c(project_number)
+
+    pdf = FPDF(orientation='L' if (is_terminal and qty > 3) else 'P', unit='mm', format='Letter')
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    def header(title, subtitle=''):
+        pdf.set_fill_color(25, 55, 95)
+        w = pdf.w - 20
+        pdf.rect(10, 10, w, 16, 'F')
+        pdf.set_font('Helvetica', 'B', 12)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_xy(14, 11)
+        pdf.cell(0, 6, _c(title))
+        pdf.set_font('Helvetica', '', 8)
+        pdf.set_xy(14, 18)
+        pdf.cell(0, 5, _c(subtitle))
+        pdf.set_font('Helvetica', 'B', 8)
+        pdf.set_xy(pdf.w - 60, 11)
+        pdf.set_text_color(200, 220, 255)
+        pdf.cell(50, 6, pnum, align='R')
+        pdf.set_text_color(0, 0, 0)
+
+    if is_terminal and qty > 1:
+        # ═══ BULK TERMINAL P2P: grid with units as columns ═══
+        pdf.add_page()
+        header('POINT-TO-POINT VERIFICATION - TERMINAL UNITS',
+               f'{proj}  |  {equip_label}  |  {qty} units  |  Controller: {ctrl_label}')
+
+        y = 32
+        pdf.set_font('Helvetica', '', 8)
+        pdf.set_xy(14, y)
+        pdf.cell(0, 4, f'Date: ___________  Tech: ___________  Instructions: For each unit, verify point reads correctly. Write measured value or check off.')
+        y += 8
+
+        # How many units fit per page? Each unit column ~12mm wide
+        page_w = pdf.w - 20
+        label_col = 55  # point name column
+        type_col = 12
+        units_space = page_w - label_col - type_col
+        units_per_page = max(1, int(units_space / 12))
+
+        for page_start in range(0, qty, units_per_page):
+            if page_start > 0:
+                pdf.add_page()
+                header('POINT-TO-POINT VERIFICATION (cont.)',
+                       f'{proj}  |  {equip_label}  |  Units {page_start + 1}-{min(page_start + units_per_page, qty)}')
+                y = 32
+
+            page_units = min(units_per_page, qty - page_start)
+            unit_col_w = min(12, units_space / page_units)
+
+            # Table header
+            pdf.set_fill_color(230, 235, 240)
+            pdf.set_font('Helvetica', 'B', 7)
+            pdf.set_xy(10, y)
+            pdf.cell(label_col, 6, ' Point Name', border=1, fill=True)
+            pdf.cell(type_col, 6, ' Type', border=1, fill=True)
+            for u in range(page_units):
+                pdf.cell(unit_col_w, 6, f' #{page_start + u + 1}', border=1, fill=True, align='C')
+            pdf.ln()
+            y += 6.5
+
+            # Data rows
+            pdf.set_font('Courier', '', 7)
+            for ri, row in enumerate(io_rows):
+                if y > (pdf.h - 20):
+                    pdf.add_page()
+                    header('POINT-TO-POINT VERIFICATION (cont.)', f'{equip_label}')
+                    y = 32
+                    pdf.set_fill_color(230, 235, 240)
+                    pdf.set_font('Helvetica', 'B', 7)
+                    pdf.set_xy(10, y)
+                    pdf.cell(label_col, 6, ' Point Name', border=1, fill=True)
+                    pdf.cell(type_col, 6, ' Type', border=1, fill=True)
+                    for u in range(page_units):
+                        pdf.cell(unit_col_w, 6, f' #{page_start + u + 1}', border=1, fill=True, align='C')
+                    pdf.ln()
+                    y += 6.5
+                    pdf.set_font('Courier', '', 7)
+
+                bg = (248, 250, 252) if ri % 2 == 0 else (255, 255, 255)
+                pdf.set_fill_color(*bg)
+                pdf.set_xy(10, y)
+                pdf.set_font('Courier', 'B', 7)
+                pdf.cell(label_col, 5, f' {_c(row["point_name"])}', border=1, fill=True)
+                pdf.set_font('Courier', '', 6)
+                pdf.cell(type_col, 5, f' {row["io_type"]}', border=1, fill=True)
+                for u in range(page_units):
+                    pdf.cell(unit_col_w, 5, '', border=1, fill=True)
+                pdf.ln()
+                y += 5
+
+        # Notes
+        y += 6
+        if y > (pdf.h - 30):
+            pdf.add_page()
+            y = 20
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.set_text_color(25, 55, 95)
+        pdf.set_xy(14, y)
+        pdf.cell(0, 5, 'Notes / Discrepancies:')
+        y += 6
+        pdf.set_text_color(0, 0, 0)
+        for _ in range(3):
+            pdf.line(14, y + 4, pdf.w - 10, y + 4)
+            y += 7
+
+    else:
+        # ═══ INDIVIDUAL EQUIPMENT P2P ═══
+        pdf.add_page()
+        header('POINT-TO-POINT VERIFICATION',
+               f'{proj}  |  {equip_label}  |  Device: {dn}  |  Controller: {ctrl_label}')
+
+        y = 32
+        pdf.set_font('Helvetica', '', 8)
+        pdf.set_xy(14, y)
+        pdf.cell(0, 4, 'Date: ___________  Tech: ___________')
+        y += 8
+
+        # Table header
+        col_w = [22, 12, 48, 38, 26, 26, 24]
+        headers = ['Terminal', 'Type', 'Point Name', 'Description', 'Units', 'Field Reading', 'Pass/Fail']
+        pdf.set_fill_color(230, 235, 240)
+        pdf.set_font('Helvetica', 'B', 8)
+        pdf.set_xy(10, y)
+        for h, w in zip(headers, col_w):
+            pdf.cell(w, 6, f' {h}', border=1, fill=True)
+        pdf.ln()
+        y += 6.5
+
+        # Data rows
+        for ri, row in enumerate(io_rows):
+            bg = (248, 250, 252) if ri % 2 == 0 else (255, 255, 255)
+            pdf.set_fill_color(*bg)
+            pdf.set_xy(10, y)
+            pdf.set_font('Courier', 'B', 8)
+            pdf.cell(col_w[0], 6, f' {_c(row["terminal"])}', border=1, fill=True)
+            pdf.set_font('Courier', '', 7)
+            pdf.cell(col_w[1], 6, f' {row["io_type"]}', border=1, fill=True)
+            pdf.set_font('Courier', 'B', 8)
+            pdf.cell(col_w[2], 6, f' {_c(row["point_name"])}', border=1, fill=True)
+            pdf.set_font('Helvetica', '', 7)
+            desc = _c(row.get('description', ''))[:22]
+            pdf.cell(col_w[3], 6, f' {desc}', border=1, fill=True)
+            units = unit_map.get(row['point_name'], '')
+            pdf.cell(col_w[4], 6, f' {units}', border=1, fill=True)
+            # Blank field reading column
+            pdf.cell(col_w[5], 6, '', border=1, fill=True)
+            # Pass/Fail checkboxes
+            pdf.cell(col_w[6], 6, '  [ ] P  [ ] F', border=1, fill=True)
+            pdf.ln()
+            y += 6
+
+        # Software points (AV/BV) — values to verify from RC Studio
+        av_objs = objs.get('AV', [])
+        bv_objs = objs.get('BV', [])
+        sw_points = []
+        for o in av_objs:
+            name = o.get('name', '').replace('{device-name}', dn)
+            desc = o.get('description', '')
+            pv = o.get('present_value', '')
+            sw_points.append((name, 'AV', desc, pv))
+        for o in bv_objs:
+            name = o.get('name', '').replace('{device-name}', dn)
+            desc = o.get('description', '')
+            pv = o.get('present_value', '')
+            sw_points.append((name, 'BV', desc, pv))
+
+        if sw_points:
+            y += 6
+            pdf.set_font('Helvetica', 'B', 10)
+            pdf.set_fill_color(60, 100, 160)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_xy(10, y)
+            pdf.cell(196, 7, '  SOFTWARE POINTS (verify in RC Studio / Tridium)', fill=True)
+            y += 8
+            pdf.set_text_color(0, 0, 0)
+
+            sw_cols = [48, 12, 50, 30, 30, 26]
+            sw_headers = ['Point Name', 'Type', 'Description', 'Design Value', 'Actual Value', 'Pass/Fail']
+            pdf.set_fill_color(230, 235, 240)
+            pdf.set_font('Helvetica', 'B', 7)
+            pdf.set_xy(10, y)
+            for h, w in zip(sw_headers, sw_cols):
+                pdf.cell(w, 5.5, f' {h}', border=1, fill=True)
+            pdf.ln()
+            y += 6
+
+            pdf.set_font('Courier', '', 7)
+            for ri, (name, stype, desc, pv) in enumerate(sw_points[:30]):  # Limit to 30
+                if y > 260:
+                    pdf.add_page()
+                    header('SOFTWARE POINTS (cont.)', f'{equip_label} - {dn}')
+                    y = 32
+                bg = (248, 250, 252) if ri % 2 == 0 else (255, 255, 255)
+                pdf.set_fill_color(*bg)
+                pdf.set_xy(10, y)
+                pdf.set_font('Courier', 'B', 7)
+                pdf.cell(sw_cols[0], 5, f' {_c(name)[:28]}', border=1, fill=True)
+                pdf.set_font('Courier', '', 6)
+                pdf.cell(sw_cols[1], 5, f' {stype}', border=1, fill=True)
+                pdf.set_font('Helvetica', '', 6)
+                pdf.cell(sw_cols[2], 5, f' {_c(desc)[:30]}', border=1, fill=True)
+                pdf.cell(sw_cols[3], 5, f' {_c(str(pv))[:18]}', border=1, fill=True)
+                pdf.cell(sw_cols[4], 5, '', border=1, fill=True)
+                pdf.cell(sw_cols[5], 5, '  [ ] P  [ ] F', border=1, fill=True)
+                pdf.ln()
+                y += 5
+
+        # Notes + signature
+        y += 8
+        if y > 245:
+            pdf.add_page()
+            y = 20
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.set_text_color(25, 55, 95)
+        pdf.set_xy(14, y)
+        pdf.cell(0, 5, 'Notes / Discrepancies:')
+        y += 6
+        pdf.set_text_color(0, 0, 0)
+        for _ in range(4):
+            pdf.line(14, y + 4, 200, y + 4)
+            y += 7
+        y += 4
+        pdf.set_font('Helvetica', '', 9)
+        pdf.set_xy(14, y)
+        pdf.cell(0, 5, 'All points verified:  [ ] Yes  [ ] No     Technician: ___________________________     Date: _______________')
+
+    # Footer
+    for pn in range(1, pdf.pages_count + 1):
+        pdf.page = pn
+        pdf.set_font('Helvetica', 'I', 7)
+        pdf.set_text_color(150, 150, 150)
+        pdf.set_xy(10, pdf.h - 10)
+        pdf.cell(pdf.w - 20, 4, f'DFA Platform  |  SBS Controls  |  {pnum} {proj}  |  P2P Verification  |  Page {pn}/{pdf.pages_count}', align='C')
+    pdf.set_text_color(0, 0, 0)
+
+    pdf_bytes = bytes(pdf.output())
+    fname = f"P2P_{_c(equip_label)}_{_c(dn)}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+    )
