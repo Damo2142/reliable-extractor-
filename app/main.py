@@ -1761,25 +1761,34 @@ def _generate_excel_from_composition(comp_data):
             cell.border = thin_border
         if not rows:
             return
-        by_inst = {}
-        for row in rows:
-            by_inst[row[0]] = row
-        max_inst = max(by_inst.keys())
-        r = 2
-        for inst in range(1, max_inst + 1):
-            if inst in by_inst:
-                for c, val in enumerate(by_inst[inst], 1):
-                    cell = ws.cell(row=r, column=c, value=val)
-                    cell.border = thin_border
-            else:
-                cell = ws.cell(row=r, column=1, value=inst)
-                cell.border = thin_border
-                cell.fill = empty_fill
-                for c in range(2, len(headers) + 1):
-                    cell = ws.cell(row=r, column=c, value="")
+        all_int = all(isinstance(row[0], int) for row in rows)
+        if all_int:
+            by_inst = {}
+            for row in rows:
+                by_inst[row[0]] = row
+            max_inst = max(by_inst.keys())
+            r = 2
+            for inst in range(1, max_inst + 1):
+                if inst in by_inst:
+                    for c, val in enumerate(by_inst[inst], 1):
+                        cell = ws.cell(row=r, column=c, value=val)
+                        cell.border = thin_border
+                else:
+                    cell = ws.cell(row=r, column=1, value=inst)
                     cell.border = thin_border
                     cell.fill = empty_fill
-            r += 1
+                    for c in range(2, len(headers) + 1):
+                        cell = ws.cell(row=r, column=c, value="")
+                        cell.border = thin_border
+                        cell.fill = empty_fill
+                r += 1
+        else:
+            r = 2
+            for row in rows:
+                for c, val in enumerate(row, 1):
+                    cell = ws.cell(row=r, column=c, value=val)
+                    cell.border = thin_border
+                r += 1
         for c in range(1, len(headers) + 1):
             max_len = max(len(str(ws.cell(row, c).value or '')) for row in range(1, r))
             ws.column_dimensions[ws.cell(1, c).column_letter].width = min(max_len + 3, 50)
@@ -1911,7 +1920,7 @@ def _generate_excel_from_composition(comp_data):
         add_sheet("Programs", headers, rows)
 
     # Remove default empty sheet
-    if "Sheet" in wb.sheetnames:
+    if "Sheet" in wb.sheetnames and len(wb.sheetnames) > 1:
         del wb["Sheet"]
 
     buf = io.BytesIO()
@@ -2364,7 +2373,7 @@ async def composer_values_excel(comp_id: str):
         add_sheet("Trends", ["Instance", "Name", "Type", "Interval", "References"], trend_rows)
 
     # Remove default empty sheet
-    if "Sheet" in wb.sheetnames:
+    if "Sheet" in wb.sheetnames and len(wb.sheetnames) > 1:
         del wb["Sheet"]
 
     buf = io.BytesIO()
