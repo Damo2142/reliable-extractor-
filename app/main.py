@@ -2156,12 +2156,12 @@ async def composer_values_excel(comp_id: str):
                     # Empty row — just instance number, greyed out
                     cell = ws.cell(row=r, column=1, value=inst)
                     cell.border = thin_border
-                cell.fill = empty_fill
-                for c in range(2, len(headers) + 1):
-                    cell = ws.cell(row=r, column=c, value="")
-                    cell.border = thin_border
                     cell.fill = empty_fill
-            r += 1
+                    for c in range(2, len(headers) + 1):
+                        cell = ws.cell(row=r, column=c, value="")
+                        cell.border = thin_border
+                        cell.fill = empty_fill
+                r += 1
         else:
             # Direct row writing (arrays, tables, loops with continuation rows)
             r = 2
@@ -3430,7 +3430,7 @@ async def get_label(category: str, variant_id: str, device_name: str = "", forma
 
     template_path = _get_label_template_file(controller_id)
 
-    use_docx = (format == 'docx') or (format == 'auto' and template_path is not None)
+    use_docx = (format == 'docx') or (format == 'auto' and template_path is not None and str(template_path).endswith('.docx'))
 
     if use_docx:
         if template_path is None:
