@@ -27,15 +27,15 @@ app = FastAPI(title="SBS Composition Engine — Test UI")
 # ── Feature categories for the UI ────────────────────────────────────────────
 FEATURE_CATEGORIES = {
     "COOLING": ["CHW", "DX-1", "DX-2"],
-    "HEATING": ["HW", "ELEC-1", "ELEC-2", "ELEC-3", "GAS-1"],
-    "PREHEAT": ["PH-HW", "PH-ELEC"],
-    "REHEAT": ["RH-HW", "RH-ELEC"],
+    "HEATING": ["HW", "ELEC-1", "ELEC-2", "ELEC-3", "GAS-1", "STEAM"],
+    "PREHEAT": ["PH-HW", "PH-ELEC", "PH-STEAM"],
+    "REHEAT": ["RH-HW", "RH-ELEC", "RH-STEAM"],
     "SUPPLY FAN": ["SF-VFD", "SF-CS"],
     "RETURN/RELIEF": ["RF-VFD"],
     "ECONOMIZER": ["ECON-DB", "ECON-ENT"],
     "ENERGY RECOVERY": ["ERW"],
     "VENTILATION": ["VENT-CO2"],
-    "HUMIDITY": ["HUMID-STM"],
+    "HUMIDITY": ["HUMID-STM", "DEHUM"],
     "SAFETY": ["FLTR-DP", "FREEZE", "SMOKE+FIRE", "COND-OVF"],
     "PRESSURE": ["DSP", "BLDG-P"],
     "VAV OPTIONS": ["FAN-PARALLEL", "RH-HW", "RH-ELEC"],
@@ -67,6 +67,10 @@ FEATURE_CODE_MAP = {
     "FREEZE": "FREEZE",
     "SMOKE+FIRE": "SMOKE+FIRE",
     "COND-OVF": "COND-OVF",
+    "DEHUM": "DEHUM",
+    "STEAM": "STEAM",
+    "PH-STEAM": "PH-STEAM",
+    "RH-STEAM": "RH-STEAM",
     "DSP": "DSP",
     "BLDG-P": "BLDG-P",
     "FAN-PARALLEL": "FAN-PARALLEL",
@@ -181,6 +185,7 @@ def api_assemble(req: AssembleRequest):
             "io_map": result["io_map"],
             "io_counts": result["io_counts"],
             "controller": ctrl_data,
+            "programs": result.get("programs", []),
             "code": result["code"],
             "warnings": result["warnings"],
             "errors": result["errors"],
@@ -1206,26 +1211,48 @@ function renderIOMap(data) {
     document.getElementById('iomapContent').innerHTML = html;
 }
 
-// ── Render: Code (editable textarea) ──
+// ── Render: Code (individual programs) ──
 function renderCode(data) {
-    const code = data.code || '';
-    if (!code.trim()) {
+    const programs = data.programs || [];
+    if (programs.length === 0) {
         document.getElementById('codeContent').innerHTML =
-            '<div style="color:#585b70;padding:20px">No code generated.</div>';
+            '<div style="color:#585b70;padding:20px">No programs generated.</div>';
         return;
     }
 
-    const lineCount = code.trim().split('\\n').length;
-    let html = `<div class="code-container">
-        <div class="code-toolbar">
-            <span style="color:#585b70;font-size:12px">${lineCount} lines</span>
-            <button class="btn-copy" onclick="copyCode()">Copy to Clipboard</button>
-        </div>
-        <textarea class="code-editor" id="codeEditor">${escapeHtml(code)}</textarea>
-        <div class="code-edit-note">Edits here are for review only &mdash; to permanently change code, modify the module file</div>
-    </div>`;
+    let html = `<div style="margin-bottom:10px;color:#cdd6f4;font-size:14px;font-weight:bold">${programs.length} Control-BASIC Programs</div>`;
 
+    programs.forEach((prg, idx) => {
+        const lineCount = prg.code.trim().split('\\n').length;
+        const byteCount = new Blob([prg.code]).size;
+        const byteWarning = byteCount > 3200 ? ' style="color:#f38ba8;font-weight:bold"' : '';
+        html += `<div class="module-card" style="margin-bottom:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div>
+                    <span style="color:#89b4fa;font-weight:bold;font-size:14px">${escapeHtml(prg.name)}</span>
+                    <span style="color:#585b70;margin-left:10px">${escapeHtml(prg.description || '')}</span>
+                </div>
+                <div style="font-size:12px">
+                    <span style="color:#585b70">${lineCount} lines</span>
+                    <span${byteWarning} style="margin-left:8px">${byteCount} bytes${byteCount > 3200 ? ' OVER LIMIT!' : ''}</span>
+                    <button class="btn-copy" onclick="copyProgram(${idx})" style="margin-left:8px;font-size:11px">Copy</button>
+                </div>
+            </div>
+            <textarea class="code-editor" id="codeEditor${idx}" style="min-height:${Math.min(lineCount * 20 + 20, 400)}px">${escapeHtml(prg.code)}</textarea>
+        </div>`;
+    });
+
+    html += `<div class="code-edit-note">Edits here are for review only &mdash; to permanently change code, modify the module file</div>`;
     document.getElementById('codeContent').innerHTML = html;
+}
+
+function copyProgram(idx) {
+    const editor = document.getElementById('codeEditor' + idx);
+    if (editor) {
+        navigator.clipboard.writeText(editor.value).then(() => {
+            // Brief feedback
+        });
+    }
 }
 
 function copyCode() {
