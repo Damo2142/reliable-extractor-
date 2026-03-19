@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from composition.assembler import assemble
 from composition.excel_gen import generate_excel
+from composition.program_loader import inject_program_code, export_bas_files, list_available_programs
 from composition.module_registry import (
     list_modules, list_by_category, get_module,
     STANDARD_CONFIGS
@@ -61,6 +62,13 @@ def cli_test():
     print(f"Highest Input Row:  {config.highest_input_row}")
     print(f"Highest Output Row: {config.highest_output_row}")
 
+    # Load .bas program code
+    inject_program_code(config)
+    print(f"\n--- PROGRAM CODE ---")
+    for prg in config.programs:
+        has_code = "OK" if prg.code and len(prg.code) > 50 else "MISSING"
+        print(f"  PRG{prg.instance:2d} {prg.filename:<30s} [{has_code}] {len(prg.code)} bytes")
+
     # Generate Excel
     print(f"\n--- GENERATING EXCEL ---")
     excel_data = generate_excel(config)
@@ -68,6 +76,11 @@ def cli_test():
     with open(out_path, "wb") as f:
         f.write(excel_data)
     print(f"Excel saved: {out_path} ({len(excel_data):,} bytes)")
+
+    # Export .bas files
+    bas_dir = "/srv/dfa/drops/composition-test-bas/"
+    count = export_bas_files(config, bas_dir)
+    print(f"Exported {count} .bas files to {bas_dir}")
 
     # Generate SOO
     soo_path = "/srv/dfa/drops/composition-test-soo.txt"
