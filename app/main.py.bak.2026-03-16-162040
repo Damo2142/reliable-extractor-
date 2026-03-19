@@ -1,0 +1,3446 @@
+"""
+Reliable Controls Extraction Tool
+FastAPI backend — serves the web UI and REST API for DFA integration
+"""
+
+import asyncio
+import json
+import mimetypes
+import os
+import struct
+import uuid
+from pathlib import Path
+from typing import Optional
+import logging
+
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.extractor import ExtractionEngine
+from app.composer import Composer
+from app.config import Config
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="Reliable Controls Extraction Tool",
+    description="BAS programming library extractor and viewer for Reliable Controls .panx/.pan files",
+    version="1.1.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+cfg = Config()
+engine = ExtractionEngine(cfg)
+composer = Composer(cfg)
+
+# In-memory job state
+jobs: dict[str, dict] = {}
+
+
+# ─── Static Files & UI ────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    html_path = Path(__file__).parent.parent / "static" / "index.html"
+    return HTMLResponse(content=html_path.read_text())
+
+
+# ─── Variant Discovery ────────────────────────────────────────────────────────
+
+@app.get("/api/variants")
+async def list_variants():
+    """List all discovered variants grouped by category."""
+    return engine.discover_variants()
+
+
+@app.get("/api/variants/{category}/{variant_id}")
+async def get_variant(category: str, variant_id: str):
+    """Get full extracted data for a single variant."""
+    data = engine.load_library_entry(category, variant_id)
+    if data is None:
+        raise HTTPException(404, f"Variant {variant_id} not yet processed or not found")
+    return data
+
+
+# ─── Processing ───────────────────────────────────────────────────────────────
+
+@app.post("/api/process")
+async def process_all(background_tasks: BackgroundTasks, category: Optional[str] = Query(None)):
+    """Trigger extraction pipeline. Optionally filter by category."""
+    job_id = str(uuid.uuid4())[:8]
+    jobs[job_id] = {"status": "queued", "progress": 0, "total": 0, "current": "", "errors": [], "done": []}
+    background_tasks.add_task(run_extraction, job_id, category, None)
+    return {"job_id": job_id, "message": "Extraction started"}
+
+
+@app.post("/api/process/selected")
+async def process_selected(background_tasks: BackgroundTasks, body: dict = None):
+    """Process specific variants. Body: { "variants": ["VAV/VAV-IS10001", "RTU/RTU-ISA11110E", ...] }"""
+    if not body or "variants" not in body:
+        raise HTTPException(400, "Must provide 'variants' list")
+    job_id = str(uuid.uuid4())[:8]
+    jobs[job_id] = {"status": "queued", "progress": 0, "total": 0, "current": "", "errors": [], "done": []}
+    background_tasks.add_task(run_extraction, job_id, None, body["variants"])
+    return {"job_id": job_id, "message": f"Processing {len(body['variants'])} variants"}
+
+
+@app.get("/api/process/{job_id}/status")
+async def job_status(job_id: str):
+    """Poll extraction job status."""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    return jobs[job_id]
+
+
+@app.get("/api/process/{job_id}/stream")
+async def job_stream(job_id: str):
+    """SSE stream of job progress events."""
+    async def event_gen():
+        last_progress = -1
+        for _ in range(3600):  # max 1hr
+            job = jobs.get(job_id, {})
+            if job.get("progress") != last_progress or job.get("status") in ("done", "error"):
+                last_progress = job.get("progress", 0)
+                yield f"data: {json.dumps(job)}\n\n"
+            if job.get("status") in ("done", "error"):
+                break
+            await asyncio.sleep(1)
+        yield "data: {\"status\":\"timeout\"}\n\n"
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+# ─── Library ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/library")
+async def library_summary():
+    """Summary of all processed variants with object counts — main dashboard feed."""
+    return engine.library_summary()
+
+
+@app.get("/api/library/compare")
+async def compare_variants(a: str = Query(...), b: str = Query(...)):
+    """Compare two variants side-by-side."""
+    cat_a, var_a = a.split("/", 1)
+    cat_b, var_b = b.split("/", 1)
+    data_a = engine.load_library_entry(cat_a, var_a)
+    data_b = engine.load_library_entry(cat_b, var_b)
+    if data_a is None or data_b is None:
+        raise HTTPException(404, "One or both variants not found in library")
+    return {"a": data_a, "b": data_b}
+
+
+@app.get("/api/library/export")
+async def export_library():
+    """Export entire library as a single JSON bundle (for DFA import)."""
+    return engine.full_library_export()
+
+
+# ─── Settings / Categories ────────────────────────────────────────────────────
+
+@app.get("/api/settings/categories")
+async def get_categories():
+    """Get all category folder mappings (built-in + custom)."""
+    # Separate built-in from custom
+    builtin = {
+        "RC VAV Programming": "VAV", "RC RTU Programming": "RTU",
+        "RC FCU Programming": "FCU", "RC AHU Programming": "AHU",
+        "RC G36AHU Programming": "G36AHU", "RC G36VAV Programming": "G36VAV",
+        "RC UH Programming": "UH", "RC VVT Programming": "VVT",
+        "RC WSHP Programming": "WSHP",
+    }
+    custom = {}
+    if engine.cfg.custom_categories_file.exists():
+        try:
+            custom = json.loads(engine.cfg.custom_categories_file.read_text())
+        except Exception:
+            pass
+    # List existing folders in upload root
+    existing_folders = []
+    if engine.cfg.upload_root.exists():
+        for d in sorted(engine.cfg.upload_root.iterdir()):
+            if d.is_dir():
+                existing_folders.append(d.name)
+    return {
+        "builtin": builtin,
+        "custom": custom,
+        "all": engine.cfg.CATEGORIES,
+        "upload_root": str(engine.cfg.upload_root),
+        "existing_folders": existing_folders,
+    }
+
+
+@app.post("/api/settings/categories")
+async def add_category(body: dict = None):
+    """Add a custom category mapping. Body: { "folder": "My Custom AHU", "key": "CUSTOM_AHU" }"""
+    if not body or "folder" not in body or "key" not in body:
+        raise HTTPException(400, "Must provide 'folder' and 'key'")
+    folder = body["folder"].strip()
+    key = body["key"].strip().upper()
+    if not folder or not key:
+        raise HTTPException(400, "Folder and key cannot be empty")
+
+    # Create the folder if it doesn't exist
+    folder_path = engine.cfg.upload_root / folder
+    folder_path.mkdir(parents=True, exist_ok=True)
+
+    # Load existing custom categories and add new one
+    custom = {}
+    if engine.cfg.custom_categories_file.exists():
+        try:
+            custom = json.loads(engine.cfg.custom_categories_file.read_text())
+        except Exception:
+            pass
+    custom[folder] = key
+    engine.cfg.save_custom_categories(custom)
+
+    return {"status": "added", "folder": folder, "key": key, "path": str(folder_path)}
+
+
+@app.delete("/api/settings/categories/{key}")
+async def remove_category(key: str):
+    """Remove a custom category mapping by key."""
+    custom = {}
+    if engine.cfg.custom_categories_file.exists():
+        try:
+            custom = json.loads(engine.cfg.custom_categories_file.read_text())
+        except Exception:
+            pass
+    # Find and remove by key
+    to_remove = [k for k, v in custom.items() if v == key.upper()]
+    if not to_remove:
+        raise HTTPException(404, f"Custom category '{key}' not found")
+    for k in to_remove:
+        del custom[k]
+        # Also remove from live config
+        engine.cfg.CATEGORIES.pop(k, None)
+    engine.cfg.custom_categories_file.write_text(json.dumps(custom, indent=2))
+    return {"status": "removed", "key": key}
+
+
+# ─── File Serving ─────────────────────────────────────────────────────────────
+
+@app.get("/api/files/assets/{category}/{variant_id}")
+async def list_asset_files(category: str, variant_id: str):
+    """List all graphics/asset files for a variant."""
+    asset_dir = engine.cfg.assets_root / category / variant_id
+    if not asset_dir.exists():
+        return {"files": []}
+    files = []
+    for f in sorted(asset_dir.iterdir()):
+        if f.is_file():
+            mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+            files.append({
+                "name": f.name,
+                "size": f.stat().st_size,
+                "mime": mime,
+                "is_image": mime.startswith("image/"),
+                "url": f"/api/files/assets/{category}/{variant_id}/{f.name}",
+            })
+    return {"files": files, "count": len(files)}
+
+
+@app.get("/api/files/assets/{category}/{variant_id}/download")
+async def download_variant_assets(category: str, variant_id: str):
+    """Download all assets for a variant as a zip.
+    Sources (in priority order):
+    1. Variant-specific asset folder (from .panx extraction)
+    2. Required images parsed from GRP JSON files in the library entry
+    3. Shared asset library as fallback
+    """
+    import zipfile
+    import io
+    import re as _re
+
+    asset_dir = engine.cfg.assets_root / category / variant_id
+    shared_dir = engine.cfg.assets_root / "_shared"
+
+    buf = io.BytesIO()
+    added = set()  # Track by full relative path to allow same filename in different dirs
+
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # 1. Add variant-specific assets if they exist
+        if asset_dir.exists():
+            for root, dirs, files in os.walk(asset_dir):
+                for fname in files:
+                    fpath = Path(root) / fname
+                    arcname = str(fpath.relative_to(asset_dir))
+                    zf.write(fpath, arcname)
+                    added.add(arcname.lower().replace('\\', '/'))
+
+        # 2. Parse GRP JSONs + meta GroupAssets for ALL required files
+        lib_entry = engine.load_library_entry(category, variant_id)
+        required_files = set()
+        required_dirs = set()  # Animation directories to include entirely
+        if lib_entry:
+            grp_files = lib_entry.get("grp_files", {})
+            for grp_name, grp_data in grp_files.items():
+                text = json.dumps(grp_data)
+                for m in _re.finditer(r'"(?:external_file|gel_filename|image|background_image)"\s*:\s*"([^"]+)"', text):
+                    val = m.group(1).replace('\\\\', '/').replace('\\', '/').replace('pic/', '')
+                    if val and '.' in val:
+                        required_files.add(val)
+
+            # GroupAssets — includes animation subdirectories
+            for ga in lib_entry.get("meta", {}).get("GroupAssets", []):
+                job_path = ga.get("JobPath", "").replace('\\', '/').replace('pic/', '')
+                if job_path and '.' in job_path:
+                    required_files.add(job_path)
+                    # If it's in an Animation subdir, mark the whole dir
+                    if 'Animation' in job_path:
+                        parts = job_path.replace('\\', '/').split('/')
+                        # Animation/DirName/ — include all files in that dir
+                        if len(parts) >= 2:
+                            anim_dir = '/'.join(parts[:2])  # e.g. "Animation/Damper-Vert-02-V02"
+                            required_dirs.add(anim_dir)
+
+        # 3. Find required files in shared library
+        if shared_dir.exists():
+            # First: copy entire animation directories
+            for anim_dir in required_dirs:
+                src_dir = shared_dir / anim_dir
+                if src_dir.exists():
+                    for root, dirs, files in os.walk(src_dir):
+                        for fname in files:
+                            fpath = Path(root) / fname
+                            arcname = str(fpath.relative_to(shared_dir)).replace('\\', '/')
+                            if arcname.lower().replace('\\', '/') not in added:
+                                zf.write(fpath, arcname)
+                                added.add(arcname.lower().replace('\\', '/'))
+
+            # Then: individual files (images, icons)
+            for req in required_files:
+                req_norm = req.replace('\\', '/')
+                if req_norm.lower() in added:
+                    continue
+                # Try exact relative path first
+                exact = shared_dir / req_norm
+                if exact.exists():
+                    zf.write(exact, req_norm)
+                    added.add(req_norm.lower())
+                    continue
+                # Fallback: search by filename
+                matches = list(shared_dir.rglob(Path(req_norm).name))
+                if matches:
+                    zf.write(matches[0], req_norm)
+                    added.add(req_norm.lower())
+
+    if not added:
+        raise HTTPException(404, "No assets found for this variant")
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{variant_id}_assets.zip"'}
+    )
+
+
+@app.post("/api/files/assets/{category}/{variant_id}/upload")
+async def upload_variant_assets(category: str, variant_id: str, files: list[UploadFile] = File(...)):
+    """Upload asset files (images, animations) to a variant's asset folder.
+    Supports individual files or a zip of files.
+    """
+    import zipfile
+    import io
+
+    asset_dir = engine.cfg.assets_root / category / variant_id
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    uploaded = []
+    for f in files:
+        data = await f.read()
+
+        # If it's a zip, extract its contents
+        if f.filename and f.filename.lower().endswith('.zip'):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        # Strip leading folder if all files share one
+                        arcname = info.filename
+                        dest = asset_dir / arcname
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_bytes(zf.read(info))
+                        uploaded.append(arcname)
+            except zipfile.BadZipFile:
+                raise HTTPException(400, f"{f.filename} is not a valid zip")
+        else:
+            # Save individual file
+            dest = asset_dir / f.filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            uploaded.append(f.filename)
+
+    # Also update the library JSON's GroupAssets if it exists
+    lib_entry = engine.load_library_entry(category, variant_id)
+    if lib_entry:
+        existing_assets = set()
+        for ga in lib_entry.get("meta", {}).get("GroupAssets", []):
+            existing_assets.add(ga.get("Asset", ""))
+
+        new_assets = []
+        for fname in uploaded:
+            # Normalize to forward slashes for cross-platform compatibility
+            fname_norm = fname.replace('\\', '/')
+            asset_path = f"group_assets/{fname_norm}"
+            if asset_path not in existing_assets:
+                new_assets.append({
+                    "Asset": asset_path,
+                    "JobPath": fname_norm,
+                })
+
+        if new_assets:
+            lib_entry.setdefault("meta", {}).setdefault("GroupAssets", []).extend(new_assets)
+            engine._save_library_entry(category, variant_id, lib_entry)
+
+    return {"status": "uploaded", "count": len(uploaded), "files": uploaded}
+
+
+@app.get("/api/binary/report/{category}/{variant_id}")
+async def binary_point_report(category: str, variant_id: str):
+    """Generate a complete point report from the .pan binary.
+
+    Includes data that PFG XML export misses: loop bindings, verified present
+    values, trend references, unit mappings.
+    """
+    from app.pan_binary import PanBinary
+
+    # Find the source .panx or .pan
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    report = pan.generate_point_report()
+    return StreamingResponse(
+        __import__('io').BytesIO(report.encode()),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{variant_id}_binary_report.txt"'}
+    )
+
+
+@app.get("/api/binary/data/{category}/{variant_id}")
+async def binary_data(category: str, variant_id: str):
+    """Get structured binary data as JSON for a variant.
+
+    Returns loops with actual input/setpoint bindings, points with verified
+    present values, and trend references — all from the .pan binary.
+    """
+    from app.pan_binary import PanBinary
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    # Get arrays and tables, stripping raw data_region (not JSON-serializable)
+    arrays = []
+    for arr in pan.get_arrays():
+        arrays.append({
+            'name': arr['name'],
+            'values': arr['values'],
+            'value_count': arr['value_count'],
+        })
+    tables = []
+    for tbl in pan.get_tables():
+        tables.append({
+            'name': tbl['name'],
+            'rows': tbl['rows'],
+            'values': tbl['values'],
+            'value_count': tbl['value_count'],
+        })
+
+    return {
+        "variant_id": variant_id,
+        "object_count": len(pan.objects),
+        "loops": pan.get_loops(),
+        "trends": pan.get_trends(),
+        "points": pan.get_point_details(),
+        "arrays": arrays,
+        "tables": tables,
+        "summary": {cat: len(items) for cat, items in pan.get_all_objects().items()},
+    }
+
+
+@app.post("/api/binary/diff")
+async def binary_diff(body: dict = None):
+    """Compare two controllers and return differences.
+
+    Body: {
+        "first": {"category": "SBS_AHU", "variant_id": "1003"},
+        "second": {"category": "SBS_AHU", "variant_id": "PS-AHU-ERW-0100"}
+    }
+    """
+    from app.pan_binary import diff_controllers
+
+    if not body or 'first' not in body or 'second' not in body:
+        raise HTTPException(400, "Must provide 'first' and 'second' controller references")
+
+    paths = []
+    for key in ['first', 'second']:
+        ref = body[key]
+        folder = engine._cat_folder(ref['category'])
+        cat_dir = engine.cfg.upload_root / folder
+        src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+              next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+        if not src:
+            raise HTTPException(404, f"Controller not found: {ref['variant_id']}")
+        paths.append(src)
+
+    try:
+        result = diff_controllers(paths[0], paths[1])
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Diff failed: {e}")
+
+
+@app.post("/api/binary/copy")
+async def binary_copy(body: dict = None):
+    """Copy a controller with new device name and ID.
+
+    Body: {
+        "source": {"category": "SBS_AHU", "variant_id": "1003"},
+        "new_device_id": 900,
+        "new_device_name": "AHU-TEST",    // must be same byte length as source
+        "values": {"RMT-SP": 72.0}        // optional value overrides
+    }
+    """
+    from app.pan_binary import PanWriter
+
+    if not body or 'source' not in body:
+        raise HTTPException(400, "Must provide 'source' controller reference")
+
+    ref = body['source']
+    folder = engine._cat_folder(ref['category'])
+    cat_dir = engine.cfg.upload_root / folder
+    src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+          next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"Controller not found: {ref['variant_id']}")
+
+    try:
+        if str(src).endswith('.panx'):
+            writer = PanWriter.from_panx(src)
+        else:
+            writer = PanWriter.from_file(src)
+
+        if 'new_device_id' in body:
+            writer.set_device_id(body['new_device_id'])
+
+        if 'new_device_name' in body:
+            # Auto-detect source name
+            from app.pan_binary import PanBinary as _PB
+            parser = _PB(bytes(writer.data))
+            # Find the most common multi-segment prefix (e.g., "MYS-AHU3")
+            # by looking at object names that have at least 2 dashes
+            prefixes = {}
+            for obj in parser.objects:
+                name = obj['name'].strip().strip('\x00')
+                parts = name.split('-')
+                if len(parts) >= 3:
+                    # Try 2-segment prefix: "MYS-AHU3" from "MYS-AHU3-DAT"
+                    prefix = f"{parts[0]}-{parts[1]}"
+                    if prefix and len(prefix) > 2:
+                        prefixes[prefix] = prefixes.get(prefix, 0) + 1
+            source_name = max(prefixes, key=prefixes.get) if prefixes else ""
+            new_name = body['new_device_name']
+
+            if source_name and len(source_name) == len(new_name):
+                count = writer.rename_device(source_name, new_name)
+            elif source_name:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"Name length mismatch: source='{source_name}' ({len(source_name)} chars), new='{new_name}' ({len(new_name)} chars). Must be same length."}
+                )
+
+        out_path = Path(f"/tmp/binary_copy_{body.get('new_device_id', 'output')}.pan")
+        writer.save(out_path)
+
+        return FileResponse(
+            out_path,
+            filename=f"{body.get('new_device_name', 'controller')}.pan",
+            media_type="application/octet-stream",
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Copy failed: {e}")
+
+
+# ─── #15: Binary Create (bypass PFG) ─────────────────────────────────────────
+
+@app.post("/api/binary/create")
+async def binary_create(body: dict = None):
+    """Create a .pan file from a source template WITHOUT using PFG/Wine.
+
+    Takes a source .pan/.panx (by category/variant), applies device_id,
+    device_name, and optional value overrides. Returns a modified .pan file.
+
+    Body: {
+        "source": {"category": "SBS_AHU", "variant_id": "1003"},
+        "device_id": 900,
+        "device_name": "AHU-01",
+        "values": {"RMT-SP": 72.0, "OCC-CMD": 1.0}
+    }
+    """
+    from app.pan_binary import PanWriter, PanBinary as _PB
+
+    if not body or 'source' not in body:
+        raise HTTPException(400, "Must provide 'source' with category and variant_id")
+
+    ref = body['source']
+    folder = engine._cat_folder(ref['category'])
+    cat_dir = engine.cfg.upload_root / folder
+    src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+          next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"Source not found: {ref['variant_id']}")
+
+    try:
+        if str(src).endswith('.panx'):
+            writer = PanWriter.from_panx(src)
+        else:
+            writer = PanWriter.from_file(src)
+
+        # Set device ID
+        new_id = body.get('device_id')
+        if new_id is not None:
+            writer.set_device_id(int(new_id))
+
+        # Rename device
+        new_name = body.get('device_name')
+        rename_count = 0
+        source_name = ""
+        if new_name:
+            parser = _PB(bytes(writer.data))
+            prefixes = {}
+            for obj in parser.objects:
+                name = obj['name'].strip().strip('\x00')
+                parts = name.split('-')
+                if len(parts) >= 3:
+                    prefix = f"{parts[0]}-{parts[1]}"
+                    if prefix and len(prefix) > 2:
+                        prefixes[prefix] = prefixes.get(prefix, 0) + 1
+            source_name = max(prefixes, key=prefixes.get) if prefixes else ""
+
+            if source_name:
+                if len(source_name) == len(new_name):
+                    rename_count = writer.rename_device(source_name, new_name)
+                else:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "detail": f"Name length mismatch: source='{source_name}' "
+                                      f"({len(source_name)} chars), new='{new_name}' "
+                                      f"({len(new_name)} chars). Must be same byte length.",
+                            "source_name": source_name,
+                        }
+                    )
+
+        # Set present values
+        values_set = {}
+        for point_name, value in body.get('values', {}).items():
+            ok = writer.set_present_value(point_name, float(value))
+            values_set[point_name] = "set" if ok else "not found"
+
+        out_path = Path(f"/tmp/binary_create_{body.get('device_id', 'output')}.pan")
+        writer.save(out_path)
+
+        filename = f"{new_name or ref['variant_id']}.pan"
+        return FileResponse(
+            out_path,
+            filename=filename,
+            media_type="application/octet-stream",
+            headers={
+                "X-Source-Name": source_name,
+                "X-Rename-Count": str(rename_count),
+                "X-Values-Status": json.dumps(values_set),
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Binary create failed: {e}")
+
+
+# ─── #17: Bulk Programming (improved copy) ───────────────────────────────────
+
+@app.post("/api/binary/bulk")
+async def binary_bulk(body: dict = None):
+    """Generate multiple .pan files from a single source template.
+
+    Returns a zip containing all generated .pan files plus a summary CSV.
+
+    Body: {
+        "source": {"category": "SBS_VAV", "variant_id": "2001"},
+        "devices": [
+            {"device_id": 901, "device_name": "VAV-01", "values": {"RMT-SP": 72.0}},
+            {"device_id": 902, "device_name": "VAV-02", "values": {"RMT-SP": 74.0}},
+            {"device_id": 903, "device_name": "VAV-03", "values": {}}
+        ]
+    }
+    """
+    import zipfile
+    import csv
+    import io
+    from app.pan_binary import PanWriter, PanBinary as _PB
+
+    if not body or 'source' not in body or 'devices' not in body:
+        raise HTTPException(400, "Must provide 'source' and 'devices' list")
+
+    devices = body['devices']
+    if not devices:
+        raise HTTPException(400, "devices list is empty")
+
+    ref = body['source']
+    folder = engine._cat_folder(ref['category'])
+    cat_dir = engine.cfg.upload_root / folder
+    src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+          next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"Source not found: {ref['variant_id']}")
+
+    # Read source binary once
+    if str(src).endswith('.panx'):
+        import zipfile as _zf
+        with _zf.ZipFile(src) as z:
+            pan_name = [n for n in z.namelist() if n.endswith('.pan')][0]
+            source_data = z.read(pan_name)
+    else:
+        source_data = src.read_bytes()
+
+    # Auto-detect source device name
+    parser = _PB(source_data)
+    prefixes = {}
+    for obj in parser.objects:
+        name = obj['name'].strip().strip('\x00')
+        parts = name.split('-')
+        if len(parts) >= 3:
+            prefix = f"{parts[0]}-{parts[1]}"
+            if prefix and len(prefix) > 2:
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+    source_name = max(prefixes, key=prefixes.get) if prefixes else ""
+
+    # Build output zip
+    zip_buffer = io.BytesIO()
+    csv_buffer = io.StringIO()
+    csv_writer = csv.writer(csv_buffer)
+    csv_writer.writerow(['device_id', 'device_name', 'status', 'rename_count', 'values_set', 'errors'])
+
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for dev in devices:
+            dev_id = dev.get('device_id', 0)
+            dev_name = dev.get('device_name', f'device_{dev_id}')
+            errors = []
+
+            try:
+                writer = PanWriter(bytes(source_data))
+
+                # Set device ID
+                if dev_id:
+                    writer.set_device_id(int(dev_id))
+
+                # Rename
+                rename_count = 0
+                if dev_name and source_name:
+                    if len(dev_name) == len(source_name):
+                        rename_count = writer.rename_device(source_name, dev_name)
+                    else:
+                        errors.append(
+                            f"Name length mismatch: '{source_name}'({len(source_name)}) "
+                            f"vs '{dev_name}'({len(dev_name)})"
+                        )
+
+                # Set values
+                values_ok = 0
+                for pt, val in dev.get('values', {}).items():
+                    if writer.set_present_value(pt, float(val)):
+                        values_ok += 1
+                    else:
+                        errors.append(f"Point not found: {pt}")
+
+                pan_bytes = bytes(writer.data)
+                filename = f"{dev_name}.pan"
+                zf.writestr(filename, pan_bytes)
+
+                status = "ok" if not errors else "partial"
+                csv_writer.writerow([dev_id, dev_name, status, rename_count,
+                                     values_ok, '; '.join(errors) if errors else ''])
+            except Exception as e:
+                csv_writer.writerow([dev_id, dev_name, 'error', 0, 0, str(e)])
+
+        # Add summary CSV
+        zf.writestr('summary.csv', csv_buffer.getvalue())
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="bulk_{ref["variant_id"]}_{len(devices)}devices.zip"'
+        }
+    )
+
+
+# ─── #24: Change Tracking / Snapshots ─────────────────────────────────────────
+
+SNAPSHOT_ROOT = Path("/srv/dfa/shared/files/vendors/reliable/library-dev/.snapshots")
+
+
+@app.post("/api/binary/snapshot")
+async def binary_snapshot(body: dict = None):
+    """Save a named snapshot of a variant's current binary state.
+
+    Body: {
+        "category": "VAV",
+        "variant_id": "VAV-IS10001",
+        "notes": "Before tuning loop gains",
+        "created_by": "dave"
+    }
+    """
+    import hashlib
+    from app.pan_binary import PanBinary
+
+    if not body or 'category' not in body or 'variant_id' not in body:
+        raise HTTPException(400, "Must provide 'category' and 'variant_id'")
+
+    category = body['category']
+    variant_id = body['variant_id']
+
+    # Find the source .pan/.panx
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    # Compute file hash
+    file_hash = hashlib.md5(bytes(pan.data)).hexdigest()
+
+    # Gather metrics
+    all_objs = pan.get_all_objects()
+    object_count = len(pan.objects)
+    loop_count = len(all_objs.get('LOOP', []))
+    point_count = sum(len(v) for k, v in all_objs.items()
+                      if k in ('AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV'))
+
+    # Loop summary
+    loops = pan.get_loops()
+    loop_summary = []
+    for lp in loops:
+        loop_summary.append({
+            "name": lp.get('name', ''),
+            "input": lp.get('input_ref', ''),
+            "setpoint": lp.get('setpoint_ref', '') or str(lp.get('setpoint_value', '')),
+            "output": lp.get('output_ref', ''),
+        })
+
+    # Build snapshot
+    from datetime import datetime
+    ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+    snapshot_id = f"{variant_id}_{ts}"
+
+    snapshot = {
+        "snapshot_id": snapshot_id,
+        "variant_id": variant_id,
+        "category": category,
+        "file_hash": file_hash,
+        "object_count": object_count,
+        "loop_count": loop_count,
+        "point_count": point_count,
+        "loop_summary": loop_summary,
+        "created_at": datetime.now().isoformat(),
+        "created_by": body.get('created_by', ''),
+        "notes": body.get('notes', ''),
+    }
+
+    # Save snapshot
+    snap_dir = SNAPSHOT_ROOT / category / variant_id
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    snap_file = snap_dir / f"{ts}.json"
+    snap_file.write_text(json.dumps(snapshot, indent=2))
+
+    return snapshot
+
+
+@app.get("/api/binary/history/{category}/{variant_id}")
+async def binary_history(category: str, variant_id: str):
+    """List all snapshots for a variant, newest first."""
+    snap_dir = SNAPSHOT_ROOT / category / variant_id
+    if not snap_dir.exists():
+        return {"variant_id": variant_id, "category": category, "snapshots": []}
+
+    snapshots = []
+    for f in sorted(snap_dir.glob("*.json"), reverse=True):
+        try:
+            data = json.loads(f.read_text())
+            snapshots.append(data)
+        except Exception:
+            continue
+
+    return {
+        "variant_id": variant_id,
+        "category": category,
+        "snapshot_count": len(snapshots),
+        "snapshots": snapshots,
+    }
+
+
+@app.get("/api/binary/history/compare/{snapshot1}/{snapshot2}")
+async def binary_history_compare(snapshot1: str, snapshot2: str):
+    """Compare two snapshots by their snapshot_id.
+
+    snapshot_id format: {variant_id}_{YYYYMMDD-HHMMSS}
+    Searches all snapshot directories to find the matching files.
+    """
+    def find_snapshot(snap_id: str) -> dict | None:
+        for cat_dir in SNAPSHOT_ROOT.iterdir():
+            if not cat_dir.is_dir():
+                continue
+            for var_dir in cat_dir.iterdir():
+                if not var_dir.is_dir():
+                    continue
+                for f in var_dir.glob("*.json"):
+                    try:
+                        data = json.loads(f.read_text())
+                        if data.get('snapshot_id') == snap_id:
+                            return data
+                    except Exception:
+                        continue
+        return None
+
+    s1 = find_snapshot(snapshot1)
+    s2 = find_snapshot(snapshot2)
+
+    if not s1:
+        raise HTTPException(404, f"Snapshot not found: {snapshot1}")
+    if not s2:
+        raise HTTPException(404, f"Snapshot not found: {snapshot2}")
+
+    # Compare metrics
+    comparison = {
+        "snapshot1": s1,
+        "snapshot2": s2,
+        "changes": {
+            "file_hash_changed": s1['file_hash'] != s2['file_hash'],
+            "object_count_delta": s2['object_count'] - s1['object_count'],
+            "loop_count_delta": s2['loop_count'] - s1['loop_count'],
+            "point_count_delta": s2['point_count'] - s1['point_count'],
+        },
+        "loop_changes": [],
+    }
+
+    # Compare loop summaries
+    loops1 = {lp['name']: lp for lp in s1.get('loop_summary', [])}
+    loops2 = {lp['name']: lp for lp in s2.get('loop_summary', [])}
+
+    all_loop_names = set(loops1.keys()) | set(loops2.keys())
+    for name in sorted(all_loop_names):
+        l1 = loops1.get(name)
+        l2 = loops2.get(name)
+        if l1 is None:
+            comparison['loop_changes'].append({"name": name, "change": "added"})
+        elif l2 is None:
+            comparison['loop_changes'].append({"name": name, "change": "removed"})
+        elif l1 != l2:
+            comparison['loop_changes'].append({
+                "name": name, "change": "modified",
+                "before": l1, "after": l2,
+            })
+
+    # If both snapshots are from the same variant and we have the .pan files,
+    # try a full binary diff
+    if (s1['category'] == s2['category'] and
+        s1['variant_id'] == s2['variant_id'] and
+        s1['file_hash'] != s2['file_hash']):
+        comparison['changes']['note'] = (
+            "Binary content differs. Use the Controller Diff tool for full object-level comparison."
+        )
+
+    return comparison
+
+
+# ─── #22: Field Diagnostic ───────────────────────────────────────────────────
+
+@app.post("/api/binary/diagnose")
+async def binary_diagnose(file: UploadFile = File(...)):
+    """Upload a .pan/.panx file and receive a full diagnostic report.
+
+    Returns device info, object summary, loop configs, point details,
+    trend configs, schedule summaries, and warnings.
+    """
+    from app.pan_binary import PanBinary
+
+    content = await file.read()
+    filename = file.filename or "upload.pan"
+
+    try:
+        if filename.endswith('.panx'):
+            import zipfile as _zf
+            import io as _io
+            with _zf.ZipFile(_io.BytesIO(content)) as z:
+                pan_name = [n for n in z.namelist() if n.endswith('.pan')][0]
+                pan_data = z.read(pan_name)
+        else:
+            pan_data = content
+
+        pan = PanBinary(pan_data)
+    except Exception as e:
+        raise HTTPException(400, f"Failed to parse file: {e}")
+
+    # Device info
+    device_id = struct.unpack('<I', pan.data[4:8])[0] if len(pan.data) >= 8 else None
+
+    # Find device name from most common prefix
+    prefixes = {}
+    for obj in pan.objects:
+        name = obj['name'].strip().strip('\x00')
+        parts = name.split('-')
+        if len(parts) >= 3:
+            prefix = f"{parts[0]}-{parts[1]}"
+            if prefix and len(prefix) > 2:
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+    device_name = max(prefixes, key=prefixes.get) if prefixes else "unknown"
+
+    # Object summary
+    summary = {cat: len(items) for cat, items in pan.get_all_objects().items()}
+
+    # Points with details
+    points = pan.get_point_details()
+
+    # Loops
+    loops = pan.get_loops()
+
+    # Trends
+    trends = pan.get_trends()
+
+    # Schedules
+    schedules = pan.get_schedules()
+
+    # Programs
+    programs = pan.get_programs()
+
+    # --- Generate warnings ---
+    warnings = []
+
+    # Out-of-service points
+    oos_points = [p['name'] for p in points if p.get('out_of_service')]
+    if oos_points:
+        warnings.append({
+            "type": "out_of_service",
+            "severity": "warning",
+            "message": f"{len(oos_points)} point(s) are out-of-service",
+            "details": oos_points,
+        })
+
+    # Points with unusual present values (analog points at exactly 0 or very large)
+    suspect_values = []
+    for p in points:
+        pv = p.get('present_value')
+        if pv is not None:
+            if abs(pv) > 10000:
+                suspect_values.append({"name": p['name'], "value": pv, "reason": "unusually large"})
+    if suspect_values:
+        warnings.append({
+            "type": "unusual_values",
+            "severity": "info",
+            "message": f"{len(suspect_values)} point(s) have unusually large values",
+            "details": suspect_values,
+        })
+
+    # Loops missing bindings
+    incomplete_loops = []
+    for loop in loops:
+        missing = []
+        if not loop.get('input_ref'):
+            missing.append('input')
+        if not loop.get('output_ref'):
+            missing.append('output')
+        if not loop.get('setpoint_ref') and loop.get('setpoint_value') is None:
+            missing.append('setpoint')
+        if missing:
+            incomplete_loops.append({"name": loop['name'], "missing": missing})
+    if incomplete_loops:
+        warnings.append({
+            "type": "incomplete_loops",
+            "severity": "warning",
+            "message": f"{len(incomplete_loops)} loop(s) have missing bindings",
+            "details": incomplete_loops,
+        })
+
+    # Empty trends (no point references)
+    empty_trends = [t['name'] for t in trends if not t.get('refs')]
+    if empty_trends:
+        warnings.append({
+            "type": "empty_trends",
+            "severity": "info",
+            "message": f"{len(empty_trends)} trend(s) have no point references",
+            "details": empty_trends,
+        })
+
+    # Disabled programs
+    disabled_progs = [p['name'] for p in programs if p.get('enabled') is False]
+    if disabled_progs:
+        warnings.append({
+            "type": "disabled_programs",
+            "severity": "info",
+            "message": f"{len(disabled_progs)} program(s) are disabled",
+            "details": disabled_progs,
+        })
+
+    return {
+        "filename": filename,
+        "device": {
+            "id": device_id,
+            "name": device_name,
+            "object_count": len(pan.objects),
+            "file_size": len(pan_data),
+        },
+        "object_summary": summary,
+        "loops": loops,
+        "points": points,
+        "trends": trends,
+        "schedules": schedules,
+        "programs": programs,
+        "warnings": warnings,
+        "warning_count": len(warnings),
+    }
+
+
+# ─── #19: Schedule Management ────────────────────────────────────────────────
+
+@app.get("/api/binary/schedules/{category}/{variant_id}")
+async def binary_schedules(category: str, variant_id: str):
+    """Get all schedule objects with decoded weekly schedules from the .pan binary.
+
+    Returns schedule names, default values, and weekly schedule byte pairs.
+    """
+    from app.pan_binary import PanBinary
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    schedules = pan.get_schedules()
+    return {
+        "variant_id": variant_id,
+        "category": category,
+        "schedule_count": len(schedules),
+        "schedules": schedules,
+    }
+
+
+# ─── #20: Trend Info ─────────────────────────────────────────────────────────
+
+@app.get("/api/binary/trends/{category}/{variant_id}")
+async def binary_trends(category: str, variant_id: str):
+    """Get all trend objects with point references and log intervals from .pan binary.
+
+    Returns trend names, referenced points, and configuration details.
+    """
+    from app.pan_binary import PanBinary
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    trends = pan.get_trends()
+
+    # Enrich with additional data from the raw objects
+    trend_details = []
+    for obj in pan.objects:
+        if obj['category'] != 'TREND':
+            continue
+
+        props = obj.get('properties', {})
+        data = obj['data_region']
+
+        detail = {
+            'name': obj['name'],
+            'refs': [r['ref'] for r in obj['refs']
+                     if r['type'] != 'NULL' and r['instance'] < 300],
+            'present_value': obj.get('present_value'),
+        }
+
+        # Try to extract log interval (property 0x6c = 108 for trends stores interval)
+        for i in range(min(len(data) - 6, 200)):
+            if data[i] == 0x6c and data[i+1] == 0x44:
+                import struct as _st
+                val = _st.unpack('>f', data[i+2:i+6])[0]
+                if 0 < val < 86400:  # Reasonable interval (up to 24h in seconds)
+                    detail['log_interval_seconds'] = round(val, 1)
+                    break
+
+        # Check enabled state
+        for tag, val in props.get(0x0A, []):
+            if tag == 'uint8':
+                detail['enabled'] = val == 1
+
+        trend_details.append(detail)
+
+    return {
+        "variant_id": variant_id,
+        "category": category,
+        "trend_count": len(trend_details),
+        "trends": trend_details,
+    }
+
+
+@app.get("/api/files/assets/shared")
+async def list_shared_assets():
+    """List all files in the shared asset library."""
+    shared_dir = engine.cfg.assets_root / "_shared"
+    if not shared_dir.exists():
+        return {"files": [], "count": 0}
+    files = []
+    for root, dirs, fnames in os.walk(shared_dir):
+        for fname in sorted(fnames):
+            fpath = Path(root) / fname
+            rel = str(fpath.relative_to(shared_dir))
+            mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+            files.append({
+                "name": fname,
+                "path": rel,
+                "size": fpath.stat().st_size,
+                "mime": mime,
+                "is_image": mime.startswith("image/"),
+            })
+    return {"files": files, "count": len(files)}
+
+
+@app.post("/api/files/assets/shared/upload")
+async def upload_shared_assets(files: list[UploadFile] = File(...)):
+    """Upload files to the shared asset library. Supports files or zips."""
+    import zipfile
+    import io
+
+    shared_dir = engine.cfg.assets_root / "_shared"
+    shared_dir.mkdir(parents=True, exist_ok=True)
+    uploaded = []
+
+    for f in files:
+        data = await f.read()
+        if f.filename and f.filename.lower().endswith('.zip'):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        dest = shared_dir / info.filename
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_bytes(zf.read(info))
+                        uploaded.append(info.filename)
+            except zipfile.BadZipFile:
+                raise HTTPException(400, f"{f.filename} is not a valid zip")
+        else:
+            dest = shared_dir / f.filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            uploaded.append(f.filename)
+
+    return {"status": "uploaded", "count": len(uploaded), "files": uploaded}
+
+
+@app.get("/api/files/assets/shared/download")
+async def download_shared_assets():
+    """Download the entire shared asset library as a zip."""
+    import zipfile
+    import io
+
+    shared_dir = engine.cfg.assets_root / "_shared"
+    if not shared_dir.exists():
+        raise HTTPException(404, "No shared assets found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(shared_dir):
+            for fname in files:
+                fpath = Path(root) / fname
+                arcname = str(fpath.relative_to(shared_dir))
+                zf.write(fpath, arcname)
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="shared_assets.zip"'}
+    )
+
+
+@app.get("/api/files/assets/{category}/{variant_id}/{filename}")
+async def serve_asset_file(category: str, variant_id: str, filename: str):
+    """Serve a single asset file (image, etc.)."""
+    file_path = engine.cfg.assets_root / category / variant_id / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(404, "File not found")
+    return FileResponse(file_path)
+
+
+@app.get("/api/files/source/{category}/{variant_id}")
+async def list_source_files(category: str, variant_id: str):
+    """List original source files (.pan, .bas, .pdf, etc.) for a variant."""
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+    if not cat_dir.exists():
+        return {"files": []}
+
+    files = []
+    # Find the variant's source directory
+    for src in cat_dir.rglob(f"{variant_id}.*"):
+        if src.is_file():
+            mime = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+            files.append({
+                "name": src.name,
+                "size": src.stat().st_size,
+                "mime": mime,
+                "is_image": mime.startswith("image/"),
+                "url": f"/api/files/source/{category}/{variant_id}/{src.name}",
+            })
+
+    # Also find .bas files and other files in the same directory
+    for pattern in [f"{variant_id}*.bas", f"{variant_id}*.pdf", f"{variant_id}*.txt", f"{variant_id}*.doc*"]:
+        for src in cat_dir.rglob(pattern):
+            if src.is_file() and not any(f["name"] == src.name for f in files):
+                mime = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+                files.append({
+                    "name": src.name,
+                    "size": src.stat().st_size,
+                    "mime": mime,
+                    "url": f"/api/files/source/{category}/{variant_id}/{src.name}",
+                })
+
+    # Check the variant's parent folder for any extra files
+    for panx in cat_dir.rglob(f"{variant_id}.panx"):
+        parent = panx.parent
+        for f in parent.iterdir():
+            if f.is_file() and not any(ef["name"] == f.name for ef in files):
+                mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+                files.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "mime": mime,
+                    "url": f"/api/files/source/{category}/{variant_id}/{f.name}",
+                })
+
+    for pan in cat_dir.rglob(f"{variant_id}.pan"):
+        parent = pan.parent
+        for f in parent.iterdir():
+            if f.is_file() and not any(ef["name"] == f.name for ef in files):
+                mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+                files.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "mime": mime,
+                    "url": f"/api/files/source/{category}/{variant_id}/{f.name}",
+                })
+
+    return {"files": files, "count": len(files)}
+
+
+@app.get("/api/files/source/{category}/{variant_id}/{filename}")
+async def serve_source_file(category: str, variant_id: str, filename: str):
+    """Serve a source file."""
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+    # Search for the file
+    for f in cat_dir.rglob(filename):
+        if f.is_file():
+            return FileResponse(f, filename=filename)
+    raise HTTPException(404, "File not found")
+
+
+@app.post("/api/library/{category}/{variant_id}/save")
+async def save_variant(category: str, variant_id: str, body: dict = None):
+    """Save edits to a library entry (point names, code, trend toggles, etc.)."""
+    if not body:
+        raise HTTPException(400, "No data to save")
+    existing = engine.load_library_entry(category, variant_id)
+    if existing is None:
+        raise HTTPException(404, "Variant not found")
+
+    # Merge edits into existing record
+    if "objects" in body:
+        existing["objects"] = body["objects"]
+        existing["counts"] = {k: len(v) for k, v in existing["objects"].items() if isinstance(v, list) and v}
+    if "meta" in body:
+        existing["meta"].update(body["meta"])
+    if "description" in body:
+        existing["description"] = body["description"]
+        # Also update master_descriptions.json so it persists across re-extractions
+        _update_master_description(variant_id, body["description"])
+
+    engine._save_library_entry(category, variant_id, existing)
+    return {"status": "saved", "id": variant_id}
+
+
+def _update_master_description(variant_id: str, description: str):
+    """Update a single variant description in master_descriptions.json."""
+    descs = {}
+    if cfg.master_descriptions.exists():
+        try:
+            descs = json.loads(cfg.master_descriptions.read_text())
+        except Exception:
+            pass
+    descs[variant_id] = description
+    cfg.master_descriptions.write_text(json.dumps(descs, indent=2))
+    # Also update the extractor's in-memory cache
+    engine.descriptions[variant_id] = description
+
+
+@app.get("/api/library/descriptions")
+async def get_all_descriptions():
+    """Get all variant descriptions from master_descriptions.json."""
+    if cfg.master_descriptions.exists():
+        try:
+            return json.loads(cfg.master_descriptions.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+@app.put("/api/library/{category}/{variant_id}/description")
+async def set_variant_description(category: str, variant_id: str, body: dict = None):
+    """Set the description for a single variant.
+    Body: { "description": "My custom controller description" }
+    """
+    if not body or "description" not in body:
+        raise HTTPException(400, "Must provide 'description' in body")
+
+    description = body["description"]
+
+    # Update master_descriptions.json
+    _update_master_description(variant_id, description)
+
+    # Update the library JSON if it exists
+    existing = engine.load_library_entry(category, variant_id)
+    if existing:
+        existing["description"] = description
+        engine._save_library_entry(category, variant_id, existing)
+
+    return {"status": "updated", "id": variant_id, "description": description}
+
+
+@app.put("/api/library/descriptions")
+async def set_bulk_descriptions(body: dict = None):
+    """Set descriptions for multiple variants at once.
+    Body: { "VAV-IS10001": "Single Duct, Floating HW Reheat", "MY-CUSTOM": "My desc" }
+    """
+    if not body:
+        raise HTTPException(400, "Must provide variant_id: description map")
+
+    descs = {}
+    if cfg.master_descriptions.exists():
+        try:
+            descs = json.loads(cfg.master_descriptions.read_text())
+        except Exception:
+            pass
+
+    descs.update(body)
+    cfg.master_descriptions.write_text(json.dumps(descs, indent=2))
+
+    # Update extractor in-memory cache
+    engine.descriptions.update(body)
+
+    # Update any existing library JSONs
+    updated = []
+    for vid, desc in body.items():
+        for cat_dir in cfg.library_root.iterdir():
+            if not cat_dir.is_dir() or cat_dir.name.startswith("_"):
+                continue
+            entry_path = cat_dir / f"{vid}.json"
+            if entry_path.exists():
+                try:
+                    entry = json.loads(entry_path.read_text())
+                    entry["description"] = desc
+                    entry_path.write_text(json.dumps(entry, indent=2))
+                    updated.append(vid)
+                except Exception:
+                    pass
+
+    return {"status": "updated", "count": len(body), "library_updated": updated}
+
+
+# ─── Composer ────────────────────────────────────────────────────────────────
+
+@app.get("/api/composer/programs")
+async def composer_program_index():
+    """Get flat index of every program across the entire library with dependencies."""
+    return composer.build_program_index()
+
+
+@app.post("/api/composer/compose")
+async def composer_compose(body: dict = None):
+    """Compose a new controller from selected programs.
+
+    Body:
+    {
+        "selections": [
+            {"category": "VAV", "variant_id": "VAV-IS10001", "program_instance": "1"},
+            {"category": "RTU", "variant_id": "RTU-ISA11110E", "program_instance": "4"},
+            ...
+        ],
+        "device_name": "{device-name}",  (optional, default "{device-name}")
+        "device_id": "900"               (optional, default "900")
+    }
+    """
+    if not body or "selections" not in body:
+        raise HTTPException(400, "Must provide 'selections' list")
+
+    selections = body["selections"]
+    if not selections:
+        raise HTTPException(400, "Must select at least one program")
+
+    device_name = body.get("device_name", "{device-name}")
+    device_id = body.get("device_id", "900")
+    primary_variant = body.get("primary_variant", None)
+
+    try:
+        result = composer.compose(selections, device_name, device_id, primary_variant=primary_variant)
+        # Cache for Excel export
+        composer._last_composition = result
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.exception("Composition failed")
+        raise HTTPException(500, f"Composition failed: {e}")
+
+
+@app.post("/api/composer/save")
+async def composer_save(body: dict = None):
+    """Save a composed controller to the library.
+
+    Body:
+    {
+        "name": "My-Custom-VAV",
+        "composition": { ... composed controller JSON ... }
+    }
+    """
+    if not body or "name" not in body or "composition" not in body:
+        raise HTTPException(400, "Must provide 'name' and 'composition'")
+
+    try:
+        path = composer.save_composition(body["name"], body["composition"])
+        return {"status": "saved", "path": str(path), "id": body["name"]}
+    except Exception as e:
+        raise HTTPException(500, f"Save failed: {e}")
+
+
+@app.get("/api/composer/compositions")
+async def composer_list():
+    """List all saved compositions."""
+    return composer.list_compositions()
+
+
+@app.get("/api/composer/compositions/{name}")
+async def composer_get(name: str):
+    """Load a saved composition."""
+    data = composer.load_composition(name)
+    if data is None:
+        raise HTTPException(404, f"Composition '{name}' not found")
+    return data
+
+
+@app.delete("/api/composer/compositions/{name}")
+async def composer_delete(name: str):
+    """Delete a saved composition."""
+    if composer.delete_composition(name):
+        return {"status": "deleted", "id": name}
+    raise HTTPException(404, f"Composition '{name}' not found")
+
+
+@app.post("/api/composer/generate-xml")
+async def composer_generate_xml(body: dict = None):
+    """Generate PFG-compatible XML from a composed controller.
+
+    Body: the composed controller JSON (from /api/composer/compose or /api/composer/compositions/{name})
+    OR: {"name": "saved-composition-name"} to load from saved
+    """
+    from generator import generate_xml
+
+    if not body:
+        raise HTTPException(400, "Must provide composition data")
+
+    # If a name is provided, load the saved composition
+    if "name" in body and "objects" not in body:
+        data = composer.load_composition(body["name"])
+        if data is None:
+            raise HTTPException(404, f"Composition '{body['name']}' not found")
+    else:
+        data = body
+
+    device_id = data.get("meta", {}).get("device_id", "900")
+    device_name = data.get("meta", {}).get("device_name", "{device-name}")
+
+    try:
+        xml = generate_xml(data, device_id=device_id, device_name=device_name)
+        return JSONResponse(content={
+            "xml": xml,
+            "device_id": device_id,
+            "device_name": device_name,
+        })
+    except Exception as e:
+        logger.exception("XML generation failed")
+        raise HTTPException(500, f"XML generation failed: {e}")
+
+
+@app.get("/api/composer/descriptions")
+async def composer_variant_descriptions():
+    """Get auto-generated human-readable descriptions for all variant IDs.
+    Analyzes program code dependencies (AO vs BO on reheat) to determine
+    floating vs modulating control. Non-VAV types use manual overrides."""
+    return composer.build_variant_descriptions()
+
+
+@app.get("/api/composer/variant-metadata")
+async def composer_variant_metadata():
+    """Get enriched metadata for all variants: friendly labels, function tags,
+    compatible equipment types, and descriptions."""
+    return composer.build_variant_metadata()
+
+
+# ─── Modular Library Endpoints ────────────────────────────────────────────────
+
+MODULES_ROOT = Path("/srv/dfa/shared/files/vendors/reliable/modules")
+
+def _load_module_index():
+    """Load the modules index.json."""
+    idx_path = MODULES_ROOT / "index.json"
+    if not idx_path.exists():
+        return {}
+    return json.loads(idx_path.read_text())
+
+
+def _load_module(category: str, module_id: str) -> dict | None:
+    """Load a single module JSON file."""
+    mod_path = MODULES_ROOT / category / f"{module_id}.json"
+    if not mod_path.exists():
+        return None
+    return json.loads(mod_path.read_text())
+
+
+def _recommend_controller(equip_type: str, io_totals: dict) -> str:
+    """Recommend a controller model based on equipment type and I/O counts."""
+    total_ai = io_totals.get('AI', 0)
+    total_ao = io_totals.get('AO', 0)
+    total_bi = io_totals.get('BI', 0)
+    total_bo = io_totals.get('BO', 0)
+    total_io = total_ai + total_ao + total_bi + total_bo
+
+    if equip_type in ('VAV', 'VVT'):
+        if total_ao > 5:
+            return 'MACH-ProZone-88'
+        elif total_ao > 3:
+            return 'RC-FLEXair-36-A-M'
+        else:
+            return 'RC-FLEXair-34-A-F'
+    elif equip_type in ('AHU', 'RTU', 'DOAS'):
+        if total_io > 16:
+            return 'MACH-ProSys-88'
+        elif total_io > 12:
+            return 'MACH-Pro2-88'
+        else:
+            return 'MACH-Pro1-88'
+    elif equip_type == 'FCU':
+        return 'RC-FLEXone-B4B' if total_io <= 8 else 'RC-FLEXone-B8B'
+    elif equip_type in ('PLANT', 'MASTER'):
+        return 'MACH-ProSys-88'
+    elif equip_type == 'EF':
+        if total_ao > 0:
+            return 'MACH-Pro1-44'
+        return 'RC-FLEXone-B4B'
+    else:
+        return 'MACH-Pro1-88'
+
+
+@app.get("/api/composer/modules")
+async def composer_list_modules():
+    """List all available modules grouped by category.
+    Returns categories with module summaries (id, name, description, tags, io_summary, status).
+    """
+    index = _load_module_index()
+    categories_data = index.get("categories", {})
+    result = {}
+
+    for cat_key, cat_info in categories_data.items():
+        module_ids = cat_info.get("modules", [])
+        modules = []
+        for mod_id in module_ids:
+            mod = _load_module(cat_key, mod_id)
+            if mod:
+                modules.append({
+                    "id": mod.get("id", mod_id),
+                    "name": mod.get("name", mod_id),
+                    "description": mod.get("description", ""),
+                    "tags": mod.get("tags", []),
+                    "io_summary": mod.get("io_summary", {}),
+                    "status": mod.get("status", "placeholder"),
+                    "compatible_equipment": mod.get("compatible_equipment", []),
+                    "requires": mod.get("requires", []),
+                    "conflicts_with": mod.get("conflicts_with", []),
+                })
+        result[cat_key] = {
+            "label": cat_info.get("label", cat_key),
+            "modules": modules,
+            "count": len(modules),
+        }
+
+    return {
+        "categories": result,
+        "total_modules": index.get("module_count", 0),
+        "complete_count": index.get("complete_count", 0),
+        "placeholder_count": index.get("placeholder_count", 0),
+    }
+
+
+@app.get("/api/composer/modules/{category}/{module_id}")
+async def composer_get_module(category: str, module_id: str):
+    """Get full detail for a single module."""
+    mod = _load_module(category, module_id)
+    if mod is None:
+        raise HTTPException(404, f"Module {category}/{module_id} not found")
+    return mod
+
+
+@app.post("/api/composer/build-from-modules")
+async def composer_build_from_modules(body: dict = None):
+    """Build a composed controller configuration from modular library pieces.
+
+    Body: {
+        "equipment_type": "AHU",
+        "configuration": "vav_dat",
+        "selected_modules": ["sf_vfd_static", ...],  (optional override)
+        "device_name": "{device-name}",
+        "device_id": "900"
+    }
+
+    Returns composed configuration in the same format as /api/composer/compose.
+    """
+    if not body or "equipment_type" not in body:
+        raise HTTPException(400, "Must provide 'equipment_type'")
+
+    equip_type = body["equipment_type"].upper()
+    configuration = body.get("configuration", "")
+    selected_override = body.get("selected_modules", None)
+    device_name = body.get("device_name", "{device-name}")
+    device_id = body.get("device_id", "900")
+
+    index = _load_module_index()
+
+    # Resolve module list
+    if selected_override:
+        module_ids = selected_override
+    else:
+        rules = index.get("equipment_rules", {})
+        equip_rules = rules.get(equip_type, {})
+        config_rule = equip_rules.get(configuration)
+        if not config_rule:
+            raise HTTPException(404, f"No equipment rule for {equip_type}/{configuration}")
+        module_ids = list(config_rule.get("required", []))
+        # Add optional modules based on options
+        options = body.get("options", {})
+        opt_map = config_rule.get("optional_by_option", {})
+        for opt_key, mod_id in opt_map.items():
+            # opt_key is like "cooling.chilled_water" — check if that option is selected
+            parts = opt_key.split(".", 1)
+            if len(parts) == 2:
+                cat_key, val = parts
+                user_val = options.get(cat_key, "")
+                if str(user_val).lower() == val.lower():
+                    if mod_id not in module_ids:
+                        module_ids.append(mod_id)
+            elif opt_key in options and options[opt_key]:
+                if mod_id not in module_ids:
+                    module_ids.append(mod_id)
+
+    # Load all modules
+    categories_data = index.get("categories", {})
+    # Build a lookup: module_id -> category
+    mod_category_map = {}
+    for cat_key, cat_info in categories_data.items():
+        for mid in cat_info.get("modules", []):
+            mod_category_map[mid] = cat_key
+
+    loaded_modules = []
+    missing = []
+    for mod_id in module_ids:
+        cat = mod_category_map.get(mod_id)
+        if not cat:
+            missing.append(mod_id)
+            continue
+        mod = _load_module(cat, mod_id)
+        if mod:
+            loaded_modules.append(mod)
+        else:
+            missing.append(mod_id)
+
+    if not loaded_modules:
+        raise HTTPException(400, f"No modules could be loaded. Missing: {missing}")
+
+    # Merge into a single composition
+    # Instance numbering: programs get sequential instances, points get sequential per type
+    all_programs = []
+    all_points = []
+    all_loops = []
+    io_totals = {}
+    prog_instance = 1
+    point_instances = {}  # type -> next instance
+
+    # Standard starting instances for BACnet objects
+    INSTANCE_STARTS = {
+        'AI': 1, 'AO': 1, 'AV': 1,
+        'BI': 1, 'BO': 1, 'BV': 1,
+        'MO': 1, 'MV': 1,
+    }
+    point_instances = dict(INSTANCE_STARTS)
+    loop_instance = 1
+
+    for mod in loaded_modules:
+        # Programs
+        for prog in mod.get("programs", []):
+            name = prog.get("name", f"PGR{prog_instance}")
+            if device_name and device_name != "{device-name}":
+                name = name.replace("{device-name}", device_name)
+            all_programs.append({
+                "name": name,
+                "instance": prog_instance,
+                "code": prog.get("code", ""),
+                "description": prog.get("description", ""),
+                "source_module": mod.get("id", ""),
+            })
+            prog_instance += 1
+
+        # Points
+        for pt in mod.get("points", []):
+            pt_type = pt.get("type", "AV")
+            inst = point_instances.get(pt_type, 1)
+            pt_name = pt.get("name", f"{pt_type}{inst}")
+            if device_name and device_name != "{device-name}":
+                pt_name = pt_name.replace("{device-name}", device_name)
+            all_points.append({
+                "type": pt_type,
+                "instance": inst,
+                "name": pt_name,
+                "description": pt.get("description", ""),
+                "io_type": pt.get("io_type", "software"),
+                "source_module": mod.get("id", ""),
+            })
+            point_instances[pt_type] = inst + 1
+
+        # Loops
+        for lp in mod.get("loops", []):
+            lp_name = lp.get("name", f"LOOP{loop_instance}")
+            if device_name and device_name != "{device-name}":
+                lp_name = lp_name.replace("{device-name}", device_name)
+            all_loops.append({
+                "name": lp_name,
+                "instance": loop_instance,
+                "input": lp.get("input", ""),
+                "setpoint": lp.get("setpoint", ""),
+                "output": lp.get("output", ""),
+                "description": lp.get("description", ""),
+                "source_module": mod.get("id", ""),
+            })
+            loop_instance += 1
+
+        # I/O totals
+        for k, v in mod.get("io_summary", {}).items():
+            io_totals[k] = io_totals.get(k, 0) + v
+
+    # Build objects dict grouped by type (compatible with compose output format)
+    objects = {}
+    for pt in all_points:
+        t = pt["type"]
+        if t not in objects:
+            objects[t] = []
+        objects[t].append(pt)
+    # Add programs
+    objects["PROGRAM"] = all_programs
+    # Add loops
+    objects["LOOP"] = all_loops
+
+    comp_id = f"{device_name or 'composed'}_{equip_type}_{configuration}".replace("{device-name}", "template")
+    rec_controller = _recommend_controller(equip_type, io_totals)
+
+    result = {
+        "id": comp_id,
+        "category": "COMPOSED",
+        "format": "modular",
+        "description": f"{equip_type} {configuration} - Modular Build",
+        "meta": {
+            "composed": True,
+            "device_id": device_id,
+            "device_name": device_name,
+            "equipment_type": equip_type,
+            "configuration": configuration,
+            "recommended_controller": rec_controller,
+            "modules_used": [m.get("id", "") for m in loaded_modules],
+            "stamp": "Created by DFA Composer -- SBS Controls Division",
+        },
+        "objects": objects,
+        "modules_used": [m.get("id", "") for m in loaded_modules],
+        "module_count": len(loaded_modules),
+        "io_summary": io_totals,
+        "recommended_controller": rec_controller,
+        "program_count": len(all_programs),
+        "point_count": len(all_points),
+        "loop_count": len(all_loops),
+        "missing_modules": missing,
+        "graphics": [],
+        "grp_files": {},
+        "bas_files": {},
+        "counts": io_totals,
+    }
+
+    # Cache for generate endpoints
+    composer._last_composition = result
+    return result
+
+
+@app.post("/api/composer/auto-match")
+async def composer_auto_match(body: dict = None):
+    """Auto-match modules to an equipment configuration (modular library version).
+
+    Body: {
+        "equipment_type": "AHU",
+        "options": {
+            "control_strategy": "vav_dat",
+            "supply_fan": "vfd",
+            "return_fan": "none",
+            "cooling": "chilled_water",
+            "heating": "hot_water",
+            ...
+        }
+    }
+
+    Returns: {
+        "equipment_type": "AHU",
+        "configuration": "vav_dat",
+        "modules": [ ... ],
+        "io_summary": { ... },
+        "recommended_controller": "...",
+        "total_programs": N,
+        "total_points": N,
+        "total_loops": N,
+    }
+    """
+    if not body or "equipment_type" not in body:
+        raise HTTPException(400, "Must provide 'equipment_type'")
+
+    equip_type = body["equipment_type"].upper()
+    options = body.get("options", {})
+
+    index = _load_module_index()
+    rules = index.get("equipment_rules", {})
+    categories_data = index.get("categories", {})
+
+    # Build module_id -> category lookup
+    mod_category_map = {}
+    for cat_key, cat_info in categories_data.items():
+        for mid in cat_info.get("modules", []):
+            mod_category_map[mid] = cat_key
+
+    equip_rules = rules.get(equip_type, {})
+    if not equip_rules:
+        # Fallback: try the old variant-based matching
+        return await _legacy_auto_match(body)
+
+    # Determine configuration from options
+    configuration = options.get("control_strategy", "") or options.get("configuration", "")
+    if not configuration and equip_type == 'RTU':
+        configuration = 'standard'
+    elif not configuration and equip_type == 'EF':
+        configuration = 'standard'
+    elif not configuration and equip_type == 'MASTER':
+        configuration = 'standard'
+
+    # If no explicit configuration, pick the first available
+    if not configuration and equip_rules:
+        configuration = list(equip_rules.keys())[0]
+
+    config_rule = equip_rules.get(configuration)
+    if not config_rule:
+        # Try first available
+        configuration = list(equip_rules.keys())[0]
+        config_rule = equip_rules[configuration]
+
+    # Build module list
+    required_ids = list(config_rule.get("required", []))
+    optional_ids = []
+    opt_map = config_rule.get("optional_by_option", {})
+
+    for opt_key, mod_id in opt_map.items():
+        parts = opt_key.split(".", 1)
+        if len(parts) == 2:
+            cat_key, val = parts
+            user_val = options.get(cat_key, "")
+            if str(user_val).lower() == val.lower():
+                optional_ids.append(mod_id)
+        elif opt_key in options and options[opt_key] and str(options[opt_key]).lower() not in ('none', 'false', '0', ''):
+            optional_ids.append(mod_id)
+
+    all_module_ids = required_ids + optional_ids
+
+    # Load module summaries
+    modules_info = []
+    io_totals = {}
+    total_programs = 0
+    total_points = 0
+    total_loops = 0
+
+    for mod_id in all_module_ids:
+        cat = mod_category_map.get(mod_id)
+        mod = _load_module(cat, mod_id) if cat else None
+        is_required = mod_id in required_ids
+
+        if mod:
+            io_s = mod.get("io_summary", {})
+            for k, v in io_s.items():
+                io_totals[k] = io_totals.get(k, 0) + v
+            total_programs += len(mod.get("programs", []))
+            total_points += len(mod.get("points", []))
+            total_loops += len(mod.get("loops", []))
+
+            modules_info.append({
+                "id": mod.get("id", mod_id),
+                "name": mod.get("name", mod_id),
+                "description": mod.get("description", ""),
+                "category": cat or "",
+                "tags": mod.get("tags", []),
+                "io_summary": io_s,
+                "status": mod.get("status", "placeholder"),
+                "required": is_required,
+                "programs": [{"name": p.get("name", ""), "description": p.get("description", "")} for p in mod.get("programs", [])],
+            })
+        else:
+            modules_info.append({
+                "id": mod_id,
+                "name": mod_id,
+                "description": "Module not found",
+                "category": "",
+                "tags": [],
+                "io_summary": {},
+                "status": "missing",
+                "required": is_required,
+                "programs": [],
+            })
+
+    rec_controller = _recommend_controller(equip_type, io_totals)
+
+    # Also build list of all available optional modules (not selected) for display
+    available_optional = []
+    for opt_key, mod_id in opt_map.items():
+        if mod_id not in all_module_ids:
+            cat = mod_category_map.get(mod_id)
+            mod = _load_module(cat, mod_id) if cat else None
+            available_optional.append({
+                "id": mod_id,
+                "option_key": opt_key,
+                "name": mod.get("name", mod_id) if mod else mod_id,
+                "description": mod.get("description", "") if mod else "",
+                "status": mod.get("status", "unknown") if mod else "missing",
+            })
+
+    return {
+        "equipment_type": equip_type,
+        "configuration": configuration,
+        "configuration_description": config_rule.get("description", ""),
+        "modules": modules_info,
+        "available_optional": available_optional,
+        "io_summary": io_totals,
+        "recommended_controller": rec_controller,
+        "total_programs": total_programs,
+        "total_points": total_points,
+        "total_loops": total_loops,
+    }
+
+
+async def _legacy_auto_match(body: dict):
+    """Fallback: legacy variant-based auto-matching for equipment types without modular rules."""
+    equip_type = body["equipment_type"].upper()
+    options = body.get("options", {})
+
+    all_meta = composer.build_variant_metadata()
+    all_programs = composer.build_program_index()
+
+    programs_by_variant = {}
+    for p in all_programs:
+        vid = p.get("source_variant", "")
+        if vid not in programs_by_variant:
+            programs_by_variant[vid] = []
+        programs_by_variant[vid].append(p)
+
+    equip_category_map = {
+        'AHU': ['AHU', 'SBS_AHU', 'SBS_SPCAHU'],
+        'VAV': ['VAV', 'SBS_VAV'],
+        'FCU': ['FCU'],
+        'RTU': ['RTU'],
+        'WSHP': ['WSHP'],
+        'PLANT': ['SBS_PLANTS'],
+        'VVT': ['VVT'],
+        'UH': ['UH'],
+    }
+    target_categories = equip_category_map.get(equip_type, [equip_type])
+
+    option_tag_map = {
+        'supply_fan': {'vfd': ['Supply Fan'], 'single': ['Supply Fan']},
+        'return_fan': {'vfd': ['Return Fan'], 'single': ['Return Fan']},
+        'cooling': {
+            'chilled_water': ['Chilled Water', 'Cooling', 'Valve Control'],
+            '1_stage_dx': ['Cooling', 'Staging'],
+            '2_stage_dx': ['Cooling', 'Staging'],
+            'modulating_dx': ['Cooling'],
+        },
+        'heating': {
+            'hot_water': ['Hot Water', 'Heating', 'Valve Control'],
+            'electric': ['Heating', 'Staging'],
+            'gas': ['Heating', 'Staging'],
+        },
+        'preheat': {'hot_water': ['Hot Water', 'Heating']},
+        'economizer': {
+            'enthalpy': ['Economizer', 'Mixed Air Damper'],
+            'dry_bulb': ['Economizer', 'Mixed Air Damper'],
+            'differential': ['Economizer', 'Mixed Air Damper'],
+        },
+        'energy_recovery': {'wheel': ['Energy Recovery'], 'plate': ['Energy Recovery']},
+        'reheat': {
+            'hot_water_mod': ['Hot Water', 'Heating', 'Valve Control'],
+            'hot_water_float': ['Hot Water', 'Heating', 'Valve Control'],
+            'electric': ['Heating'],
+        },
+        'co2': {True: ['CO2 Control'], 'yes': ['CO2 Control']},
+        'humidity': {
+            'humidification': ['Humidification'],
+            'dehumidification': ['Dehumidification'],
+            'both': ['Humidification', 'Dehumidification'],
+        },
+        'space_temp': {True: ['Supply Air Temp'], 'yes': ['Supply Air Temp']},
+    }
+
+    desired_tags = set()
+    for opt_key, opt_val in options.items():
+        if opt_val and opt_val != 'none' and opt_key in option_tag_map:
+            tag_lookup = option_tag_map[opt_key]
+            if isinstance(opt_val, bool):
+                tags = tag_lookup.get(True, [])
+            else:
+                tags = tag_lookup.get(str(opt_val).lower(), [])
+            desired_tags.update(tags)
+    desired_tags.update(['Configuration', 'Network/BACnet', 'Operating Mode', 'Occupancy'])
+
+    matches = []
+    for variant_id, meta in all_meta.items():
+        cat = meta.get("category", "")
+        if cat not in target_categories:
+            continue
+        vtags = set(meta.get("function_tags", []))
+        progs = programs_by_variant.get(variant_id, [])
+        if not progs:
+            continue
+        matched_tags = desired_tags & vtags
+        extra_tags = vtags - desired_tags - {'Configuration', 'Network/BACnet', 'Schedule',
+                                              'Data Arrays', 'Unit Conversion', 'Setpoints',
+                                              'Operating Mode', 'Occupancy'}
+        if len(desired_tags) > 0:
+            tag_score = len(matched_tags) / len(desired_tags) * 80
+        else:
+            tag_score = 50
+        tag_score -= len(extra_tags) * 3
+        label = (meta.get("friendly_label", "") + " " + meta.get("description", "")).lower()
+        label_bonus = 0
+        if equip_type.lower() in label:
+            label_bonus += 5
+        for opt_val in options.values():
+            if opt_val and isinstance(opt_val, str) and opt_val.lower().replace('_', ' ') in label:
+                label_bonus += 3
+        tag_score += min(label_bonus, 15)
+        score = max(0, min(100, round(tag_score)))
+
+        point_summary = {}
+        for p in progs:
+            deps = p.get("dependencies", {})
+            for ptype, insts in deps.items():
+                point_summary[ptype] = point_summary.get(ptype, 0) + len(insts)
+
+        total_ai = point_summary.get('AI', 0)
+        total_ao = point_summary.get('AO', 0)
+        total_bi = point_summary.get('BI', 0)
+        total_bo = point_summary.get('BO', 0)
+        total_io = total_ai + total_ao + total_bi + total_bo
+
+        if equip_type in ('VAV', 'VVT'):
+            if total_ao > 5: rec_ctrl = 'MACH-ProZone-88'
+            elif total_ao > 3: rec_ctrl = 'RC-FLEXair-36-A-M'
+            else: rec_ctrl = 'RC-FLEXair-34-A-F'
+        elif equip_type in ('AHU', 'RTU'):
+            if total_io > 16: rec_ctrl = 'MACH-ProSys-88'
+            elif total_io > 12: rec_ctrl = 'MACH-Pro2-88'
+            else: rec_ctrl = 'MACH-Pro1-88'
+        elif equip_type == 'FCU':
+            rec_ctrl = 'RC-FLEXone-B4B' if total_io <= 8 else 'RC-FLEXone-B8B'
+        elif equip_type == 'PLANT':
+            rec_ctrl = 'MACH-ProSys-88'
+        else:
+            rec_ctrl = 'MACH-Pro1-88'
+
+        matches.append({
+            "variant_id": variant_id, "category": cat, "score": score,
+            "friendly_label": meta.get("friendly_label", ""),
+            "description": meta.get("description", ""),
+            "function_tags": sorted(vtags),
+            "programs": [{
+                "program_name": p.get("program_name", ""),
+                "program_instance": p.get("program_instance", ""),
+                "source_variant": p.get("source_variant", ""),
+                "source_category": p.get("source_category", ""),
+                "function_tags": p.get("function_tags", []),
+            } for p in progs],
+            "point_summary": point_summary,
+            "recommended_controller": rec_ctrl,
+            "matched_tags": sorted(matched_tags),
+            "missing_tags": sorted(desired_tags - vtags),
+        })
+
+    matches.sort(key=lambda m: m["score"], reverse=True)
+
+    programs_by_function = {}
+    for m in matches[:5]:
+        for p in m["programs"]:
+            for tag in p.get("function_tags", []):
+                if tag not in programs_by_function:
+                    programs_by_function[tag] = []
+                programs_by_function[tag].append({
+                    "program_name": p["program_name"],
+                    "source_variant": p["source_variant"],
+                    "source_category": p["source_category"],
+                    "program_instance": p["program_instance"],
+                })
+
+    return {
+        "equipment_type": equip_type,
+        "options": options,
+        "desired_tags": sorted(desired_tags),
+        "matches": matches[:20],
+        "programs_by_function": programs_by_function,
+        "legacy_mode": True,
+    }
+
+
+@app.get("/api/composer/blanks")
+async def composer_list_blanks():
+    """List available blank controller model templates for .pan/.panx generation."""
+    return composer.list_blank_panels()
+
+
+def _resolve_composition(body: dict) -> dict:
+    """Helper: resolve body to composition data (load by name if needed)."""
+    if "name" in body and "objects" not in body:
+        data = composer.load_composition(body["name"])
+        if data is None:
+            raise HTTPException(404, f"Composition '{body['name']}' not found")
+        return data
+    return body
+
+
+@app.post("/api/composer/generate-pan")
+async def composer_generate_pan(body: dict = None):
+    """Generate a .pan file from a composed controller.
+
+    Body: {
+        ...composition data or {"name": "saved-name"},
+        "blank_model": "RC-FLEXair-34-A-F"  (optional, selects controller template)
+    }
+    Returns the .pan file as a download.
+    """
+    if not body:
+        raise HTTPException(400, "Must provide composition data")
+
+    blank_model = body.pop("blank_model", None)
+    data = _resolve_composition(body)
+
+    try:
+        pan_path = await asyncio.get_event_loop().run_in_executor(
+            None, composer.generate_pan, data, blank_model
+        )
+        comp_id = data.get("id", "composed")
+        # Check if values document was generated alongside
+        values_path = pan_path.parent / f"{comp_id}_values.txt"
+        headers = {}
+        if values_path.exists():
+            headers["X-Values-Document"] = "true"
+        return FileResponse(
+            pan_path,
+            filename=f"{comp_id}.pan",
+            media_type="application/octet-stream",
+            headers=headers,
+        )
+    except Exception as e:
+        logger.exception("PAN generation failed")
+        raise HTTPException(500, f"PAN generation failed: {e}")
+
+
+@app.post("/api/composer/generate-panx")
+async def composer_generate_panx(body: dict = None):
+    """Generate a .panx file from a composed controller.
+
+    Body: {
+        ...composition data or {"name": "saved-name"},
+        "blank_model": "RC-FLEXair-34-A-F"  (optional, selects controller template)
+    }
+    Returns the .panx file as a download.
+    """
+    if not body:
+        raise HTTPException(400, "Must provide composition data")
+
+    blank_model = body.pop("blank_model", None)
+    data = _resolve_composition(body)
+
+    try:
+        panx_path = await asyncio.get_event_loop().run_in_executor(
+            None, composer.generate_panx, data, blank_model
+        )
+        comp_id = data.get("id", "composed")
+        return FileResponse(
+            panx_path,
+            filename=f"{comp_id}.panx",
+            media_type="application/octet-stream",
+        )
+    except Exception as e:
+        logger.exception("PANX generation failed")
+        raise HTTPException(500, f"PANX generation failed: {e}")
+
+
+@app.post("/api/composer/generate-template-package")
+async def composer_generate_template_package(body: dict = None):
+    """Generate a complete template package zip containing:
+    - .pan file (with {device-name} template names)
+    - values reference document
+    - assets folder (images + animations from primary variant + shared library)
+
+    Uses the first selected variant as the primary source for assets.
+    """
+    import zipfile as _zf
+    import io
+    import re as _re_pkg
+
+    if not body:
+        raise HTTPException(400, "Must provide composition data")
+
+    blank_model = body.pop("blank_model", None)
+    data = _resolve_composition(body)
+    comp_id = data.get("id", "composed")
+
+    try:
+        # 1. Generate .pan
+        pan_path = await asyncio.get_event_loop().run_in_executor(
+            None, composer.generate_pan, data, blank_model
+        )
+
+        # 2. Get values doc
+        values_path = pan_path.parent / f"{comp_id}_values.txt"
+
+        # 3. Collect assets from primary variant + shared library
+        meta = data.get("meta", {})
+        graphics_sources = meta.get("graphics_sources", [])
+
+        # Primary variant = first graphics source
+        primary_cat = graphics_sources[0].get("from_category", "") if graphics_sources else ""
+        primary_var = graphics_sources[0].get("from_variant", "") if graphics_sources else ""
+
+        # Gather required files from GRP JSONs + GroupAssets
+        required_files = set()
+        required_dirs = set()
+        grp_files = data.get("grp_files", {})
+        for grp_name, grp_data in grp_files.items():
+            text = json.dumps(grp_data)
+            for m in _re_pkg.finditer(r'"(?:external_file|gel_filename|image|background_image)"\s*:\s*"([^"]+)"', text):
+                val = m.group(1).replace('\\\\', '/').replace('\\', '/').replace('pic/', '')
+                if val and '.' in val:
+                    required_files.add(val)
+
+        for ga in meta.get("GroupAssets", []):
+            job_path = ga.get("JobPath", "").replace('\\', '/').replace('pic/', '')
+            if job_path and '.' in job_path:
+                required_files.add(job_path)
+                if 'Animation' in job_path:
+                    parts = job_path.replace('\\', '/').split('/')
+                    if len(parts) >= 2:
+                        required_dirs.add('/'.join(parts[:2]))
+
+        # Build zip
+        buf = io.BytesIO()
+        with _zf.ZipFile(buf, 'w', _zf.ZIP_DEFLATED) as zf:
+            # Add .pan
+            zf.write(pan_path, f"{comp_id}.pan")
+
+            # Add values doc
+            if values_path.exists():
+                zf.write(values_path, f"{comp_id}_values.txt")
+
+            # Add assets
+            added_assets = set()
+            asset_sources = []
+
+            # Primary variant assets first
+            if primary_cat and primary_var:
+                pdir = engine.cfg.assets_root / primary_cat / primary_var
+                if pdir.exists():
+                    asset_sources.append(pdir)
+
+            # Other variant assets
+            for gs in graphics_sources[1:]:
+                d = engine.cfg.assets_root / gs.get("from_category", "") / gs.get("from_variant", "")
+                if d.exists() and d not in asset_sources:
+                    asset_sources.append(d)
+
+            # Shared library last
+            shared = engine.cfg.assets_root / "_shared"
+            if shared.exists():
+                asset_sources.append(shared)
+
+            # Copy from variant asset dirs
+            for adir in asset_sources:
+                if adir.name == "_shared":
+                    continue  # Handle shared separately
+                for root, dirs, files in os.walk(adir):
+                    for fname in files:
+                        fpath = Path(root) / fname
+                        arcname = "assets/" + str(fpath.relative_to(adir)).replace('\\', '/')
+                        if arcname.lower() not in added_assets:
+                            zf.write(fpath, arcname)
+                            added_assets.add(arcname.lower())
+
+            # Copy animation dirs from shared
+            if shared.exists():
+                for anim_dir in required_dirs:
+                    src_dir = shared / anim_dir
+                    if src_dir.exists():
+                        for root, dirs, files in os.walk(src_dir):
+                            for fname in files:
+                                fpath = Path(root) / fname
+                                arcname = "assets/" + str(fpath.relative_to(shared)).replace('\\', '/')
+                                if arcname.lower() not in added_assets:
+                                    zf.write(fpath, arcname)
+                                    added_assets.add(arcname.lower())
+
+                # Individual files from shared
+                for req in required_files:
+                    req_norm = req.replace('\\', '/')
+                    arcname = "assets/" + req_norm
+                    if arcname.lower() in added_assets:
+                        continue
+                    exact = shared / req_norm
+                    if exact.exists():
+                        zf.write(exact, arcname)
+                        added_assets.add(arcname.lower())
+                    else:
+                        matches = list(shared.rglob(Path(req_norm).name))
+                        if matches:
+                            zf.write(matches[0], arcname)
+                            added_assets.add(arcname.lower())
+
+                # 5. Generate and add Excel point schedule
+                try:
+                    from openpyxl import Workbook
+                    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                    wb = Workbook()
+                    ws = wb.active
+                    ws.title = "Point Schedule"
+                    headers_xl = ["Type", "Instance", "Name", "Present Value", "Units", "Description"]
+                    header_fill = PatternFill(start_color="1E3A5F", end_color="1E3A5F", fill_type="solid")
+                    header_font = Font(color="FFFFFF", bold=True, size=10)
+                    for col, h in enumerate(headers_xl, 1):
+                        cell = ws.cell(row=1, column=col, value=h)
+                        cell.fill = header_fill
+                        cell.font = header_font
+                    row_idx = 2
+                    objects = data.get("objects", {})
+                    for ptype in ["AI","AO","AV","BI","BO","BV","MO","MV","LOOP","PROGRAM","SCHEDULE","TREND","ARRAY","TABLE"]:
+                        for pt in objects.get(ptype, []):
+                            ws.cell(row=row_idx, column=1, value=ptype)
+                            ws.cell(row=row_idx, column=2, value=pt.get("instance",""))
+                            ws.cell(row=row_idx, column=3, value=pt.get("name",""))
+                            ws.cell(row=row_idx, column=4, value=pt.get("present_value",""))
+                            ws.cell(row=row_idx, column=5, value=pt.get("units",""))
+                            ws.cell(row=row_idx, column=6, value=pt.get("description",""))
+                            row_idx += 1
+                    for col in range(1, 7):
+                        ws.column_dimensions[chr(64+col)].width = [8, 10, 40, 14, 12, 40][col-1]
+                    excel_buf = io.BytesIO()
+                    wb.save(excel_buf)
+                    excel_buf.seek(0)
+                    zf.writestr(f"{comp_id}_point_schedule.xlsx", excel_buf.read())
+                    logger.info("Added Excel point schedule to template package")
+                except Exception as exc:
+                    logger.warning(f"Could not add Excel to template package: {exc}")
+
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{comp_id}_template_package.zip"'}
+        )
+    except Exception as e:
+        logger.exception("Template package generation failed")
+        raise HTTPException(500, f"Template package generation failed: {e}")
+
+
+@app.get("/api/composer/values-document/{comp_id}")
+async def composer_values_document(comp_id: str):
+    """Download the companion values reference document for a generated controller.
+
+    This text file lists all configured values (present values, PID settings,
+    ranges, units) from the source library — useful for verifying or manually
+    entering values that PFG may not preserve in the .pan binary.
+    """
+    output_dir = cfg.library_root / "COMPOSED" / "_output"
+    values_path = output_dir / f"{comp_id}_values.txt"
+    if not values_path.exists():
+        raise HTTPException(404, f"Values document not found for '{comp_id}'")
+    return FileResponse(
+        values_path,
+        filename=f"{comp_id}_values.txt",
+        media_type="text/plain",
+    )
+
+
+@app.get("/api/composer/values-document/{comp_id}/excel")
+async def composer_values_excel(comp_id: str):
+    """Download values as an Excel file for easy copy/paste into RC Studio."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    output_dir = cfg.library_root / "COMPOSED" / "_output"
+
+    # Load the composition data to build Excel
+    comp_path = output_dir / f"{comp_id}.pan"
+    if not comp_path.exists():
+        raise HTTPException(404, f"Composition not found for '{comp_id}'")
+
+    # Try to load from the last compose result
+    last_comp = getattr(composer, '_last_composition', None)
+    if not last_comp or last_comp.get("id") != comp_id:
+        raise HTTPException(404, "Composition data expired — recompose first")
+
+    objects = last_comp.get("objects", {})
+    device_name = last_comp.get("meta", {}).get("device_name", "{device-name}")
+
+    wb = Workbook()
+    header_font = Font(bold=True, size=11)
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    header_font_white = Font(bold=True, size=11, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+
+    empty_fill = PatternFill("solid", fgColor="F2F2F2")
+
+    def add_sheet(name, headers, rows):
+        """Add a sheet with rows. First column must be instance number.
+        Fills empty rows for gaps so the spreadsheet is contiguous for copy/paste."""
+        ws = wb.create_sheet(name)
+        for c, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=c, value=h)
+            cell.font = header_font_white
+            cell.fill = header_fill
+            cell.border = thin_border
+
+        if not rows:
+            return
+
+        # Build dict by instance for gap filling
+        by_inst = {}
+        for row in rows:
+            by_inst[row[0]] = row
+
+        max_inst = max(by_inst.keys())
+        r = 2
+        for inst in range(1, max_inst + 1):
+            if inst in by_inst:
+                for c, val in enumerate(by_inst[inst], 1):
+                    cell = ws.cell(row=r, column=c, value=val)
+                    cell.border = thin_border
+            else:
+                # Empty row — just instance number, greyed out
+                cell = ws.cell(row=r, column=1, value=inst)
+                cell.border = thin_border
+                cell.fill = empty_fill
+                for c in range(2, len(headers) + 1):
+                    cell = ws.cell(row=r, column=c, value="")
+                    cell.border = thin_border
+                    cell.fill = empty_fill
+            r += 1
+
+        # Auto-width
+        for c in range(1, len(headers) + 1):
+            max_len = max(len(str(ws.cell(row, c).value or '')) for row in range(1, r))
+            ws.column_dimensions[ws.cell(1, c).column_letter].width = min(max_len + 3, 50)
+
+    # Analog Values
+    av_rows = []
+    for p in sorted(objects.get("AV", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        av_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                       p.get("range", ""), p.get("unit", ""), p.get("increment", ""),
+                       p.get("description", "")])
+    if av_rows:
+        add_sheet("Analog Values", ["Instance", "Name", "Value", "Range", "Unit", "Increment", "Description"], av_rows)
+
+    # Analog Inputs
+    ai_rows = []
+    for p in sorted(objects.get("AI", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        ai_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                       p.get("range", ""), p.get("unit", ""), p.get("increment", "")])
+    if ai_rows:
+        add_sheet("Analog Inputs", ["Instance", "Name", "Value", "Range", "Unit", "Increment"], ai_rows)
+
+    # Analog Outputs
+    ao_rows = []
+    for p in sorted(objects.get("AO", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        ao_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                       p.get("range", ""), p.get("unit", ""), p.get("increment", "")])
+    if ao_rows:
+        add_sheet("Analog Outputs", ["Instance", "Name", "Value", "Range", "Unit", "Increment"], ao_rows)
+
+    # Binary Values
+    bv_rows = []
+    for p in sorted(objects.get("BV", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        bv_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                       p.get("range", ""), p.get("unit", "")])
+    if bv_rows:
+        add_sheet("Binary Values", ["Instance", "Name", "Value", "Range", "Unit"], bv_rows)
+
+    # Binary Inputs/Outputs
+    for btype, sheet_name in [("BI", "Binary Inputs"), ("BO", "Binary Outputs")]:
+        b_rows = []
+        for p in sorted(objects.get(btype, []), key=lambda x: int(x.get("instance", 0))):
+            name = p.get("name", "").replace("{device-name}", device_name)
+            b_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                          p.get("range", ""), p.get("unit", "")])
+        if b_rows:
+            add_sheet(sheet_name, ["Instance", "Name", "Value", "Range", "Unit"], b_rows)
+
+    # Multistate
+    for mtype, sheet_name in [("MV", "Multistate Values"), ("MO", "Multistate Outputs")]:
+        m_rows = []
+        for p in sorted(objects.get(mtype, []), key=lambda x: int(x.get("instance", 0))):
+            name = p.get("name", "").replace("{device-name}", device_name)
+            m_rows.append([int(p.get("instance", 0)), name, p.get("present_value", ""),
+                          p.get("range", "")])
+        if m_rows:
+            add_sheet(sheet_name, ["Instance", "Name", "Value", "Range"], m_rows)
+
+    # Loops — include suggested input/setpoint
+    import re as _re_xl
+    # Build point name lookup
+    all_pts = {}
+    for ptype in ["AV", "AI", "AO", "BV", "BI", "BO", "MV", "MO"]:
+        for p in objects.get(ptype, []):
+            pname = p.get("name", "").replace("{device-name}", device_name)
+            all_pts[pname] = f"{ptype}{p.get('instance','')}"
+
+    # Find LOOP output assignments from code
+    loop_outputs = {}
+    for prog in objects.get("PROGRAM", []):
+        code = prog.get("code", "").replace("{device-name}", device_name)
+        for line in code.split('\n'):
+            # AO4 = LOOP8 pattern
+            m = _re_xl.search(r'(AO\d+)\s*=\s*LOOP(\d+)', line)
+            if m:
+                loop_outputs.setdefault(m.group(2), []).append(m.group(1))
+            # F = LOOP1 then AO10 = ... pattern
+            m2 = _re_xl.search(r'\w+\s*=\s*LOOP(\d+)', line)
+
+    loop_rows = []
+    for l in sorted(objects.get("LOOP", []), key=lambda x: int(x.get("instance", 0))):
+        name = l.get("name", "").replace("{device-name}", device_name)
+        inst = l.get("instance", "")
+
+        # Use binary-extracted bindings first, fall back to inferred suggestions
+        input_pt = ""
+        setpoint_pt = ""
+        output_pt = ""
+
+        # Binary extraction (accurate)
+        ir = l.get("input_ref", "")
+        irn = l.get("input_name", "").replace("{device-name}", device_name)
+        if ir:
+            input_pt = f"{ir} ({irn})" if irn else ir
+        else:
+            # Fallback: inference from name matching
+            si = l.get("suggested_input", "")
+            sin = l.get("suggested_input_name", "").replace("{device-name}", device_name)
+            if si:
+                input_pt = f"{si} ({sin}) [inferred]" if sin else f"{si} [inferred]"
+
+        sr = l.get("setpoint_ref", "")
+        srn = l.get("setpoint_name", "").replace("{device-name}", device_name)
+        if sr:
+            setpoint_pt = f"{sr} ({srn})" if srn else sr
+        else:
+            sp = l.get("suggested_setpoint", "")
+            spn = l.get("suggested_setpoint_name", "").replace("{device-name}", device_name)
+            if sp:
+                setpoint_pt = f"{sp} ({spn}) [inferred]" if spn else f"{sp} [inferred]"
+
+        so = l.get("suggested_output", "")
+        son = l.get("suggested_output_name", "").replace("{device-name}", device_name)
+        if so:
+            output_pt = f"{so} ({son})" if son else so
+
+        loop_rows.append([int(inst), name,
+                         l.get("proportional", ""), l.get("integral", ""),
+                         l.get("derivative", ""), l.get("bias", ""),
+                         l.get("deadband", ""), l.get("action", ""),
+                         l.get("integralunits", ""),
+                         input_pt, setpoint_pt, output_pt])
+    if loop_rows:
+        add_sheet("Loops", ["Instance", "Name", "P", "I", "D", "Bias", "Deadband", "Action", "I-Units",
+                           "Input (suggested)", "Setpoint (suggested)", "Output"], loop_rows)
+
+    # Programs
+    prog_rows = []
+    for p in sorted(objects.get("PROGRAM", []), key=lambda x: int(x.get("instance", 0))):
+        name = p.get("name", "").replace("{device-name}", device_name)
+        pv = p.get("present_value", "1")
+        prog_rows.append([int(p.get("instance", 0)), name,
+                         "Yes" if str(pv) == "1" else "No",
+                         p.get("code", "").replace("{device-name}", device_name)])
+    if prog_rows:
+        add_sheet("Programs", ["Instance", "Name", "Enabled", "Code"], prog_rows)
+
+    # Trends
+    trend_rows = []
+    for t in sorted(objects.get("TREND", []), key=lambda x: int(x.get("instance", 0))):
+        name = t.get("name", "").replace("{device-name}", device_name)
+        refs = ", ".join(r for r in t.get("references", []) if r)
+        trend_rows.append([int(t.get("instance", 0)), name, t.get("type", ""),
+                          t.get("interval", ""), refs])
+    if trend_rows:
+        add_sheet("Trends", ["Instance", "Name", "Type", "Interval", "References"], trend_rows)
+
+    # Remove default empty sheet
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{comp_id}_values.xlsx"'}
+    )
+
+
+# ─── #16 + #23: Auto-Commissioning & Wiring Verification ─────────────────────
+
+def _load_pan_from_ref(ref: dict):
+    """Helper: load a PanBinary from a category/variant_id reference."""
+    from app.pan_binary import PanBinary
+    folder = engine._cat_folder(ref['category'])
+    cat_dir = engine.cfg.upload_root / folder
+    src = next(cat_dir.rglob(f"{ref['variant_id']}.panx"), None) or \
+          next(cat_dir.rglob(f"{ref['variant_id']}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"Controller not found: {ref['variant_id']}")
+    if str(src).endswith('.panx'):
+        return PanBinary.from_panx(src)
+    return PanBinary.from_file(src)
+
+
+def _load_pan_from_upload(data: bytes, filename: str):
+    """Helper: load a PanBinary from uploaded file bytes."""
+    from app.pan_binary import PanBinary
+    if filename.endswith('.panx'):
+        import zipfile as _zf
+        import io as _io
+        with _zf.ZipFile(_io.BytesIO(data)) as z:
+            pan_name = [n for n in z.namelist() if n.endswith('.pan')][0]
+            return PanBinary(z.read(pan_name))
+    return PanBinary(data)
+
+
+def _get_device_name(pan) -> str:
+    """Helper: detect device name prefix from a PanBinary."""
+    prefixes = {}
+    for obj in pan.objects:
+        name = obj['name'].strip().strip('\x00')
+        parts = name.split('-')
+        if len(parts) >= 3:
+            prefix = f"{parts[0]}-{parts[1]}"
+            if prefix and len(prefix) > 2:
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+    return max(prefixes, key=prefixes.get) if prefixes else "unknown"
+
+
+def _commission_check_logic(design_pan, asbuilt_pan, tolerance: float = 0.5) -> dict:
+    """Core commissioning comparison logic used by the endpoint.
+
+    Compares a design (template) .pan against an as-built (field) .pan and
+    returns a comprehensive commissioning verification report including
+    wiring verification (#23).
+    """
+    result = {
+        'device_id_match': True,
+        'device_id': {},
+        'object_summary': {},
+        'missing_in_asbuilt': [],
+        'extra_in_asbuilt': [],
+        'present_value_differences': [],
+        'loop_binding_differences': [],
+        'pid_differences': [],
+        'out_of_service_issues': [],
+        'unusual_values': [],
+        'wiring_verification': [],
+        'wiring_summary': {},
+        'action_items': [],
+        'score': 0.0,
+    }
+
+    # --- Device ID comparison ---
+    design_id = struct.unpack('<I', design_pan.data[4:8])[0] if len(design_pan.data) >= 8 else 0
+    asbuilt_id = struct.unpack('<I', asbuilt_pan.data[4:8])[0] if len(asbuilt_pan.data) >= 8 else 0
+    result['device_id'] = {'design': design_id, 'as_built': asbuilt_id}
+    if design_id != asbuilt_id:
+        result['device_id_match'] = False
+
+    design_name = _get_device_name(design_pan)
+    asbuilt_name = _get_device_name(asbuilt_pan)
+    result['device_id']['design_name'] = design_name
+    result['device_id']['as_built_name'] = asbuilt_name
+
+    # --- Build object maps ---
+    # Use the last part of the name (after device prefix) for matching
+    def strip_prefix(name, prefix):
+        if name.startswith(prefix + '-'):
+            return name[len(prefix) + 1:]
+        return name
+
+    design_points = {}
+    for p in design_pan.get_point_details():
+        key = strip_prefix(p['name'], design_name)
+        design_points[key] = p
+
+    asbuilt_points = {}
+    for p in asbuilt_pan.get_point_details():
+        key = strip_prefix(p['name'], asbuilt_name)
+        asbuilt_points[key] = p
+
+    # All design objects by stripped name
+    design_all = {}
+    for obj in design_pan.objects:
+        key = strip_prefix(obj['name'], design_name)
+        design_all[key] = obj
+
+    asbuilt_all = {}
+    for obj in asbuilt_pan.objects:
+        key = strip_prefix(obj['name'], asbuilt_name)
+        asbuilt_all[key] = obj
+
+    # --- Object count summary ---
+    design_cats = {}
+    for obj in design_pan.objects:
+        design_cats[obj['category']] = design_cats.get(obj['category'], 0) + 1
+    asbuilt_cats = {}
+    for obj in asbuilt_pan.objects:
+        asbuilt_cats[obj['category']] = asbuilt_cats.get(obj['category'], 0) + 1
+    result['object_summary'] = {'design': design_cats, 'as_built': asbuilt_cats}
+
+    # --- Missing / Extra objects ---
+    design_keys = set(design_all.keys())
+    asbuilt_keys = set(asbuilt_all.keys())
+    result['missing_in_asbuilt'] = sorted(design_keys - asbuilt_keys)
+    result['extra_in_asbuilt'] = sorted(asbuilt_keys - design_keys)
+
+    if result['missing_in_asbuilt']:
+        result['action_items'].append({
+            'severity': 'error',
+            'message': f"{len(result['missing_in_asbuilt'])} object(s) from design are missing in as-built",
+            'details': result['missing_in_asbuilt'][:10],
+        })
+    if result['extra_in_asbuilt']:
+        result['action_items'].append({
+            'severity': 'info',
+            'message': f"{len(result['extra_in_asbuilt'])} extra object(s) in as-built not in design",
+            'details': result['extra_in_asbuilt'][:10],
+        })
+
+    # --- Present value differences ---
+    total_points = 0
+    matching_points = 0
+    common_keys = set(design_points.keys()) & set(asbuilt_points.keys())
+
+    for key in sorted(common_keys):
+        dp = design_points[key]
+        ap = asbuilt_points[key]
+        dpv = dp.get('present_value')
+        apv = ap.get('present_value')
+
+        if dpv is not None and apv is not None:
+            total_points += 1
+            diff = abs(dpv - apv)
+            if diff <= tolerance:
+                matching_points += 1
+            else:
+                result['present_value_differences'].append({
+                    'name': key,
+                    'design_value': round(dpv, 4),
+                    'as_built_value': round(apv, 4),
+                    'difference': round(diff, 4),
+                })
+
+    # --- Out-of-service checks ---
+    design_oos = set()
+    for key, p in design_points.items():
+        if p.get('out_of_service'):
+            design_oos.add(key)
+
+    for key, p in asbuilt_points.items():
+        if p.get('out_of_service') and key not in design_oos:
+            result['out_of_service_issues'].append({
+                'name': key,
+                'message': 'Out-of-service in as-built but not in design',
+                'present_value': p.get('present_value'),
+            })
+
+    if result['out_of_service_issues']:
+        result['action_items'].append({
+            'severity': 'warning',
+            'message': f"{len(result['out_of_service_issues'])} point(s) out-of-service in field that should be active",
+            'details': [i['name'] for i in result['out_of_service_issues']],
+        })
+
+    # --- Unusual values check ---
+    for key, p in asbuilt_points.items():
+        pv = p.get('present_value')
+        if pv is None:
+            continue
+        units = p.get('units_name', '') or ''
+        issues = []
+        # Negative temperatures
+        if 'deg' in units.lower() and pv < -40:
+            issues.append(f"Negative temperature: {pv}")
+        # Output > 100%
+        if ('percent' in units.lower() or 'open' in units.lower()) and pv > 100:
+            issues.append(f"Output exceeds 100%: {pv}")
+        # Negative output percentage
+        if ('percent' in units.lower() or 'open' in units.lower()) and pv < 0:
+            issues.append(f"Negative output: {pv}")
+        # Extremely large values
+        if abs(pv) > 10000:
+            issues.append(f"Unusually large value: {pv}")
+
+        if issues:
+            result['unusual_values'].append({
+                'name': key,
+                'present_value': round(pv, 4),
+                'units': units,
+                'issues': issues,
+            })
+
+    if result['unusual_values']:
+        result['action_items'].append({
+            'severity': 'warning',
+            'message': f"{len(result['unusual_values'])} point(s) with unusual values need investigation",
+            'details': [f"{i['name']}: {', '.join(i['issues'])}" for i in result['unusual_values']],
+        })
+
+    # --- Loop binding + PID differences ---
+    design_loops = {l.get('instance', ''): l for l in design_pan.get_loops()}
+    asbuilt_loops = {l.get('instance', ''): l for l in asbuilt_pan.get_loops()}
+
+    all_loop_insts = set(design_loops.keys()) | set(asbuilt_loops.keys())
+    for inst in sorted(all_loop_insts):
+        dl = design_loops.get(inst, {})
+        al = asbuilt_loops.get(inst, {})
+
+        # Binding differences
+        for field in ['input_ref', 'setpoint_ref', 'output_ref']:
+            dv = dl.get(field, '')
+            av = al.get(field, '')
+            if dv != av:
+                result['loop_binding_differences'].append({
+                    'loop': f"LOOP{inst}",
+                    'field': field.replace('_ref', ''),
+                    'design': dv or 'not set',
+                    'as_built': av or 'not set',
+                })
+
+        # PID parameter differences
+        for param in ['proportional', 'integral', 'derivative']:
+            dp_val = dl.get(param)
+            ap_val = al.get(param)
+            if dp_val is not None and ap_val is not None:
+                if abs(dp_val - ap_val) > 0.001:
+                    result['pid_differences'].append({
+                        'loop': f"LOOP{inst}",
+                        'parameter': param,
+                        'design': dp_val,
+                        'as_built': ap_val,
+                    })
+
+    if result['loop_binding_differences']:
+        result['action_items'].append({
+            'severity': 'error',
+            'message': f"{len(result['loop_binding_differences'])} loop binding difference(s) - verify wiring",
+            'details': [f"{d['loop']} {d['field']}: design={d['design']}, field={d['as_built']}"
+                       for d in result['loop_binding_differences']],
+        })
+
+    if result['pid_differences']:
+        result['action_items'].append({
+            'severity': 'warning',
+            'message': f"{len(result['pid_differences'])} PID parameter difference(s)",
+            'details': [f"{d['loop']} {d['parameter']}: design={d['design']}, field={d['as_built']}"
+                       for d in result['pid_differences']],
+        })
+
+    # --- #23: Wiring Verification ---
+    # For each loop, check if input ref points to a valid object and whether
+    # it's a hardware point (AI/AO) vs software point (AV)
+    # Build instance lookup for as-built objects
+    asbuilt_obj_instances = set()
+    for obj in asbuilt_pan.objects:
+        for ref in obj.get('refs', []):
+            if ref['type'] != 'NULL':
+                asbuilt_obj_instances.add(f"{ref['type']}{ref['instance']}")
+    # Also add objects by category name matching
+    for obj in asbuilt_pan.objects:
+        name = obj['name'].upper()
+        cat = obj['category']
+        # Try to extract type+instance from name patterns
+        import re as _re_wv
+        m = _re_wv.search(r'(AI|AO|AV|BI|BO|BV|MO|MV|LOOP|TREND|SCHEDULE|PROGRAM)(\d+)', name)
+        if m:
+            asbuilt_obj_instances.add(f"{m.group(1)}{m.group(2)}")
+
+    loops_verified = 0
+    loops_need_attention = 0
+    total_loops = len(asbuilt_loops)
+
+    for inst, al in asbuilt_loops.items():
+        wiring_entry = {
+            'loop': f"LOOP{inst}",
+            'name': al.get('name', ''),
+            'status': 'ok',
+            'issues': [],
+        }
+
+        input_ref = al.get('input_ref', '')
+        input_type = al.get('input_type', '')
+        setpoint_ref = al.get('setpoint_ref', '')
+        output_ref = al.get('output_ref', '')
+
+        # Check if input is AV (software) vs AI (hardware sensor)
+        if input_type == 'AV':
+            wiring_entry['issues'].append(
+                f"Input {input_ref} is an Analog Value (software point) - "
+                f"field wiring should use AI (hardware sensor)"
+            )
+            wiring_entry['status'] = 'attention'
+
+        # Check if setpoint ref is a valid object
+        if setpoint_ref:
+            setpoint_type = al.get('setpoint_type', '')
+            # Setpoints are typically AV which is fine
+            pass
+
+        # Check for references to non-existent instances
+        for ref_field, ref_val in [('input', input_ref), ('setpoint', setpoint_ref), ('output', output_ref)]:
+            if ref_val and ref_val != 'NULL':
+                # Check if the referenced object exists in the as-built
+                found = False
+                for obj in asbuilt_pan.objects:
+                    obj_name = obj['name'].upper()
+                    if ref_val.upper() in obj_name or ref_val.upper().replace(' ', '') in obj_name.replace(' ', ''):
+                        found = True
+                        break
+                # Also check refs
+                if not found and ref_val in asbuilt_obj_instances:
+                    found = True
+                # Relax: if we can't find it by name, it may still be valid
+                # (instance numbers don't always appear in names)
+                if not found:
+                    wiring_entry['issues'].append(
+                        f"{ref_field.capitalize()} reference {ref_val} may not exist in as-built controller"
+                    )
+                    wiring_entry['status'] = 'attention'
+
+        if wiring_entry['issues']:
+            loops_need_attention += 1
+        else:
+            loops_verified += 1
+
+        result['wiring_verification'].append(wiring_entry)
+
+    result['wiring_summary'] = {
+        'total_loops': total_loops,
+        'verified': loops_verified,
+        'need_attention': loops_need_attention,
+        'message': f"{loops_verified} of {total_loops} loops verified, {loops_need_attention} need field attention",
+    }
+
+    if loops_need_attention > 0:
+        result['action_items'].append({
+            'severity': 'warning',
+            'message': result['wiring_summary']['message'],
+            'details': [f"{w['loop']}: {'; '.join(w['issues'])}"
+                       for w in result['wiring_verification'] if w['status'] == 'attention'],
+        })
+
+    # --- Commissioning Score ---
+    # Score components: object presence, value matching, loop bindings, OOS
+    score_components = []
+
+    # Object presence score
+    total_design_objs = len(design_keys)
+    if total_design_objs > 0:
+        present_count = len(design_keys & asbuilt_keys)
+        score_components.append(present_count / total_design_objs)
+
+    # Value matching score
+    if total_points > 0:
+        score_components.append(matching_points / total_points)
+
+    # Loop binding score
+    total_loop_fields = len(all_loop_insts) * 3  # input, setpoint, output per loop
+    if total_loop_fields > 0:
+        binding_issues = len(result['loop_binding_differences'])
+        score_components.append(max(0, (total_loop_fields - binding_issues) / total_loop_fields))
+
+    # OOS penalty
+    if len(asbuilt_points) > 0:
+        oos_count = len(result['out_of_service_issues'])
+        score_components.append(max(0, (len(asbuilt_points) - oos_count) / len(asbuilt_points)))
+
+    if score_components:
+        result['score'] = round(sum(score_components) / len(score_components) * 100, 1)
+    else:
+        result['score'] = 0.0
+
+    # Score grade
+    if result['score'] >= 95:
+        result['grade'] = 'PASS'
+    elif result['score'] >= 80:
+        result['grade'] = 'CONDITIONAL'
+    else:
+        result['grade'] = 'FAIL'
+
+    result['action_items'].append({
+        'severity': 'info',
+        'message': f"Commissioning score: {result['score']}% ({result['grade']})",
+        'details': [],
+    })
+
+    return result
+
+
+@app.post("/api/binary/commission-check")
+async def binary_commission_check(body: dict = None):
+    """Compare a design (template) .pan against an as-built (field) .pan.
+
+    JSON body with category/variant pairs:
+    {
+        "design": {"category": "SBS_AHU", "variant_id": "1003"},
+        "as_built": {"category": "SBS_AHU", "variant_id": "PS-AHU-ERW-0100"},
+        "tolerance": 0.5
+    }
+
+    Returns comprehensive commissioning report with wiring verification.
+    """
+    from app.pan_binary import PanBinary
+
+    if not body or 'design' not in body or 'as_built' not in body:
+        raise HTTPException(400, "Must provide 'design' and 'as_built' controller references")
+
+    tolerance = body.get('tolerance', 0.5)
+    try:
+        design_pan = _load_pan_from_ref(body['design'])
+        asbuilt_pan = _load_pan_from_ref(body['as_built'])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load controllers: {e}")
+
+    try:
+        report = _commission_check_logic(design_pan, asbuilt_pan, tolerance)
+        return report
+    except Exception as e:
+        logger.exception("Commission check failed")
+        raise HTTPException(500, f"Commission check failed: {e}")
+
+
+@app.post("/api/binary/commission-check/upload")
+async def binary_commission_check_upload(
+    design_file: UploadFile = File(...),
+    asbuilt_file: UploadFile = File(...),
+):
+    """Compare uploaded design and as-built .pan/.panx files.
+
+    Upload two files via multipart form: design_file and asbuilt_file.
+    Returns comprehensive commissioning report with wiring verification.
+    """
+    try:
+        design_data = await design_file.read()
+        asbuilt_data = await asbuilt_file.read()
+        design_pan = _load_pan_from_upload(design_data, design_file.filename or "design.pan")
+        asbuilt_pan = _load_pan_from_upload(asbuilt_data, asbuilt_file.filename or "asbuilt.pan")
+    except Exception as e:
+        raise HTTPException(400, f"Failed to parse uploaded files: {e}")
+
+    try:
+        report = _commission_check_logic(design_pan, asbuilt_pan, tolerance=0.5)
+        return report
+    except Exception as e:
+        logger.exception("Commission check failed")
+        raise HTTPException(500, f"Commission check failed: {e}")
+
+
+# ─── #21: Program State Management ───────────────────────────────────────────
+
+@app.get("/api/binary/programs/{category}/{variant_id}")
+async def binary_programs_list(category: str, variant_id: str):
+    """List all programs with their enabled state from the .pan binary.
+
+    Returns program names, enabled/disabled state, data sizes, and ref counts.
+    """
+    from app.pan_binary import PanBinary
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+
+    src_panx = next(cat_dir.rglob(f"{variant_id}.panx"), None)
+    src_pan = next(cat_dir.rglob(f"{variant_id}.pan"), None)
+
+    if src_panx:
+        pan = PanBinary.from_panx(src_panx)
+    elif src_pan:
+        pan = PanBinary.from_file(src_pan)
+    else:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    programs = pan.get_programs()
+
+    enabled_count = sum(1 for p in programs if p.get('enabled', False))
+    disabled_count = sum(1 for p in programs if p.get('enabled') is False)
+
+    return {
+        "variant_id": variant_id,
+        "category": category,
+        "program_count": len(programs),
+        "enabled_count": enabled_count,
+        "disabled_count": disabled_count,
+        "programs": programs,
+    }
+
+
+@app.post("/api/binary/programs/toggle")
+async def binary_program_toggle(body: dict = None):
+    """Toggle a program's enabled/disabled state in the .pan binary.
+
+    Body: {
+        "category": "SBS_AHU",
+        "variant_id": "1003",
+        "program_name": "MYS-AHU3-PRG1",
+        "enabled": true
+    }
+
+    Returns the modified .pan file as a download.
+    Uses PanWriter to modify the program-enabled property (0x0A).
+    """
+    from app.pan_binary import PanBinary, PanWriter
+
+    if not body or 'category' not in body or 'variant_id' not in body or 'program_name' not in body:
+        raise HTTPException(400, "Must provide 'category', 'variant_id', and 'program_name'")
+
+    category = body['category']
+    variant_id = body['variant_id']
+    program_name = body['program_name']
+    target_enabled = body.get('enabled', None)  # None = toggle, True/False = set explicitly
+
+    folder_name = engine._cat_folder(category)
+    cat_dir = engine.cfg.upload_root / folder_name
+    src = next(cat_dir.rglob(f"{variant_id}.panx"), None) or \
+          next(cat_dir.rglob(f"{variant_id}.pan"), None)
+    if not src:
+        raise HTTPException(404, f"No .pan/.panx found for {variant_id}")
+
+    try:
+        if str(src).endswith('.panx'):
+            writer = PanWriter.from_panx(src)
+        else:
+            writer = PanWriter.from_file(src)
+
+        # Find the program object in the binary
+        import re as _re_prg
+        found = False
+        program_name_bytes = program_name.encode('utf-8')
+
+        for m in _re_prg.finditer(b'\x4d\x75(.)', bytes(writer.data)):
+            name_len = m.group(1)[0]
+            if name_len < 2 or name_len > 200:
+                continue
+            name_start = m.start() + 3
+            name_bytes = writer.data[name_start:name_start + name_len]
+            try:
+                name = name_bytes.decode('utf-8').strip('\x00')
+            except (UnicodeDecodeError, ValueError):
+                continue
+
+            if name.strip() != program_name.strip():
+                continue
+
+            # Found the program - now find property 0x0A in its data region
+            name_end = name_start + name_len
+            next_mu = bytes(writer.data).find(b'\x4d\x75', name_end + 10)
+            if next_mu < 0:
+                next_mu = min(name_end + 500, len(writer.data))
+
+            data_region_start = name_end
+            data_region_end = next_mu
+
+            # Search for property 0x0A (program-enabled)
+            for i in range(data_region_start, min(data_region_end, data_region_start + 300)):
+                if i + 2 < len(writer.data) and writer.data[i] == 0x0A and writer.data[i + 1] == 0x91:
+                    current_state = writer.data[i + 2]
+                    if target_enabled is None:
+                        # Toggle
+                        new_state = 0 if current_state == 1 else 1
+                    else:
+                        new_state = 1 if target_enabled else 0
+
+                    writer.data[i + 2] = new_state
+                    found = True
+                    break
+
+            if found:
+                break
+
+        if not found:
+            raise HTTPException(404, f"Program '{program_name}' not found or has no enable property")
+
+        out_path = Path(f"/tmp/program_toggle_{variant_id}.pan")
+        writer.save(out_path)
+
+        new_state_str = "enabled" if (target_enabled if target_enabled is not None else new_state == 1) else "disabled"
+
+        return FileResponse(
+            out_path,
+            filename=f"{variant_id}_program_{new_state_str}.pan",
+            media_type="application/octet-stream",
+            headers={
+                "X-Program-Name": program_name,
+                "X-New-State": new_state_str,
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Program toggle failed")
+        raise HTTPException(500, f"Program toggle failed: {e}")
+
+
+# ─── Background Task ─────────────────────────────────────────────────────────
+
+async def run_extraction(job_id: str, category_filter: Optional[str], selected_keys: Optional[list]):
+    job = jobs[job_id]
+    try:
+        job["status"] = "running"
+        variants = engine.discover_variants()
+
+        flat = []
+        if selected_keys:
+            # Process only the specified variants
+            for key in selected_keys:
+                cat, vid = key.split("/", 1)
+                for cat_name, items in variants.items():
+                    if cat_name.upper() == cat.upper():
+                        for item in items:
+                            if item["id"] == vid:
+                                flat.append((cat_name, item))
+                                break
+        else:
+            for cat, items in variants.items():
+                if category_filter and cat.upper() != category_filter.upper():
+                    continue
+                for item in items:
+                    flat.append((cat, item))
+
+        job["total"] = len(flat)
+        for i, (cat, item) in enumerate(flat):
+            job["current"] = f"{cat}/{item['id']}"
+            job["progress"] = i + 1
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, engine.process_variant, cat, item
+                )
+                job["done"].append(f"{cat}/{item['id']}")
+            except Exception as e:
+                logger.error(f"Failed {cat}/{item['id']}: {e}")
+                job["errors"].append({"variant": f"{cat}/{item['id']}", "error": str(e)})
+
+        job["status"] = "done"
+        job["current"] = ""
+    except Exception as e:
+        job["status"] = "error"
+        job["error"] = str(e)
+        logger.exception("Extraction job failed")

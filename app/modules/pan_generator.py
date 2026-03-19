@@ -712,6 +712,293 @@ def compose_and_generate(
 
 
 # ---------------------------------------------------------------------------
+# Template Library Mode — keeps {device-name} placeholders
+# ---------------------------------------------------------------------------
+
+def assemble_as_library_json(
+    equipment_type: str,
+    features: List[str],
+    output_path: Optional[str] = None,
+    output_dir: str = "/tmp",
+) -> str:
+    """Assemble a composition and output as a library-format JSON.
+
+    This is TEMPLATE MODE — point names keep {device-name} placeholders.
+    The output JSON matches the format expected by generator.py (the existing
+    XML generator that feeds PFG).
+
+    This is how we build the template library:
+      1. assemble_as_library_json() → library JSON with {device-name}
+      2. generator.py generates XML from library JSON
+      3. PFG merges XML + blank .pan → output .pan template
+
+    Args:
+        equipment_type: Base type code (e.g., "AHU-VAV")
+        features: List of feature codes
+        output_path: Explicit output path (optional)
+        output_dir: Directory for output (default: /tmp)
+
+    Returns:
+        Path to the generated library JSON file
+    """
+    from app.modules.assembler import assemble
+
+    # Assemble with {device-name} as the device name — keeps templates
+    assembly_result = assemble(
+        equipment_type=equipment_type,
+        features=features,
+        device_name="{device-name}",
+    )
+
+    # Convert to library JSON format (compatible with generator.py)
+    library_json = _to_library_format(assembly_result, equipment_type, features)
+
+    # Save
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if output_path:
+        json_path = Path(output_path)
+    else:
+        # Build filename from type + features
+        feat_str = "_".join(sorted(features))[:60]
+        json_path = out_dir / f"{equipment_type}_{feat_str}.json"
+
+    json_path.write_text(json.dumps(library_json, indent=2, default=str))
+    logger.info(f"Generated library JSON (template mode): {json_path}")
+    return str(json_path)
+
+
+def generate_pan_via_pfg(
+    equipment_type: str,
+    features: List[str],
+    device_name: str = "{device-name}",
+    device_id: str = "900",
+    blank_model: str = None,
+    output_dir: str = "/tmp",
+) -> str:
+    """Full pipeline: Assemble → Library JSON → XML → PFG → .pan
+
+    This uses the existing composer pipeline (generator.py + PFG under wine)
+    to produce a real .pan binary file.
+
+    Args:
+        equipment_type: Base type code
+        features: Feature codes
+        device_name: Device name ({device-name} for templates, or actual name)
+        device_id: BACnet device instance
+        blank_model: Controller blank folder name (auto-detected if None)
+        output_dir: Output directory
+
+    Returns:
+        Path to generated .pan file
+    """
+    import sys
+    import shutil
+    import time
+
+    from app.modules.assembler import assemble
+
+    # Step 1: Assemble
+    assembly_result = assemble(
+        equipment_type=equipment_type,
+        features=features,
+        device_name=device_name,
+    )
+
+    # Step 2: Convert to library format
+    library_json = _to_library_format(assembly_result, equipment_type, features)
+
+    # Step 3: Generate XML via generator.py
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from generator import generate_xml
+
+    xml_content = generate_xml(
+        library_json,
+        device_id=device_id,
+        device_name=device_name,
+        pfg_safe=True,
+    )
+
+    # Step 4: Find blank template
+    ctrl = assembly_result.get('controller')
+    if not blank_model and ctrl:
+        model = ctrl.model if hasattr(ctrl, 'model') else ctrl.get('model', '')
+        template_path = _find_blank_template(model)
+        if template_path:
+            blank_model = template_path.parent.name
+
+    if not blank_model:
+        logger.warning("No blank controller template found — saving XML only")
+        xml_path = Path(output_dir) / f"{equipment_type}_changes.xml"
+        xml_path.write_text(xml_content)
+        return str(xml_path)
+
+    # Step 5: Run PFG pipeline
+    work_dir = Path(f"/tmp/sbs_compose_{int(time.time())}")
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Write changes XML
+        changes_xml = work_dir / "changes.xml"
+        changes_xml.write_text(xml_content)
+
+        # Extract blank .pan from .panx
+        blank_panx = BLANKS_DIR / blank_model
+        panx_files = list(blank_panx.glob("*.panx"))
+        if not panx_files:
+            raise ValueError(f"No .panx in blanks/{blank_model}")
+
+        # Extract .pan from .panx (it's a zip)
+        import zipfile
+        tmp_zip = work_dir / "blank.zip"
+        shutil.copy2(panx_files[0], tmp_zip)
+        extract_dir = work_dir / "blank_contents"
+        with zipfile.ZipFile(tmp_zip, 'r') as zf:
+            zf.extractall(extract_dir)
+        pan_files = list(extract_dir.rglob("*.pan"))
+        if not pan_files:
+            raise ValueError(f"No .pan inside {panx_files[0].name}")
+        input_pan = pan_files[0]
+
+        # Run PFG
+        output_pan = work_dir / f"{equipment_type}.pan"
+        pfg_path = Path("/srv/reliable-generator-dev/pfg/pfg")
+        if not pfg_path.exists():
+            pfg_path = Path("/srv/reliable-generator-dev/pfg/PanelFileGenerator.exe")
+
+        from app.extractor import to_wine_path
+        cmd = [
+            "wine", str(pfg_path),
+            "-i", to_wine_path(input_pan),
+            "-o", to_wine_path(output_pan),
+            "-c", to_wine_path(changes_xml),
+            "-b", str(device_id),
+            "-n", device_name,
+        ]
+
+        import subprocess
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            logger.error(f"PFG failed: {result.stderr}")
+            # Fall back to XML output
+            final_xml = Path(output_dir) / f"{equipment_type}_changes.xml"
+            shutil.copy2(changes_xml, final_xml)
+            return str(final_xml)
+
+        # Copy output to destination
+        final_pan = Path(output_dir) / f"{equipment_type}.pan"
+        shutil.copy2(output_pan, final_pan)
+        logger.info(f"Generated .pan via PFG: {final_pan}")
+        return str(final_pan)
+
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _to_library_format(assembly_result: dict, equipment_type: str, features: list) -> dict:
+    """Convert assembler output to the library JSON format expected by generator.py.
+
+    This format matches what the existing extractor produces from .pan files,
+    so generator.py can consume it directly.
+
+    Point names KEEP {device-name} placeholders.
+    """
+    objects = assembly_result.get('objects', {})
+    code = assembly_result.get('code', '')
+    io_map = assembly_result.get('io_map', {})
+
+    library = {
+        "id": f"composed_{equipment_type}_{'_'.join(sorted(features))}",
+        "category": equipment_type,
+        "format": "composed",
+        "description": f"SBS {equipment_type} with {', '.join(features)}",
+        "meta": {
+            "composed": True,
+            "equipment_type": equipment_type,
+            "features": features,
+            "modules": [m.get('id', '') for m in assembly_result.get('modules', [])],
+            "io_counts": assembly_result.get('io_counts', {}),
+        },
+        "objects": {},
+    }
+
+    # Convert each object type to library format
+    # Instance numbers are assigned sequentially per type
+    for obj_type in ['AI', 'AO', 'AV', 'BI', 'BO', 'BV', 'MO', 'MV']:
+        obj_list = objects.get(obj_type, [])
+        if not obj_list:
+            continue
+
+        lib_points = []
+        for i, obj in enumerate(obj_list, 1):
+            point = {
+                "name": obj.get('name', ''),
+                "instance": str(i),
+                "description": obj.get('desc', ''),
+            }
+
+            # Present value
+            if obj.get('default') is not None:
+                point["present_value"] = str(obj['default'])
+
+            # Units
+            if obj.get('units'):
+                unit_enum = resolve_unit_enum(obj['units'])
+                point["unit"] = str(unit_enum)
+
+            # Min/max (range)
+            if obj.get('min') is not None and obj.get('max') is not None:
+                point["range"] = f"{obj['min']}"  # PFG uses range for min
+
+            # States for binary/multistate
+            if obj.get('states'):
+                point["states"] = obj['states']
+
+            lib_points.append(point)
+
+        library["objects"][obj_type] = lib_points
+
+    # Program object with Control-BASIC code
+    if code.strip():
+        library["objects"]["PROGRAM"] = [{
+            "name": "{device-name}-PRG",
+            "instance": "1",
+            "description": f"Control program",
+            "code": code,
+            "enabled": True,
+        }]
+
+    # Schedule objects
+    for obj in objects.get('SCHEDULE', []):
+        if 'SCHEDULE' not in library["objects"]:
+            library["objects"]["SCHEDULE"] = []
+        library["objects"]["SCHEDULE"].append({
+            "name": obj.get('name', ''),
+            "instance": str(len(library["objects"]["SCHEDULE"]) + 1),
+            "description": obj.get('desc', ''),
+        })
+
+    # Loop objects
+    for obj in objects.get('LOOP', []):
+        if 'LOOP' not in library["objects"]:
+            library["objects"]["LOOP"] = []
+        loop = {
+            "name": obj.get('name', ''),
+            "instance": str(len(library["objects"]["LOOP"]) + 1),
+            "description": obj.get('desc', ''),
+        }
+        # PID params
+        if obj.get('proportional') is not None:
+            loop["proportional"] = str(obj['proportional'])
+        if obj.get('integral') is not None:
+            loop["integral"] = str(obj['integral'])
+        library["objects"]["LOOP"].append(loop)
+
+    return library
+
+
+# ---------------------------------------------------------------------------
 # Summary / reporting
 # ---------------------------------------------------------------------------
 
