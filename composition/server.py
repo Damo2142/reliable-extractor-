@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
-from composition.assembler import assemble
+from composition.assembler import assemble, CONTROLLER_SPECS
 from composition.excel_gen import generate_excel
 from composition.program_loader import inject_program_code
 from composition.module_registry import (
@@ -54,6 +54,7 @@ class AssembleRequest(BaseModel):
     device_name: str = "{device-name}"
     parent_name: str = "{parent}"
     equipment_family: str = "AHU-VAV"
+    controller_model: str = "auto"
 
 
 class GenerateRequest(BaseModel):
@@ -61,6 +62,7 @@ class GenerateRequest(BaseModel):
     device_name: str = "{device-name}"
     parent_name: str = "{parent}"
     equipment_family: str = "AHU-VAV"
+    controller_model: str = "auto"
 
 
 # --- API Endpoints ---
@@ -102,11 +104,17 @@ async def api_list_standards():
     return STANDARD_CONFIGS
 
 
+@app.get("/api/controllers")
+async def api_list_controllers():
+    """List available controller models with specs."""
+    return {"auto": {"family": "Auto-Select", "base_in": 0, "base_out": 0, "max_exp": 0}, **CONTROLLER_SPECS}
+
+
 @app.post("/api/assemble")
 async def api_assemble(req: AssembleRequest):
     """Assemble a configuration from selected modules."""
     try:
-        config = assemble(req.modules, req.device_name, req.parent_name, req.equipment_family)
+        config = assemble(req.modules, req.device_name, req.parent_name, req.equipment_family, req.controller_model)
         inject_program_code(config)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -142,7 +150,7 @@ async def api_assemble(req: AssembleRequest):
 async def api_generate(req: GenerateRequest):
     """Generate Excel + .bas zip package."""
     try:
-        config = assemble(req.modules, req.device_name, req.parent_name, req.equipment_family)
+        config = assemble(req.modules, req.device_name, req.parent_name, req.equipment_family, req.controller_model)
         inject_program_code(config)
     except ValueError as e:
         raise HTTPException(400, str(e))

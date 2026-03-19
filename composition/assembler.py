@@ -18,7 +18,8 @@ from composition.module_registry import get_module, get_core_modules
 
 
 def assemble(module_ids: list, device_name: str = "{device-name}",
-             parent_name: str = "{parent}", equipment_family: str = "AHU-VAV") -> ControllerConfig:
+             parent_name: str = "{parent}", equipment_family: str = "AHU-VAV",
+             controller_model: str = "auto") -> ControllerConfig:
     """
     Assemble a complete controller configuration from selected modules.
 
@@ -138,7 +139,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     # Step 5: Controller selection
     config.highest_input_row = max(input_rows.keys()) if input_rows else 0
     config.highest_output_row = max(output_rows.keys()) if output_rows else 0
-    _select_controller(config)
+    _select_controller(config, controller_model)
 
     # Step 6: Assemble SOO document
     config.soo_document = _assemble_soo(modules, all_ids)
@@ -200,37 +201,77 @@ def _generate_trends(config: ControllerConfig) -> list:
     return trends
 
 
-def _select_controller(config: ControllerConfig):
+CONTROLLER_SPECS = {
+    "MPS":     {"base_in": 12, "base_out": 8,  "max_exp": 7, "family": "MACH-ProSys"},
+    "MPWS":    {"base_in": 12, "base_out": 8,  "max_exp": 7, "family": "MACH-ProWebSys"},
+    "MPV-LCD": {"base_in": 12, "base_out": 8,  "max_exp": 7, "family": "MACH-ProView LCD"},
+    "MP2":     {"base_in": 12, "base_out": 8,  "max_exp": 3, "family": "MACH-Pro2"},
+    "MP1":     {"base_in": 12, "base_out": 8,  "max_exp": 0, "family": "MACH-Pro1"},
+    "MPC":     {"base_in": 0,  "base_out": 0,  "max_exp": 8, "family": "MACH-ProCom"},
+    "MPWC":    {"base_in": 0,  "base_out": 0,  "max_exp": 8, "family": "MACH-ProWebCom"},
+    "MPA-36":  {"base_in": 3,  "base_out": 6,  "max_exp": 0, "family": "MACH-ProAir"},
+    "MPA-35":  {"base_in": 3,  "base_out": 5,  "max_exp": 0, "family": "MACH-ProAir"},
+    "MPA-34":  {"base_in": 3,  "base_out": 4,  "max_exp": 0, "family": "MACH-ProAir"},
+    "MPA-33":  {"base_in": 3,  "base_out": 3,  "max_exp": 0, "family": "MACH-ProAir"},
+    "MPZ-88":  {"base_in": 8,  "base_out": 8,  "max_exp": 0, "family": "MACH-ProZone"},
+    "MPZ-44":  {"base_in": 4,  "base_out": 4,  "max_exp": 0, "family": "MACH-ProZone"},
+}
+
+
+def _select_controller(config: ControllerConfig, model_override: str = "auto"):
     """
     Select controller model and expansion boards based on highest occupied rows.
     Rule: row number = terminal number. Never fill gaps.
+
+    model_override: "auto" for automatic selection, or a specific model ID
     """
     hi_in = config.highest_input_row
     hi_out = config.highest_output_row
+    exp_in_per = 12  # MPP-IO-U inputs
+    exp_out_per = 8  # MPP-IO-U outputs
 
-    # MPS/MPWS family: 12 inputs, 8 outputs base. Each MPP-IO-U adds 12 in / 8 out.
-    base_in = 12
-    base_out = 8
-    exp_in = 12   # per MPP-IO-U
-    exp_out = 8   # per MPP-IO-U
+    if model_override and model_override != "auto" and model_override in CONTROLLER_SPECS:
+        # User selected a specific controller
+        spec = CONTROLLER_SPECS[model_override]
+        base_in = spec["base_in"]
+        base_out = spec["base_out"]
+        max_exp = spec["max_exp"]
 
-    # Calculate expansion boards needed
-    exp_for_inputs = max(0, (hi_in - base_in + exp_in - 1) // exp_in) if hi_in > base_in else 0
-    exp_for_outputs = max(0, (hi_out - base_out + exp_out - 1) // exp_out) if hi_out > base_out else 0
-    expansion_count = max(exp_for_inputs, exp_for_outputs)
+        if max_exp > 0:
+            exp_for_in = max(0, (hi_in - base_in + exp_in_per - 1) // exp_in_per) if hi_in > base_in else 0
+            exp_for_out = max(0, (hi_out - base_out + exp_out_per - 1) // exp_out_per) if hi_out > base_out else 0
+            expansion_count = max(exp_for_in, exp_for_out)
+            if expansion_count > max_exp:
+                expansion_count = max_exp  # Cap at max — user chose this model
+        else:
+            expansion_count = 0
 
-    if expansion_count <= 7:
-        config.controller_model = "MPS"
-    elif expansion_count <= 3:
-        # Could use MP2 if within 3 expansion limit
-        config.controller_model = "MP2"
-    else:
-        config.controller_model = "MPS"
+        config.controller_model = model_override
+        config.expansion_count = expansion_count
+        config.expansion_model = "MPP-IO-U" if expansion_count > 0 else ""
+        return
 
-    # For AHU, always prefer MPS
+    # Auto-select: prefer MPS family for AHU
+    for model in ["MPS", "MPWS", "MP2"]:
+        spec = CONTROLLER_SPECS[model]
+        base_in = spec["base_in"]
+        base_out = spec["base_out"]
+        max_exp = spec["max_exp"]
+
+        exp_for_in = max(0, (hi_in - base_in + exp_in_per - 1) // exp_in_per) if hi_in > base_in else 0
+        exp_for_out = max(0, (hi_out - base_out + exp_out_per - 1) // exp_out_per) if hi_out > base_out else 0
+        expansion_count = max(exp_for_in, exp_for_out)
+
+        if expansion_count <= max_exp:
+            config.controller_model = model
+            config.expansion_count = expansion_count
+            config.expansion_model = "MPP-IO-U" if expansion_count > 0 else ""
+            return
+
+    # Fallback to MPS with max expansion
     config.controller_model = "MPS"
-    config.expansion_count = expansion_count
-    config.expansion_model = "MPP-IO-U" if expansion_count > 0 else ""
+    config.expansion_count = 7
+    config.expansion_model = "MPP-IO-U"
 
 
 def _assemble_soo(modules: dict, module_ids: set) -> str:
