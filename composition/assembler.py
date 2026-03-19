@@ -1,0 +1,280 @@
+"""
+SBS Composition Engine v2 — Assembler
+
+Takes a list of module IDs and assembles a complete ControllerConfig:
+1. Resolves dependencies (adds required modules)
+2. Checks for conflicts
+3. Merges all points (inputs, outputs, values, loops, tables, programs, etc.)
+4. Applies fixed I/O row assignments (never fills gaps)
+5. Determines controller model + expansion boards needed
+6. Generates trend logs for all points
+7. Assembles SOO document from module paragraphs
+"""
+
+import json
+from pathlib import Path
+from composition.models import ControllerConfig, TrendDef
+from composition.module_registry import get_module, get_core_modules
+
+
+def assemble(module_ids: list, device_name: str = "{device-name}",
+             parent_name: str = "{parent}", equipment_family: str = "AHU-VAV") -> ControllerConfig:
+    """
+    Assemble a complete controller configuration from selected modules.
+
+    Args:
+        module_ids: List of module IDs to include
+        device_name: Device name template (default: {device-name})
+        parent_name: Parent device name template (default: {parent})
+        equipment_family: Equipment family for row map lookup
+
+    Returns:
+        ControllerConfig with all points merged and controller selected
+    """
+
+    # Step 1: Add core modules and resolve dependencies
+    all_ids = set(module_ids)
+    for cid in get_core_modules():
+        all_ids.add(cid)
+
+    # Iteratively resolve dependencies
+    resolved = set()
+    to_resolve = list(all_ids)
+    while to_resolve:
+        mid = to_resolve.pop(0)
+        if mid in resolved:
+            continue
+        mod = get_module(mid)
+        resolved.add(mid)
+        for req in mod.requires:
+            if req not in resolved:
+                to_resolve.append(req)
+                all_ids.add(req)
+
+    # Step 2: Check for conflicts
+    errors = []
+    modules = {mid: get_module(mid) for mid in all_ids}
+    for mid, mod in modules.items():
+        for conflict in mod.conflicts:
+            if conflict in all_ids:
+                errors.append(f"Module '{mid}' conflicts with '{conflict}'")
+    if errors:
+        raise ValueError("Module conflicts detected:\n" + "\n".join(errors))
+
+    # Step 3: Merge all points
+    config = ControllerConfig(
+        device_name=device_name,
+        parent_name=parent_name,
+        equipment_family=equipment_family,
+        selected_modules=sorted(all_ids),
+    )
+
+    # Track by row/instance to detect duplicates
+    input_rows = {}   # row -> InputPoint
+    output_rows = {}  # row -> OutputPoint
+    value_instances = {}  # instance -> ValuePoint
+    loop_instances = {}
+    table_instances = {}
+    program_instances = {}
+    schedule_instances = {}
+    system_group_names = {}
+
+    for mid in sorted(all_ids):
+        mod = modules[mid]
+
+        for pt in mod.inputs:
+            if pt.row not in input_rows:
+                pt.module = mid
+                input_rows[pt.row] = pt
+
+        for pt in mod.outputs:
+            if pt.row not in output_rows:
+                pt.module = mid
+                output_rows[pt.row] = pt
+
+        for pt in mod.values:
+            if pt.instance not in value_instances:
+                pt.module = mid
+                value_instances[pt.instance] = pt
+
+        for lp in mod.loops:
+            if lp.instance not in loop_instances:
+                lp.module = mid
+                loop_instances[lp.instance] = lp
+
+        for tbl in mod.tables:
+            if tbl.instance not in table_instances:
+                tbl.module = mid
+                table_instances[tbl.instance] = tbl
+
+        for prg in mod.programs:
+            if prg.instance not in program_instances:
+                prg.module = mid
+                program_instances[prg.instance] = prg
+
+        for sch in mod.schedules:
+            if sch.instance not in schedule_instances:
+                sch.module = mid
+                schedule_instances[sch.instance] = sch
+
+        for sg in mod.system_groups:
+            if sg.name not in system_group_names:
+                sg.module = mid
+                system_group_names[sg.name] = sg
+
+    # Sort by row/instance number
+    config.inputs = [input_rows[r] for r in sorted(input_rows.keys())]
+    config.outputs = [output_rows[r] for r in sorted(output_rows.keys())]
+    config.values = [value_instances[i] for i in sorted(value_instances.keys())]
+    config.loops = [loop_instances[i] for i in sorted(loop_instances.keys())]
+    config.tables = [table_instances[i] for i in sorted(table_instances.keys())]
+    config.programs = [program_instances[i] for i in sorted(program_instances.keys())]
+    config.schedules = [schedule_instances[i] for i in sorted(schedule_instances.keys())]
+    config.system_groups = list(system_group_names.values())
+
+    # Step 4: Generate trend logs for all points
+    config.trends = _generate_trends(config)
+
+    # Step 5: Controller selection
+    config.highest_input_row = max(input_rows.keys()) if input_rows else 0
+    config.highest_output_row = max(output_rows.keys()) if output_rows else 0
+    _select_controller(config)
+
+    # Step 6: Assemble SOO document
+    config.soo_document = _assemble_soo(modules, all_ids)
+
+    return config
+
+
+def _generate_trends(config: ControllerConfig) -> list:
+    """Generate STL trend logs for all points — standard SBS practice."""
+    trends = []
+    stl_num = 1
+
+    # Polled trends for physical AI sensors (15-minute interval)
+    for inp in config.inputs:
+        if inp.point_type == "AI":
+            trends.append(TrendDef(
+                instance=stl_num,
+                name=f"{inp.name}-STL",
+                monitored_point=inp.name,
+                trend_type="polled",
+                interval="00:15:00",
+            ))
+            stl_num += 1
+
+    # COV trends for BI status points
+    for inp in config.inputs:
+        if inp.point_type == "BI":
+            trends.append(TrendDef(
+                instance=stl_num,
+                name=f"{inp.name}-STL",
+                monitored_point=inp.name,
+                trend_type="cov",
+                cov_delta=0.2,
+            ))
+            stl_num += 1
+
+    # COV trends for all outputs
+    for out in config.outputs:
+        trends.append(TrendDef(
+            instance=stl_num,
+            name=f"{out.name}-STL",
+            monitored_point=out.name,
+            trend_type="cov",
+            cov_delta=0.2,
+        ))
+        stl_num += 1
+
+    # COV trends for key AV/BV/MV values (modes, setpoints, status)
+    for val in config.values:
+        trends.append(TrendDef(
+            instance=stl_num,
+            name=f"{val.name}-STL",
+            monitored_point=val.name,
+            trend_type="cov",
+            cov_delta=0.2,
+        ))
+        stl_num += 1
+
+    return trends
+
+
+def _select_controller(config: ControllerConfig):
+    """
+    Select controller model and expansion boards based on highest occupied rows.
+    Rule: row number = terminal number. Never fill gaps.
+    """
+    hi_in = config.highest_input_row
+    hi_out = config.highest_output_row
+
+    # MPS/MPWS family: 12 inputs, 8 outputs base. Each MPP-IO-U adds 12 in / 8 out.
+    base_in = 12
+    base_out = 8
+    exp_in = 12   # per MPP-IO-U
+    exp_out = 8   # per MPP-IO-U
+
+    # Calculate expansion boards needed
+    exp_for_inputs = max(0, (hi_in - base_in + exp_in - 1) // exp_in) if hi_in > base_in else 0
+    exp_for_outputs = max(0, (hi_out - base_out + exp_out - 1) // exp_out) if hi_out > base_out else 0
+    expansion_count = max(exp_for_inputs, exp_for_outputs)
+
+    if expansion_count <= 7:
+        config.controller_model = "MPS"
+    elif expansion_count <= 3:
+        # Could use MP2 if within 3 expansion limit
+        config.controller_model = "MP2"
+    else:
+        config.controller_model = "MPS"
+
+    # For AHU, always prefer MPS
+    config.controller_model = "MPS"
+    config.expansion_count = expansion_count
+    config.expansion_model = "MPP-IO-U" if expansion_count > 0 else ""
+
+
+def _assemble_soo(modules: dict, module_ids: set) -> str:
+    """Assemble SOO document from module paragraphs in logical order."""
+
+    # Define section order
+    section_order = [
+        ("GENERAL", ["core"]),
+        ("SUPPLY FAN", ["fan-sf-vfd", "fan-sf-cs", "fan-sf-ecm", "fan-sf-2spd"]),
+        ("RETURN/EXHAUST FAN", ["fan-rf-vfd", "fan-rf-cs", "fan-ef-vfd", "fan-ef-cs",
+                                 "fan-rlf-vfd", "fan-rlf-cs"]),
+        ("ECONOMIZER", ["econ-db", "econ-enth", "econ-diff", "econ-diff-db"]),
+        ("VENTILATION", ["vent-fix", "vent-ams", "dcv-co2", "dcv-occ", "vent-100"]),
+        ("ENERGY RECOVERY", ["erw"]),
+        ("COOLING", ["clg-chw", "clg-dx", "clg-dx-2", "clg-dx-vfd"]),
+        ("HEATING", ["htg-hw", "htg-elec", "htg-elec-2", "htg-elec-3",
+                      "htg-elec-scr", "htg-gas", "htg-gas-mod"]),
+        ("PREHEAT", ["ph-hw", "ph-elec", "ph-glycol"]),
+        ("HUMIDITY CONTROL", ["hum-stm", "hum-elec", "hum-ultra", "dehum-sc"]),
+        ("OPTIMUM START", ["opt-start"]),
+        ("SAFETY", ["safe-freeze", "safe-smoke", "safe-hi-static", "safe-filter",
+                     "safe-filter-oa", "safe-filter-final", "safe-filter-ea",
+                     "safe-fire-sd", "safe-cond-ovf", "safe-freeze-dp"]),
+    ]
+
+    lines = [
+        "SEQUENCE OF OPERATION",
+        "=" * 60,
+        "",
+        "Generated by SBS Composition Engine v2",
+        "",
+    ]
+
+    for section_name, possible_ids in section_order:
+        active = [mid for mid in possible_ids if mid in module_ids]
+        if not active:
+            continue
+
+        lines.append(f"\n{section_name}")
+        lines.append("-" * len(section_name))
+        for mid in active:
+            mod = modules[mid]
+            if mod.soo_paragraph:
+                lines.append(mod.soo_paragraph.strip())
+                lines.append("")
+
+    return "\n".join(lines)
