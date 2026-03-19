@@ -197,6 +197,24 @@ EQUIPMENT_FAMILIES = {
         "available_categories": ["cooling", "heating", "preheat", "energy-recovery", "humidity", "safety", "pump"],
         "notes": "Always 100% OA. No economizer (no return air). ERW strongly recommended.",
     },
+    "SZ-CV": {
+        "name": "Single Zone Constant Volume",
+        "description": "Constant speed fan, space temperature control — serves one zone, heating/cooling cycles to maintain space temp",
+        "prefix": "SBS-SZCV",
+        "required_modules": ["core"],
+        "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
+                                 "ventilation", "humidity", "safety"],
+        "notes": "Fan is constant speed. No duct static loop. Space temp sensor drives heating/cooling. Single zone only.",
+    },
+    "SZ-VAV": {
+        "name": "Single Zone VAV",
+        "description": "VFD fan modulates to space temperature — no VAV boxes, fan speed = capacity control for single zone",
+        "prefix": "SBS-SZVAV",
+        "required_modules": ["core", "fan-sf-vfd"],
+        "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
+                                 "ventilation", "humidity", "safety", "pump"],
+        "notes": "VFD supply fan modulates to space temp (NOT duct static). No downstream VAV boxes. Single zone served.",
+    },
 }
 
 STANDARD_CONFIGS = {
@@ -514,5 +532,139 @@ STANDARD_CONFIGS = {
             "clg-chw", "htg-hw",
             "vent-100",
         ] + _SAFETY_BASE,
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  SINGLE ZONE CV — SBS-SZCV-501 to 510
+    #  Constant speed fan, space temp control, single zone
+    #  Fan cycles or runs continuous — heating/cooling modulates to space temp
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-SZCV-501": {
+        "family": "SZ-CV",
+        "name": "CHW / HW / CS / Econ-DB — Basic",
+        "description": "Single zone CV: CHW cooling, HW heating, constant speed, dry bulb econ",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-chw", "htg-hw", "econ-db",
+            "vent-fix",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-SZCV-502": {
+        "family": "SZ-CV",
+        "name": "CHW / Electric-1 / CS — Minimal",
+        "description": "Simplest single zone: CHW cooling, single electric heat, constant speed",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-chw", "htg-elec",
+            "vent-fix",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-SZCV-503": {
+        "family": "SZ-CV",
+        "name": "DX-1 / Electric-1 / CS — Package",
+        "description": "Packaged single zone: single DX, single electric, constant speed",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-dx", "htg-elec",
+            "vent-fix",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-SZCV-504": {
+        "family": "SZ-CV",
+        "name": "DX-2 / Gas-1 / CS / Econ-DB — Gas Package",
+        "description": "Packaged single zone: 2-stage DX, gas heat, economizer",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-dx-2", "htg-gas", "econ-db",
+            "vent-fix",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-SZCV-505": {
+        "family": "SZ-CV",
+        "name": "CHW / HW / CS / Econ-Enth / ERW — With ERW",
+        "description": "Single zone CV with energy recovery wheel",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-chw", "htg-hw", "econ-enth", "erw",
+            "vent-fix",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-SZCV-506": {
+        "family": "SZ-CV",
+        "name": "HW Only / CS — Heating Only (MAU)",
+        "description": "Heating-only make-up air: HW heat, constant speed, no cooling",
+        "modules": [
+            "core", "fan-sf-cs",
+            "htg-hw",
+            "vent-fix",
+        ] + _SAFETY_BASE,
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  SINGLE ZONE VAV — SBS-SZVAV-601 to 610
+    #  VFD supply fan modulates to SPACE TEMP (not duct static)
+    #  No downstream VAV boxes — fan speed IS the capacity control
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-SZVAV-601": {
+        "family": "SZ-VAV",
+        "name": "CHW / HW / VFD / Econ-DB — Basic",
+        "description": "Single zone VAV: CHW/HW, VFD fan to space temp, dry bulb econ",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-chw", "htg-hw", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-SZVAV-602": {
+        "family": "SZ-VAV",
+        "name": "CHW / HW / VFD / Econ-Enth — Enthalpy",
+        "description": "Single zone VAV: CHW/HW, VFD fan to space temp, enthalpy econ",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-chw", "htg-hw", "econ-enth",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-SZVAV-603": {
+        "family": "SZ-VAV",
+        "name": "CHW / HW / VFD / Econ-Enth / ERW — With ERW",
+        "description": "Single zone VAV with energy recovery wheel",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-chw", "htg-hw", "econ-enth", "erw",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-SZVAV-604": {
+        "family": "SZ-VAV",
+        "name": "DX-2 / Electric-2 / VFD / Econ-DB — Package",
+        "description": "Packaged single zone VAV: 2-stage DX, 2-stage electric, VFD to space temp",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-dx-2", "htg-elec-2", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-SZVAV-605": {
+        "family": "SZ-VAV",
+        "name": "DX-2 / Gas-1 / VFD / Econ-DB — Gas Package",
+        "description": "Packaged single zone VAV: 2-stage DX, gas heat, VFD to space temp",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-dx-2", "htg-gas", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-SZVAV-606": {
+        "family": "SZ-VAV",
+        "name": "CHW / HW / PH-HW / VFD / Econ-Enth / ERW — Full Featured",
+        "description": "Full single zone VAV: CHW, HW, preheat, ERW, enthalpy econ",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-chw", "htg-hw", "ph-hw", "econ-enth", "erw",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_FULL,
     },
 }
