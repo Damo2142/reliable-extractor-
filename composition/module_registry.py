@@ -6,7 +6,7 @@ Central registry of all available modules. Builds and caches module instances.
 
 from composition.modules import (
     core, fan_supply, fan_return_exhaust, heating, cooling,
-    economizer, erw, ventilation, optimum_start, safety, preheat, humidity
+    economizer, erw, ventilation, optimum_start, safety, preheat, humidity, pump
 )
 
 
@@ -90,6 +90,11 @@ _register("hum-stm", humidity.build_hum_stm)
 _register("hum-elec", humidity.build_hum_elec)
 _register("hum-ultra", humidity.build_hum_ultra)
 _register("dehum-sc", humidity.build_dehum_sc)
+
+# Pumps
+_register("htg-hw-pump", pump.build_hw_pump)
+_register("clg-chw-pump", pump.build_chw_pump)
+_register("ph-hw-pump", pump.build_ph_pump)
 
 
 # Cache built modules
