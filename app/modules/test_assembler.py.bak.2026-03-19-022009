@@ -2,11 +2,12 @@
 """
 SBS Controls — Modular Composition Engine Test
 
-Tests the complete assembly pipeline with the new program-based structure:
-    1. Load base module + features
-    2. Run assembler with conflict/dependency checks
-    3. Validate: programs list, point list, I/O, controller, no conflicts
-    4. Verify proper Control-BASIC syntax in generated programs
+Tests the complete assembly pipeline:
+    1. Load AHU-VAV base module
+    2. Add all standard AHU features
+    3. Run assembler with conflict/dependency checks
+    4. Print: point list, I/O map, controller recommendation, assembled code
+    5. Validate: no conflicts, all dependencies met, controller fits
 
 Usage:
     cd /srv/reliable-generator-dev
@@ -24,9 +25,9 @@ from app.modules import list_modules, list_bases
 
 
 def test_full_ahu_vav():
-    """Test: Full AHU-VAV with all standard features (program-based)."""
+    """Test: Full AHU-VAV with all standard features."""
     print("\n" + "=" * 72)
-    print("  TEST 1: Full AHU-VAV Assembly (Program-Based)")
+    print("  TEST 1: Full AHU-VAV Assembly")
     print("=" * 72)
 
     features = [
@@ -49,8 +50,8 @@ def test_full_ahu_vav():
 
     print_assembly_report(result)
 
-    # -- Validation ---------------------------------------------------------
-    print("\n-- Validation Results --")
+    # ── Validation ───────────────────────────────────────────────────────
+    print("\n── Validation Results ──")
     passed = 0
     failed = 0
 
@@ -84,52 +85,10 @@ def test_full_ahu_vav():
     # Check no errors
     check(len(result["errors"]) == 0, f"No errors (got {len(result['errors'])})")
 
-    # Check programs list exists and has entries
-    programs = result.get("programs", [])
-    check(
-        len(programs) > 0,
-        f"Programs list has {len(programs)} programs"
-    )
-
-    # Check expected program names exist
-    prg_names = [p["name"] for p in programs]
-    check("AHU-1-CFG-PRG" in prg_names, "CFG-PRG program present")
-    check("AHU-1-MODE-PRG" in prg_names, "MODE-PRG program present")
-    check("AHU-1-SP-PRG" in prg_names, "SP-PRG program present")
-    check("AHU-1-CLG-PRG" in prg_names, "CLG-PRG program present")
-    check("AHU-1-HTG-PRG" in prg_names, "HTG-PRG program present")
-    check("AHU-1-SF-PRG" in prg_names, "SF-PRG program present")
-    check("AHU-1-ECON-PRG" in prg_names, "ECON-PRG program present")
-    check("AHU-1-DSP-PRG" in prg_names, "DSP-PRG program present")
-
-    # Check ALARM-PRG exists (merged from freeze + smoke/fire + filter)
-    check("AHU-1-ALARM-PRG" in prg_names, "ALARM-PRG program present (merged safety)")
-
-    # Check programs have proper Control-BASIC line numbers
-    for prg in programs:
-        lines = prg["code"].strip().split("\n")
-        has_line_nums = all(
-            lines[i].strip().split()[0].isdigit()
-            for i in range(len(lines))
-            if lines[i].strip()
-        )
-        check(has_line_nums, f"Program {prg['name']} has line numbers")
-
-    # Check programs use object names (not AI1, BO1 etc.)
-    for prg in programs:
-        code = prg["code"]
-        # Should NOT have bare AI1/BO1/AO1 references (old style)
-        has_old_refs = False
-        for old_ref in ["= AI1", "= BO1", "= AO1", "= MV1", "= BV1"]:
-            if old_ref in code:
-                has_old_refs = True
-                break
-        check(not has_old_refs, f"Program {prg['name']} uses named objects (not AI1/BO1)")
-
     # Check point list has points
     check(
-        len(result["point_list"]) > 15,
-        f"Point list has {len(result['point_list'])} points (expected >15)"
+        len(result["point_list"]) > 20,
+        f"Point list has {len(result['point_list'])} points (expected >20)"
     )
 
     # Check I/O counts
@@ -145,8 +104,8 @@ def test_full_ahu_vav():
         f"Controller fits: {result['controller'].controller.id}"
     )
 
-    # Check backward-compat code string
-    check(len(result["code"]) > 500, f"Backward-compat code generated ({len(result['code'])} chars)")
+    # Check code is non-empty
+    check(len(result["code"]) > 500, f"Code generated ({len(result['code'])} chars)")
 
     # Check device name substitution worked
     point_names = [p["name"] for p in result["point_list"]]
@@ -172,16 +131,6 @@ def test_full_ahu_vav():
         f"Modules sorted by exec_order: {orders}"
     )
 
-    # Check Control-BASIC keywords present in code
-    code = result["code"]
-    check("SLIDE(" in code or "SLIDE (" in code, "SLIDE() function used in code")
-    check("LIMIT(" in code or "LIMIT (" in code, "LIMIT() function used in code")
-    check("DALARM" in code, "DALARM statement used in code")
-    check("START" in code, "START statement used in code")
-    check("STOP" in code, "STOP statement used in code")
-    check("REM" in code, "REM comments present in code")
-    check("END" in code, "END statement present in code")
-
     print(f"\n  Results: {passed} passed, {failed} failed")
     return failed == 0
 
@@ -193,24 +142,23 @@ def test_conflict_detection():
     print("=" * 72)
 
     # Register a fake constant-speed fan module that conflicts with VFD
-    from app.modules import register_module, _MODULE_REGISTRY
-    if "mod_cs_supply_fan" not in _MODULE_REGISTRY:
-        try:
-            fake_cs = {
-                "id": "mod_cs_supply_fan",
-                "name": "Constant Speed Supply Fan (test)",
-                "feature": "SF-CS",
-                "category": "fan",
-                "requires": [],
-                "conflicts": ["mod_vfd_supply_fan"],
-                "exec_order": 30,
-                "objects": {"BO": [{"name": "{device-name}-SF-CMD2", "desc": "test"}]},
-                "io_map": {},
-                "code": "10 REM test",
-            }
-            register_module(fake_cs)
-        except ValueError:
-            pass  # Already registered from previous run
+    from app.modules import register_module
+    try:
+        fake_cs = {
+            "id": "mod_cs_supply_fan",
+            "name": "Constant Speed Supply Fan (test)",
+            "feature": "SF-CS",
+            "category": "fan",
+            "requires": [],
+            "conflicts": ["mod_vfd_supply_fan"],
+            "exec_order": 30,
+            "objects": {"BO": [{"name": "{device-name}-SF-CMD2", "desc": "test"}]},
+            "io_map": {},
+            "code": "REM test",
+        }
+        register_module(fake_cs)
+    except ValueError:
+        pass  # Already registered from previous run
 
     try:
         assemble(
@@ -296,15 +244,9 @@ def test_template_mode():
     point_names = [p["name"] for p in result["point_list"]]
     all_templated = all("{device-name}" in n for n in point_names)
 
-    # Check programs also keep template
-    programs = result.get("programs", [])
-    prg_templated = all("{device-name}" in p["name"] for p in programs)
-
     print(f"  [{'PASS' if all_templated else 'FAIL'}] All points use template placeholder")
-    print(f"  [{'PASS' if prg_templated else 'FAIL'}] All programs use template placeholder")
     print(f"  Sample points: {point_names[:5]}")
-    print(f"  Programs: {[p['name'] for p in programs]}")
-    return all_templated and prg_templated
+    return all_templated
 
 
 def test_registry():
@@ -328,198 +270,6 @@ def test_registry():
     print(f"  [{'PASS' if has_modules else 'FAIL'}] At least 8 feature modules registered ({len(modules)})")
 
     return has_base and has_modules
-
-
-def test_program_merging():
-    """Test: ALARM-PRG should merge from freeze + smoke/fire + filter modules."""
-    print("\n" + "=" * 72)
-    print("  TEST 7: Program Merging (ALARM-PRG)")
-    print("=" * 72)
-
-    result = assemble(
-        equipment_type="AHU-VAV",
-        features=["FREEZE", "SMOKE-FIRE", "FLTR-DP"],
-        device_name="AHU-2",
-    )
-
-    programs = result.get("programs", [])
-    prg_names = [p["name"] for p in programs]
-
-    passed = 0
-    failed = 0
-
-    def check(condition, description):
-        nonlocal passed, failed
-        status = "PASS" if condition else "FAIL"
-        if condition:
-            passed += 1
-        else:
-            failed += 1
-        print(f"  [{status}] {description}")
-
-    # Should have exactly one ALARM-PRG (merged)
-    alarm_count = prg_names.count("AHU-2-ALARM-PRG")
-    check(alarm_count == 1, f"Exactly 1 ALARM-PRG program (got {alarm_count})")
-
-    # Find the alarm program
-    alarm_prg = None
-    for p in programs:
-        if p["name"] == "AHU-2-ALARM-PRG":
-            alarm_prg = p
-            break
-
-    if alarm_prg:
-        code = alarm_prg["code"]
-        check("Freeze" in code or "FREEZE" in code, "ALARM-PRG contains freeze logic")
-        check("SMOKE" in code or "Smoke" in code, "ALARM-PRG contains smoke logic")
-        check("FLTR" in code or "Filter" in code or "DALARM" in code, "ALARM-PRG contains filter logic")
-
-        # Check all lines have line numbers
-        lines = [l for l in code.strip().split("\n") if l.strip()]
-        has_nums = all(l.strip().split()[0].isdigit() for l in lines)
-        check(has_nums, "Merged ALARM-PRG has valid line numbers")
-
-        # Check line numbers are sequential (no duplicates)
-        nums = [int(l.strip().split()[0]) for l in lines]
-        check(nums == sorted(set(nums)), f"Line numbers are unique and sequential: first={nums[0]}, last={nums[-1]}")
-
-        print(f"\n  Merged ALARM-PRG code ({len(lines)} lines):")
-        for line in code.split("\n")[:15]:
-            print(f"    {line}")
-        if len(lines) > 15:
-            print(f"    ... ({len(lines) - 15} more lines)")
-
-    print(f"\n  Results: {passed} passed, {failed} failed")
-    return failed == 0
-
-
-def test_control_basic_syntax():
-    """Test: Verify Control-BASIC syntax rules in generated programs."""
-    print("\n" + "=" * 72)
-    print("  TEST 8: Control-BASIC Syntax Validation")
-    print("=" * 72)
-
-    result = assemble(
-        equipment_type="AHU-VAV",
-        features=["CHW", "HW", "ECON-DB", "SF-VFD", "DSP"],
-        device_name="AHU-3",
-    )
-
-    programs = result.get("programs", [])
-    passed = 0
-    failed = 0
-
-    def check(condition, description):
-        nonlocal passed, failed
-        status = "PASS" if condition else "FAIL"
-        if condition:
-            passed += 1
-        else:
-            failed += 1
-        print(f"  [{status}] {description}")
-
-    for prg in programs:
-        code = prg["code"]
-        lines = [l for l in code.strip().split("\n") if l.strip()]
-        name = prg["name"]
-
-        # Rule 1: Every line starts with a number
-        for line in lines:
-            parts = line.strip().split(None, 1)
-            try:
-                int(parts[0])
-            except (ValueError, IndexError):
-                check(False, f"{name}: Line missing number: '{line[:50]}'")
-
-        # Rule 4: No multi-line IF blocks (no ENDIF)
-        check("ENDIF" not in code, f"{name}: No ENDIF (single-line IF only)")
-
-        # Rule 5: No multi-word variable names with underscores
-        # (Control-BASIC uses single-letter A-Z locals or named objects)
-        has_underscore_vars = False
-        for line in lines:
-            # Skip REM lines
-            parts = line.strip().split(None, 2)
-            if len(parts) >= 2 and parts[1] == "REM":
-                continue
-            # Check for old-style underscore variables like SAT_ERR, CHW_OUT
-            words = line.split()
-            for word in words:
-                if "_" in word and word not in ["{device-name}", "AHU-3"] and not word.startswith("REM"):
-                    # Filter out things that are clearly not variable names
-                    if word.replace("_", "").replace(",", "").isalpha():
-                        has_underscore_vars = True
-                        break
-        check(not has_underscore_vars, f"{name}: No underscore variables")
-
-    # Check that SLIDE is used correctly (with parentheses and commas)
-    all_code = result["code"]
-    if "SLIDE(" in all_code or "SLIDE (" in all_code:
-        check(True, "SLIDE() function present with proper syntax")
-    else:
-        check(False, "SLIDE() function should be present")
-
-    if "LIMIT(" in all_code or "LIMIT (" in all_code:
-        check(True, "LIMIT() function present with proper syntax")
-    else:
-        check(False, "LIMIT() function should be present")
-
-    print(f"\n  Results: {passed} passed, {failed} failed")
-    return failed == 0
-
-
-def test_dehum_module():
-    """Test: Dehumidification module."""
-    print("\n" + "=" * 72)
-    print("  TEST 9: Dehumidification Module")
-    print("=" * 72)
-
-    result = assemble(
-        equipment_type="AHU-VAV",
-        features=["CHW", "HW", "DEHUM"],
-        device_name="AHU-4",
-    )
-
-    passed = 0
-    failed = 0
-
-    def check(condition, description):
-        nonlocal passed, failed
-        status = "PASS" if condition else "FAIL"
-        if condition:
-            passed += 1
-        else:
-            failed += 1
-        print(f"  [{status}] {description}")
-
-    mod_ids = [m["id"] for m in result["modules"]]
-    check("mod_dehumid" in mod_ids, "Dehumid module loaded")
-
-    programs = result.get("programs", [])
-    prg_names = [p["name"] for p in programs]
-    check("AHU-4-DEHUM-PRG" in prg_names, "DEHUM-PRG program present")
-
-    # Check dehum-specific points
-    point_names = [p["name"] for p in result["point_list"]]
-    check("AHU-4-ZN-RH" in point_names, "Zone RH point present")
-    check("AHU-4-RH-SP" in point_names, "RH setpoint present")
-    check("AHU-4-DEHUM-ACT" in point_names, "Dehum active flag present")
-
-    # Check code uses SWITCH
-    dehum_prg = None
-    for p in programs:
-        if p["name"] == "AHU-4-DEHUM-PRG":
-            dehum_prg = p
-            break
-
-    if dehum_prg:
-        check("SWITCH(" in dehum_prg["code"] or "SWITCH (" in dehum_prg["code"],
-              "DEHUM-PRG uses SWITCH() for hysteresis")
-
-    check(len(result["errors"]) == 0, f"No errors (got {len(result['errors'])})")
-
-    print(f"\n  Results: {passed} passed, {failed} failed")
-    return failed == 0
 
 
 def _run_assembly_test(test_name, equipment_type, features, device_name,
@@ -567,11 +317,8 @@ def _run_assembly_test(test_name, equipment_type, features, device_name,
     check(result["controller"].fits,
           f"Controller fits: {result['controller'].controller.id}")
 
-    # Check programs or code exists
-    programs = result.get("programs", [])
-    code = result.get("code", "")
-    check(len(programs) > 0 or len(code) > 100,
-          f"Has programs ({len(programs)}) or code ({len(code)} chars)")
+    check(len(result["code"]) > 100,
+          f"Code generated ({len(result['code'])} chars)")
 
     point_names = [p["name"] for p in result["point_list"]]
     check(all(device_name + "-" in n for n in point_names),
@@ -592,7 +339,7 @@ def _run_assembly_test(test_name, equipment_type, features, device_name,
 def test_vav_hw_reheat():
     """Test: VAV terminal with HW reheat."""
     return _run_assembly_test(
-        test_name="TEST 10: VAV Terminal with HW Reheat",
+        test_name="TEST 7: VAV Terminal with HW Reheat",
         equipment_type="VAV",
         features=["RH-HW"],
         device_name="VAV-1-01",
@@ -606,7 +353,7 @@ def test_vav_hw_reheat():
 def test_vav_elec_reheat():
     """Test: VAV terminal with electric reheat."""
     return _run_assembly_test(
-        test_name="TEST 11: VAV Terminal with Electric Reheat",
+        test_name="TEST 8: VAV Terminal with Electric Reheat",
         equipment_type="VAV",
         features=["RH-ELEC"],
         device_name="VAV-2-01",
@@ -620,7 +367,7 @@ def test_vav_elec_reheat():
 def test_ahu_cv_chw_hw_econ():
     """Test: AHU-CV with CHW + HW + economizer."""
     return _run_assembly_test(
-        test_name="TEST 12: AHU-CV with CHW + HW + Economizer",
+        test_name="TEST 9: AHU-CV with CHW + HW + Economizer",
         equipment_type="AHU-CV",
         features=["CHW", "HW", "ECON-DB"],
         device_name="AHU-3",
@@ -634,7 +381,7 @@ def test_ahu_cv_chw_hw_econ():
 def test_rtu_vav_dx_gas():
     """Test: RTU-VAV with DX cooling + gas heat."""
     return _run_assembly_test(
-        test_name="TEST 13: RTU-VAV with DX Cooling + Gas Heat",
+        test_name="TEST 10: RTU-VAV with DX Cooling + Gas Heat",
         equipment_type="RTU-VAV",
         features=["DX-1", "GAS-1", "ECON-DB"],
         device_name="RTU-1",
@@ -648,7 +395,7 @@ def test_rtu_vav_dx_gas():
 def test_fcu_4pipe():
     """Test: FCU 4-pipe (cooling + HW heating)."""
     return _run_assembly_test(
-        test_name="TEST 14: FCU 4-Pipe (CHW + HW)",
+        test_name="TEST 11: FCU 4-Pipe (CHW + HW)",
         equipment_type="FCU",
         features=["HW-FCU"],
         device_name="FCU-1",
@@ -662,7 +409,7 @@ def test_fcu_4pipe():
 def test_exhaust_fan():
     """Test: Simple exhaust fan."""
     return _run_assembly_test(
-        test_name="TEST 15: Exhaust Fan - Simple",
+        test_name="TEST 12: Exhaust Fan - Simple",
         equipment_type="EF",
         features=[],
         device_name="EF-1",
@@ -676,7 +423,7 @@ def test_exhaust_fan():
 def test_unit_heater():
     """Test: Unit heater."""
     return _run_assembly_test(
-        test_name="TEST 16: Unit Heater",
+        test_name="TEST 13: Unit Heater",
         equipment_type="UH",
         features=[],
         device_name="UH-1",
@@ -690,7 +437,7 @@ def test_unit_heater():
 def test_wshp_base():
     """Test: Water Source Heat Pump base module."""
     return _run_assembly_test(
-        test_name="TEST 17: Water Source Heat Pump (Base)",
+        test_name="TEST 14: Water Source Heat Pump (Base)",
         equipment_type="WSHP",
         features=[],
         device_name="WSHP-1",
@@ -704,7 +451,7 @@ def test_wshp_base():
 def test_doas_chw_hw_erw():
     """Test: DOAS with CHW + HW + Energy Recovery Wheel."""
     return _run_assembly_test(
-        test_name="TEST 18: DOAS + CHW + HW + ERW",
+        test_name="TEST 15: DOAS + CHW + HW + ERW",
         equipment_type="DOAS",
         features=["CHW", "HW", "ERW"],
         device_name="DOAS-1",
@@ -718,7 +465,7 @@ def test_doas_chw_hw_erw():
 def test_rtu_cv_dx_gas_econ():
     """Test: RTU-CV with DX cooling + gas heat + economizer."""
     return _run_assembly_test(
-        test_name="TEST 19: RTU-CV + DX-1 + GAS-1 + Economizer",
+        test_name="TEST 16: RTU-CV + DX-1 + GAS-1 + Economizer",
         equipment_type="RTU-CV",
         features=["DX-1", "GAS-1", "ECON-DB"],
         device_name="RTU-2",
@@ -732,8 +479,7 @@ def test_rtu_cv_dx_gas_econ():
 def main():
     """Run all tests."""
     print("\n" + "#" * 72)
-    print("  SBS CONTROLS — MODULAR COMPOSITION ENGINE TEST SUITE (v2)")
-    print("  Program-Based Architecture with Control-BASIC Syntax")
+    print("  SBS CONTROLS — MODULAR COMPOSITION ENGINE TEST SUITE")
     print("#" * 72)
 
     results = []
@@ -744,9 +490,6 @@ def main():
     results.append(("Dependency Resolution", test_dependency_resolution()))
     results.append(("Controller Selection", test_controller_selection()))
     results.append(("Template Mode", test_template_mode()))
-    results.append(("Program Merging (ALARM-PRG)", test_program_merging()))
-    results.append(("Control-BASIC Syntax", test_control_basic_syntax()))
-    results.append(("Dehumidification Module", test_dehum_module()))
     results.append(("VAV + HW Reheat", test_vav_hw_reheat()))
     results.append(("VAV + Electric Reheat", test_vav_elec_reheat()))
     results.append(("AHU-CV + CHW + HW + Econ", test_ahu_cv_chw_hw_econ()))

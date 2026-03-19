@@ -76,7 +76,7 @@ def get_modules_for_feature(feature_code: str) -> List[dict]:
 
 # ── Validation ───────────────────────────────────────────────────────────────
 
-REQUIRED_KEYS = {"id", "name", "category", "exec_order", "objects"}
+REQUIRED_KEYS = {"id", "name", "category", "exec_order", "objects", "code"}
 VALID_OBJECT_TYPES = {"AI", "AO", "AV", "BI", "BO", "BV", "MO", "MV", "LOOP", "SCHEDULE"}
 VALID_CATEGORIES = {
     "core", "mode", "occupancy", "fan", "damper", "economizer",

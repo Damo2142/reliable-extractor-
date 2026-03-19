@@ -1,8 +1,11 @@
 """
 SBS Controls — Feature Module: Duct Static Pressure Control
 
-PID control of duct static pressure by modulating supply fan VFD speed.
-Requires VFD supply fan module for speed output.
+PID control of duct static pressure using a LOOP object.
+LOOP output drives supply fan VFD speed.
+
+Program:
+    {device-name}-DSP-PRG — Static pressure control via LOOP + LIMIT
 
 Add-on code: DSP
 Applicable: AHU-VAV (required for VAV systems)
@@ -30,7 +33,6 @@ module = {
                 "max": 5.0,
             },
         ],
-        "AO": [],
         "AV": [
             {
                 "name": "{device-name}-DSP-SP",
@@ -40,72 +42,49 @@ module = {
                 "max": 3.0,
                 "default": 1.5,
             },
+        ],
+        "LOOP": [
             {
-                "name": "{device-name}-DSP-P",
-                "desc": "DSP PID Proportional Band",
-                "units": "inwc",
-                "min": 0.1,
-                "max": 2.0,
-                "default": 0.5,
-            },
-            {
-                "name": "{device-name}-DSP-I",
-                "desc": "DSP PID Integral Time",
-                "units": "minutes",
-                "min": 0,
-                "max": 20,
-                "default": 3.0,
+                "name": "{device-name}-DSP-LOOP",
+                "desc": "Duct Static Pressure PID Loop",
+                "units": "percent",
             },
         ],
-        "BI": [],
-        "BO": [],
-        "BV": [],
     },
 
     "io_map": {
         "UI7": "{device-name}-DSP",
     },
 
-    "code": """\
-REM ── DUCT STATIC PRESSURE: Fan Speed PID ──
-REM Modulates supply fan VFD speed to maintain duct static pressure setpoint
-
-DSP_VAL = AI7
-DSP_SETPT = AV13
-DSP_P_BAND = AV14
-
-IF MODE >= 3 AND BO1 = 1 THEN
-  REM Fan running — run DSP PID
-
-  DSP_ERR = DSP_SETPT - DSP_VAL
-  REM Error: positive = need more pressure (speed up)
-
-  REM Proportional control
-  DSP_OUT = 50 + (DSP_ERR / DSP_P_BAND) * 50
-
-  REM Clamp to min/max fan speed range
-  IF DSP_OUT < SF_MIN THEN DSP_OUT = SF_MIN
-  IF DSP_OUT > SF_MAX THEN DSP_OUT = SF_MAX
-
-  REM Write fan speed command (overrides VFD module default)
-  SF_SPD_CMD = DSP_OUT
-  AO4 = DSP_OUT
-
-  REM High static alarm
-  IF DSP_VAL > (DSP_SETPT * 1.5) THEN
-    DSP_HI_ALARM = 1
-  ELSE
-    DSP_HI_ALARM = 0
-  ENDIF
-
-  REM Low static alarm (fan running but no pressure)
-  IF DSP_VAL < 0.1 AND AO4 > 50 THEN
-    DSP_LO_ALARM = 1
-  ELSE
-    DSP_LO_ALARM = 0
-  ENDIF
-ENDIF\
-""",
+    "programs": [
+        {
+            "name": "{device-name}-DSP-PRG",
+            "description": "Duct Static Pressure — Fan Speed PID via LOOP",
+            "code": (
+                "10 REM ***** DUCT STATIC PRESSURE PROGRAM *****\n"
+                "20 REM SBS Controls — PID control via LOOP object\n"
+                "30 REM LOOP input = DSP sensor, setpoint = DSP-SP\n"
+                "40 REM LOOP output drives SF-SPD through LIMIT\n"
+                "50 REM\n"
+                "60 REM ── Only run when fan is commanded on ──\n"
+                "70 IF NOT {device-name}-SF-CMD THEN LET {device-name}-SF-SPD = 0 , END\n"
+                "80 REM\n"
+                "90 REM ── Drive fan speed from LOOP output ──\n"
+                "100 REM LOOP object handles PID internally\n"
+                "110 REM Clamp output between min and max fan speed\n"
+                "120 LET {device-name}-SF-SPD = LIMIT( {device-name}-DSP-LOOP , {device-name}-SF-MIN-SPD , {device-name}-SF-MAX-SPD )\n"
+                "130 REM\n"
+                "140 REM ── High static pressure alarm ──\n"
+                "150 LET A = {device-name}-DSP-SP * 1.5\n"
+                "160 DALARM {device-name}-DSP > A , 30 , High duct static pressure\n"
+                "170 REM\n"
+                "180 REM ── Low static alarm (fan running but no pressure) ──\n"
+                "190 LET B = {device-name}-SF-SPD > 50\n"
+                "200 DALARM ( {device-name}-DSP < 0.1 ) AND B , 60 , Low duct static pressure\n"
+                "210 END"
+            ),
+        },
+    ],
 }
 
 register_module(module)

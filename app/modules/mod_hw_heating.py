@@ -2,7 +2,11 @@
 SBS Controls — Feature Module: Hot Water Heating
 
 Modulates a hot water valve to control supply air temperature during
-heating mode. PID output drives HW valve 0-100%.
+heating mode using proper Control-BASIC SLIDE() function.
+REVERSE action — valve opens as temperature drops below setpoint.
+
+Program:
+    {device-name}-HTG-PRG — Heating sequence with SLIDE() modulation
 
 Add-on code: HW
 Applicable: AHU-VAV, AHU-CV, RTU (with HW coil), FCU, VAV (reheat)
@@ -20,7 +24,6 @@ module = {
     "exec_order": 60,
 
     "objects": {
-        "AI": [],
         "AO": [
             {
                 "name": "{device-name}-HW-VLV",
@@ -31,80 +34,45 @@ module = {
                 "default": 0,
             },
         ],
-        "AV": [
-            {
-                "name": "{device-name}-HW-P",
-                "desc": "HW PID Proportional Band",
-                "units": "deg-f",
-                "min": 1,
-                "max": 20,
-                "default": 5.0,
-            },
-            {
-                "name": "{device-name}-HW-I",
-                "desc": "HW PID Integral Time",
-                "units": "minutes",
-                "min": 0,
-                "max": 30,
-                "default": 8.0,
-            },
-        ],
-        "BI": [],
-        "BO": [],
-        "BV": [],
     },
 
     "io_map": {
         "UO2": "{device-name}-HW-VLV",
     },
 
-    "code": """\
-REM ── HW HEATING: Hot Water Valve Control ──
-REM Modulates HW valve based on SAT error in heating mode
-
-IF MODE >= 3 AND BO1 = 1 THEN
-  REM Fan is running, heating allowed
-  SAT_ERR = AV1 - SAT
-  REM AV1 = active SAT setpoint from base module
-
-  IF MODE = 4 THEN
-    REM Warmup mode — use heating setpoint, more aggressive
-    SAT_ERR = AV4 - SAT
-  ENDIF
-
-  IF SAT_ERR > 0 THEN
-    REM Temperature below setpoint — need heating
-    HW_P_BAND = AV7
-    HW_OUT = (SAT_ERR / HW_P_BAND) * 100
-
-    REM Clamp output 0-100%
-    IF HW_OUT > 100 THEN HW_OUT = 100
-    IF HW_OUT < 0 THEN HW_OUT = 0
-
-    AO2 = HW_OUT
-  ELSE
-    REM Above setpoint — close valve
-    AO2 = 0
-  ENDIF
-
-  REM Heating/cooling interlock: no simultaneous operation
-  IF AO1 > 5 THEN
-    REM CHW valve is open — force HW closed
-    AO2 = 0
-  ENDIF
-ELSE
-  REM Fan off — close valve
-  AO2 = 0
-ENDIF
-
-REM ── Unoccupied Low Limit Override ──
-IF MODE = 2 THEN
-  IF RAT < UNOCC_LOW_LIMIT THEN
-    REM Below low limit — open HW valve to protect space
-    AO2 = 100
-  ENDIF
-ENDIF\
-""",
+    "programs": [
+        {
+            "name": "{device-name}-HTG-PRG",
+            "description": "Heating Sequence — HW Valve Modulation",
+            "code": (
+                "10 REM ***** HEATING PROGRAM *****\n"
+                "20 REM SBS Controls — Hot Water Valve Control\n"
+                "30 REM Modulate HW-VLV using SLIDE (reverse action)\n"
+                "40 REM As SAT drops below SP, valve opens toward 100%\n"
+                "50 REM\n"
+                "60 REM ── Emergency stop: close valve ──\n"
+                "70 IF {device-name}-EMER-STOP THEN LET {device-name}-HW-VLV = 0 , END\n"
+                "80 REM\n"
+                "90 REM ── Only heat when HVAC-MODE = Heat (1) ──\n"
+                "100 IF {device-name}-HVAC-MODE <> 1 THEN LET {device-name}-HW-VLV = 0 , END\n"
+                "110 REM\n"
+                "120 REM ── Fan must be running ──\n"
+                "130 IF NOT {device-name}-SF-STS THEN LET {device-name}-HW-VLV = 0 , END\n"
+                "140 REM\n"
+                "150 REM ── Modulate HW valve proportionally (reverse) ──\n"
+                "160 REM SLIDE: as SAT drops from SP to SP-5, valve goes 0 to 100\n"
+                "170 LET A = {device-name}-SAT-SP\n"
+                "180 LET {device-name}-HW-VLV = SLIDE( {device-name}-SAT , A - 5 , A , 100 , 0 )\n"
+                "190 REM\n"
+                "200 REM ── Clamp output 0-100 ──\n"
+                "210 LET {device-name}-HW-VLV = LIMIT( {device-name}-HW-VLV , 0 , 100 )\n"
+                "220 REM\n"
+                "230 REM ── Freeze override: open valve 100% on freeze ──\n"
+                "240 IF {device-name}-SAT < 38 THEN LET {device-name}-HW-VLV = 100\n"
+                "250 END"
+            ),
+        },
+    ],
 }
 
 register_module(module)

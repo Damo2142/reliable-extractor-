@@ -1,8 +1,10 @@
 """
 SBS Controls — Feature Module: Freeze Protection
 
-Monitors freeze stat contact. On trip: closes OA damper, opens HW valve
-to 100%, and generates alarm. Critical safety override.
+Monitors freeze stat contact using DALARM. On trip: closes OA damper,
+opens HW valve to 100%, stops fan. Critical safety override.
+
+Contributes lines to the combined {device-name}-ALARM-PRG program.
 
 Add-on code: FREEZE
 Applicable: AHU-VAV, AHU-CV, RTU, DOAS
@@ -20,23 +22,11 @@ module = {
     "exec_order": 80,
 
     "objects": {
-        "AI": [],
-        "AO": [],
-        "AV": [],
         "BI": [
             {
                 "name": "{device-name}-FREEZE",
                 "desc": "Freeze Stat Contact (N.C.)",
                 "states": {0: "Normal", 1: "Freeze"},
-            },
-        ],
-        "BO": [],
-        "BV": [
-            {
-                "name": "{device-name}-FREEZE-ALM",
-                "desc": "Freeze Protection Alarm",
-                "states": {0: "Normal", 1: "Alarm"},
-                "default": 0,
             },
         ],
     },
@@ -45,33 +35,21 @@ module = {
         "BI3": "{device-name}-FREEZE",
     },
 
-    "code": """\
-REM ── FREEZE PROTECTION: Safety Override ──
-REM On freeze stat trip: close OA, open HW, stop fan, alarm
-
-IF BI3 = 1 THEN
-  REM *** FREEZE STAT TRIPPED ***
-  BV4 = 1
-
-  REM Close outdoor air damper (if economizer module present)
-  AO3 = 0
-
-  REM Open hot water valve 100% (if HW module present)
-  AO2 = 100
-
-  REM Stop supply fan
-  BO1 = 0
-  AO4 = 0
-
-  REM Set mode to Off
-  MV1 = 1
-
-  REM Freeze alarm — requires manual reset
-  FREEZE_ALARM = 1
-ELSE
-  BV4 = 0
-ENDIF\
-""",
+    "programs": [
+        {
+            "name": "{device-name}-ALARM-PRG",
+            "description": "Safety Alarms — Freeze Protection",
+            "code": (
+                "10 REM ***** SAFETY ALARM PROGRAM *****\n"
+                "20 REM SBS Controls — Freeze / Smoke / Fire / Filter Alarms\n"
+                "30 REM\n"
+                "40 REM ── Freeze Protection ──\n"
+                "50 DALARM {device-name}-FREEZE , 10 , Freeze stat tripped\n"
+                "60 IF {device-name}-FREEZE THEN STOP {device-name}-SF-CMD , LET {device-name}-SF-SPD = 0\n"
+                "70 IF {device-name}-FREEZE THEN LET {device-name}-OA-DMP = 0 , LET {device-name}-HW-VLV = 100 , END"
+            ),
+        },
+    ],
 }
 
 register_module(module)

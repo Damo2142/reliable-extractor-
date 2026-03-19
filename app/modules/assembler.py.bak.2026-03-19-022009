@@ -2,14 +2,8 @@
 SBS Controls — Module Assembler
 
 Takes a base equipment type and list of feature codes, resolves dependencies
-and conflicts, merges BACnet objects, collects PROGRAM objects from all modules,
-counts I/O, and recommends a controller model.
-
-Architecture Change (v2):
-    Each module now outputs a "programs" list instead of a single "code" string.
-    Each program is a dict: {"name": str, "description": str, "code": str}
-    Programs with the same name from different modules are merged (code appended).
-    Backward compat: modules with "code" but no "programs" are wrapped automatically.
+and conflicts, merges BACnet objects, stitches Control-BASIC code blocks in
+execution order, counts I/O, and recommends a controller model.
 
 Usage:
     from app.modules.assembler import assemble
@@ -19,9 +13,9 @@ Usage:
         features=["CHW", "HW", "ECON-DB", "SF-VFD", "FLTR-DP", "SMOKE-FIRE", "FREEZE", "DSP"],
         device_name="AHU-1",
     )
-    print(result["programs"])   # list of program dicts
     print(result["point_list"])
     print(result["controller"])
+    print(result["code"])
 """
 
 import copy
@@ -34,106 +28,6 @@ from app.modules.controller_selector import select_controller
 class AssemblyError(Exception):
     """Raised when module assembly fails (conflicts, missing deps, etc.)."""
     pass
-
-
-def _extract_programs(mod: dict) -> list:
-    """
-    Extract programs from a module. Handles both new 'programs' format
-    and legacy 'code' format for backward compatibility.
-
-    Returns list of program dicts: [{"name": ..., "description": ..., "code": ...}]
-    """
-    if "programs" in mod and mod["programs"]:
-        return mod["programs"]
-    # Legacy: wrap single "code" string as one program
-    code = mod.get("code", "").strip()
-    if code:
-        return [{
-            "name": f"{mod['id']}-PRG",
-            "description": mod.get("name", ""),
-            "code": code,
-        }]
-    return []
-
-
-def _merge_programs(all_programs: list) -> list:
-    """
-    Merge programs from all modules. Programs with the same name are
-    combined by merging their code with renumbered lines.
-
-    When merging, the second program's lines are renumbered to continue
-    after the first program's last line number.
-    """
-    merged = {}  # name -> {"name": ..., "description": ..., "code_parts": [...]}
-
-    for prg in all_programs:
-        name = prg["name"]
-        if name not in merged:
-            merged[name] = {
-                "name": name,
-                "description": prg.get("description", ""),
-                "code_parts": [prg["code"]],
-            }
-        else:
-            # Append code — will be renumbered
-            merged[name]["code_parts"].append(prg["code"])
-            # Keep first description unless empty
-            if not merged[name]["description"]:
-                merged[name]["description"] = prg.get("description", "")
-
-    # Now renumber and combine code parts
-    result = []
-    for name, data in merged.items():
-        if len(data["code_parts"]) == 1:
-            result.append({
-                "name": data["name"],
-                "description": data["description"],
-                "code": data["code_parts"][0],
-            })
-        else:
-            combined_code = _renumber_and_combine(data["code_parts"])
-            result.append({
-                "name": data["name"],
-                "description": data["description"],
-                "code": combined_code,
-            })
-
-    return result
-
-
-def _renumber_and_combine(code_parts: list) -> str:
-    """
-    Combine multiple code blocks into one program with renumbered lines.
-    Each block's line numbers are adjusted to avoid conflicts.
-    """
-    all_lines = []
-    next_line = 10
-
-    for part in code_parts:
-        lines = part.strip().split("\n")
-        # Build a mapping of old line numbers to new ones for GOTO references
-        old_to_new = {}
-
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                continue
-
-            # Parse existing line number
-            parts = stripped.split(None, 1)
-            try:
-                old_num = int(parts[0])
-                rest = parts[1] if len(parts) > 1 else ""
-            except (ValueError, IndexError):
-                # No line number — just add with next number
-                rest = stripped
-                old_num = None
-
-            old_to_new[old_num] = next_line
-            all_lines.append(f"{next_line} {rest}")
-            next_line += 10
-
-    return "\n".join(all_lines)
 
 
 def assemble(
@@ -161,15 +55,14 @@ def assemble(
             - io_map: merged I/O terminal map
             - io_counts: dict with num_ai, num_ao, num_di, num_do
             - controller: SelectionResult from controller selector
-            - programs: list of program dicts (name, description, code)
-            - code: assembled code (all programs concatenated, for backward compat)
+            - code: assembled Control-BASIC code (all blocks in exec_order)
             - warnings: list of warning messages
             - errors: list of error messages (empty if successful)
     """
     warnings = []
     errors = []
 
-    # -- 1. Load base module ------------------------------------------------
+    # ── 1. Load base module ──────────────────────────────────────────────────
     base = get_base(equipment_type)
     if base is None:
         raise AssemblyError(
@@ -179,7 +72,7 @@ def assemble(
 
     modules = [copy.deepcopy(base)]
 
-    # -- 2. Load feature modules --------------------------------------------
+    # ── 2. Load feature modules ──────────────────────────────────────────────
     for feature_code in features:
         feature_modules = get_modules_for_feature(feature_code)
         if not feature_modules:
@@ -196,7 +89,7 @@ def assemble(
         for mod in feature_modules:
             modules.append(copy.deepcopy(mod))
 
-    # -- 3. Check conflicts -------------------------------------------------
+    # ── 3. Check conflicts ───────────────────────────────────────────────────
     module_ids = {m["id"] for m in modules}
     for mod in modules:
         for conflict_id in mod.get("conflicts", []):
@@ -211,7 +104,7 @@ def assemble(
             "Module conflicts detected:\n" + "\n".join(errors)
         )
 
-    # -- 4. Resolve dependencies --------------------------------------------
+    # ── 4. Resolve dependencies ──────────────────────────────────────────────
     max_iterations = 10
     for _ in range(max_iterations):
         all_ids = {m["id"] for m in modules}
@@ -241,10 +134,10 @@ def assemble(
             "Dependency errors:\n" + "\n".join(errors)
         )
 
-    # -- 5. Sort by exec_order ----------------------------------------------
+    # ── 5. Sort by exec_order ────────────────────────────────────────────────
     modules.sort(key=lambda m: m["exec_order"])
 
-    # -- 6. Merge objects (dedup by name) ------------------------------------
+    # ── 6. Merge objects (dedup by name) ─────────────────────────────────────
     merged_objects: Dict[str, list] = {}
     seen_names = set()
 
@@ -257,8 +150,11 @@ def assemble(
                 if obj_name not in seen_names:
                     seen_names.add(obj_name)
                     merged_objects[obj_type].append(obj)
+                else:
+                    # Deduplicate: skip if same name already exists
+                    pass
 
-    # -- 7. Build flat point list -------------------------------------------
+    # ── 7. Build flat point list ─────────────────────────────────────────────
     point_list = []
     for obj_type in ["AI", "AO", "AV", "BI", "BO", "BV", "MO", "MV", "LOOP", "SCHEDULE"]:
         for obj in merged_objects.get(obj_type, []):
@@ -274,7 +170,7 @@ def assemble(
                 "source_module": _find_source_module(obj["name"], modules),
             })
 
-    # -- 8. Merge I/O maps --------------------------------------------------
+    # ── 8. Merge I/O maps ────────────────────────────────────────────────────
     io_map = {}
     for mod in modules:
         for terminal, point_name in mod.get("io_map", {}).items():
@@ -286,10 +182,10 @@ def assemble(
                 )
             io_map[terminal] = point_name
 
-    # -- 9. Count I/O -------------------------------------------------------
+    # ── 9. Count I/O ─────────────────────────────────────────────────────────
     io_counts = _count_io(merged_objects)
 
-    # -- 10. Select controller -----------------------------------------------
+    # ── 10. Select controller ────────────────────────────────────────────────
     controller_result = select_controller(
         num_ai=io_counts["num_ai"],
         num_ao=io_counts["num_ao"],
@@ -299,29 +195,18 @@ def assemble(
         prefer_family=prefer_family,
     )
 
-    # -- 11. Collect and merge programs --------------------------------------
-    all_programs = []
-    for mod in modules:
-        all_programs.extend(_extract_programs(mod))
-
-    programs = _merge_programs(all_programs)
-
-    # -- 12. Build backward-compat code string -------------------------------
+    # ── 11. Assemble code ────────────────────────────────────────────────────
     code_blocks = []
-    for prg in programs:
-        header = f"REM ======== PROGRAM: {prg['name']} ========"
-        header2 = f"REM {prg['description']}"
-        code_blocks.append(f"{header}\n{header2}\n{prg['code']}")
+    for mod in modules:
+        code = mod.get("code", "").strip()
+        if code:
+            code_blocks.append(code)
 
     assembled_code = "\n\n".join(code_blocks)
 
-    # -- 13. Apply device name substitution ----------------------------------
+    # ── 12. Apply device name substitution ───────────────────────────────────
     if device_name != "{device-name}":
         assembled_code = assembled_code.replace("{device-name}", device_name)
-        for prg in programs:
-            prg["name"] = prg["name"].replace("{device-name}", device_name)
-            prg["code"] = prg["code"].replace("{device-name}", device_name)
-            prg["description"] = prg["description"].replace("{device-name}", device_name)
         for pt in point_list:
             pt["name"] = pt["name"].replace("{device-name}", device_name)
         io_map = {k: v.replace("{device-name}", device_name) for k, v in io_map.items()}
@@ -333,7 +218,7 @@ def assemble(
         "equipment_type": equipment_type,
         "device_name": device_name,
         "modules": [{"id": m["id"], "name": m["name"], "exec_order": m["exec_order"],
-                     "programs": _extract_programs(m),
+                     "code": m.get("code", "").strip(),
                      "objects": {k: [{"name": o["name"], "desc": o.get("desc","")} for o in v] for k, v in m.get("objects", {}).items() if v},
                      } for m in modules],
         "objects": merged_objects,
@@ -341,7 +226,6 @@ def assemble(
         "io_map": io_map,
         "io_counts": io_counts,
         "controller": controller_result,
-        "programs": programs,
         "code": assembled_code,
         "warnings": warnings,
         "errors": errors,
@@ -397,14 +281,14 @@ def print_assembly_report(result: dict) -> None:
     print("=" * 72)
 
     # Modules loaded
-    print(f"\n-- Modules Loaded ({len(result['modules'])}) --")
+    print(f"\n── Modules Loaded ({len(result['modules'])}) ──")
     for mod in result["modules"]:
         print(f"  [{mod['exec_order']:2d}] {mod['id']:30s} {mod['name']}")
 
     # Point list
-    print(f"\n-- Point List ({len(result['point_list'])} points) --")
+    print(f"\n── Point List ({len(result['point_list'])} points) ──")
     print(f"  {'Type':<6} {'Name':<35} {'Units':<12} {'Description'}")
-    print(f"  {'---'*2:<6} {'---'*12:<35} {'---'*4:<12} {'---'*10}")
+    print(f"  {'─'*6} {'─'*35} {'─'*12} {'─'*30}")
     for pt in result["point_list"]:
         print(
             f"  {pt['type']:<6} {pt['name']:<35} "
@@ -413,12 +297,12 @@ def print_assembly_report(result: dict) -> None:
 
     # I/O counts
     counts = result["io_counts"]
-    print(f"\n-- I/O Summary --")
+    print(f"\n── I/O Summary ──")
     print(f"  Analog Inputs  (AI): {counts['num_ai']}")
     print(f"  Analog Outputs (AO): {counts['num_ao']}")
     print(f"  Binary Inputs  (DI): {counts['num_di']}")
     print(f"  Binary Outputs (DO): {counts['num_do']}")
-    print(f"  ---------------------")
+    print(f"  ─────────────────────")
     print(f"  Physical I/O Total:  {counts['total_physical']}")
     print(f"  Software Points:     {counts['total_software']} "
           f"(AV={counts['num_av']}, BV={counts['num_bv']})")
@@ -426,35 +310,24 @@ def print_assembly_report(result: dict) -> None:
 
     # I/O Map
     if result["io_map"]:
-        print(f"\n-- I/O Terminal Map --")
+        print(f"\n── I/O Terminal Map ──")
         for terminal, point in sorted(result["io_map"].items()):
-            print(f"  {terminal:<8} -> {point}")
+            print(f"  {terminal:<8} → {point}")
 
     # Controller recommendation
-    print(f"\n-- Controller Recommendation --")
+    print(f"\n── Controller Recommendation ──")
     print(f"  {result['controller'].summary()}")
 
-    # Programs
-    programs = result.get("programs", [])
-    print(f"\n-- Control-BASIC Programs ({len(programs)}) --")
-    print("-" * 72)
-    for prg in programs:
-        print(f"\n  PROGRAM: {prg['name']}")
-        print(f"  Description: {prg['description']}")
-        print(f"  {'.'*40}")
-        for line in prg["code"].split("\n"):
-            print(f"    {line}")
-        print()
-    print("-" * 72)
-
-    # Backward compat code
-    if result.get("code"):
-        print(f"\n-- Assembled Code (all programs, {len(result['code'])} chars) --")
+    # Assembled code
+    print(f"\n── Assembled Control-BASIC Code ──")
+    print("─" * 72)
+    print(result["code"])
+    print("─" * 72)
 
     # Warnings
     if result["warnings"]:
-        print(f"\n-- Warnings ({len(result['warnings'])}) --")
+        print(f"\n── Warnings ({len(result['warnings'])}) ──")
         for w in result["warnings"]:
-            print(f"  WARNING: {w}")
+            print(f"  ⚠ {w}")
 
     print()

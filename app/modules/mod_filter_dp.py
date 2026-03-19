@@ -1,8 +1,10 @@
 """
 SBS Controls — Feature Module: Filter Differential Pressure
 
-Monitors filter differential pressure switch for dirty filter alarm.
-Digital input from DP switch across filter bank.
+Monitors filter differential pressure switch for dirty filter alarm
+using DALARM with 300-second delay.
+
+Contributes lines to the combined {device-name}-ALARM-PRG program.
 
 Add-on code: FLTR-DP
 Applicable: AHU-VAV, AHU-CV, RTU, DOAS, MAU
@@ -20,23 +22,11 @@ module = {
     "exec_order": 90,
 
     "objects": {
-        "AI": [],
-        "AO": [],
-        "AV": [],
         "BI": [
             {
                 "name": "{device-name}-FLTR-STS",
                 "desc": "Filter Dirty Status (DP Switch)",
                 "states": {0: "Clean", 1: "Dirty"},
-            },
-        ],
-        "BO": [],
-        "BV": [
-            {
-                "name": "{device-name}-FLTR-ALM",
-                "desc": "Filter Dirty Alarm",
-                "states": {0: "Normal", 1: "Dirty Filter"},
-                "default": 0,
             },
         ],
     },
@@ -45,26 +35,19 @@ module = {
         "BI6": "{device-name}-FLTR-STS",
     },
 
-    "code": """\
-REM ── FILTER DP: Dirty Filter Alarm ──
-REM Monitor filter differential pressure switch
-
-IF BI6 = 1 AND BO1 = 1 THEN
-  REM Filter dirty AND fan running — valid alarm condition
-  IF FLTR_TMR = 0 THEN
-    FLTR_TMR = ELAPSED
-  ENDIF
-  IF (ELAPSED - FLTR_TMR) > 60 THEN
-    REM Confirmed dirty filter (60 second delay to debounce)
-    BV7 = 1
-  ENDIF
-ELSE
-  FLTR_TMR = 0
-  IF BI6 = 0 THEN
-    BV7 = 0
-  ENDIF
-ENDIF\
-""",
+    "programs": [
+        {
+            "name": "{device-name}-ALARM-PRG",
+            "description": "Safety Alarms — Filter DP",
+            "code": (
+                "10 REM ***** SAFETY ALARM PROGRAM *****\n"
+                "20 REM SBS Controls — Filter Dirty Alarm\n"
+                "30 REM\n"
+                "40 REM ── Filter Dirty Alarm (5 min delay) ──\n"
+                "50 DALARM {device-name}-FLTR-STS , 300 , Filter dirty"
+            ),
+        },
+    ],
 }
 
 register_module(module)

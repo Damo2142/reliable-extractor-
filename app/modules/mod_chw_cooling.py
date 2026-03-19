@@ -2,7 +2,10 @@
 SBS Controls — Feature Module: Chilled Water Cooling
 
 Modulates a chilled water valve to control supply air temperature during
-cooling mode. PID output drives CHW valve 0-100%.
+cooling mode using proper Control-BASIC SLIDE() function.
+
+Program:
+    {device-name}-CLG-PRG — Cooling sequence with SLIDE() modulation
 
 Add-on code: CHW
 Applicable: AHU-VAV, AHU-CV, RTU (with CHW coil), FCU
@@ -20,15 +23,6 @@ module = {
     "exec_order": 50,
 
     "objects": {
-        "AI": [
-            {
-                "name": "{device-name}-CLG-DAT",
-                "desc": "Cooling Coil Discharge Air Temperature",
-                "units": "deg-f",
-                "min": 40,
-                "max": 80,
-            },
-        ],
         "AO": [
             {
                 "name": "{device-name}-CHW-VLV",
@@ -39,62 +33,41 @@ module = {
                 "default": 0,
             },
         ],
-        "AV": [
-            {
-                "name": "{device-name}-CHW-P",
-                "desc": "CHW PID Proportional Band",
-                "units": "deg-f",
-                "min": 1,
-                "max": 20,
-                "default": 4.0,
-            },
-            {
-                "name": "{device-name}-CHW-I",
-                "desc": "CHW PID Integral Time",
-                "units": "minutes",
-                "min": 0,
-                "max": 30,
-                "default": 5.0,
-            },
-        ],
-        "BI": [],
-        "BO": [],
-        "BV": [],
     },
 
     "io_map": {
-        "UI4": "{device-name}-CLG-DAT",
         "UO1": "{device-name}-CHW-VLV",
     },
 
-    "code": """\
-REM ── CHW COOLING: Chilled Water Valve Control ──
-REM Modulates CHW valve based on SAT error in cooling mode
-
-IF MODE >= 3 AND BO1 = 1 THEN
-  REM Fan is running, cooling allowed
-  SAT_ERR = SAT - AV1
-  REM AV1 = active SAT setpoint from base module
-
-  IF SAT_ERR > 0 THEN
-    REM Temperature above setpoint — need cooling
-    CHW_P_BAND = AV5
-    CHW_OUT = (SAT_ERR / CHW_P_BAND) * 100
-
-    REM Clamp output 0-100%
-    IF CHW_OUT > 100 THEN CHW_OUT = 100
-    IF CHW_OUT < 0 THEN CHW_OUT = 0
-
-    AO1 = CHW_OUT
-  ELSE
-    REM Below setpoint — close valve
-    AO1 = 0
-  ENDIF
-ELSE
-  REM Fan off or not in occupied mode — close valve
-  AO1 = 0
-ENDIF\
-""",
+    "programs": [
+        {
+            "name": "{device-name}-CLG-PRG",
+            "description": "Cooling Sequence — CHW Valve Modulation",
+            "code": (
+                "10 REM ***** COOLING PROGRAM *****\n"
+                "20 REM SBS Controls — Chilled Water Valve Control\n"
+                "30 REM Modulate CHW-VLV using SLIDE based on SAT vs SAT-SP\n"
+                "40 REM\n"
+                "50 REM ── Emergency stop: close valve ──\n"
+                "60 IF {device-name}-EMER-STOP THEN LET {device-name}-CHW-VLV = 0 , END\n"
+                "70 REM\n"
+                "80 REM ── Only cool when HVAC-MODE = Cool (2) ──\n"
+                "90 IF {device-name}-HVAC-MODE <> 2 THEN LET {device-name}-CHW-VLV = 0 , END\n"
+                "100 REM\n"
+                "110 REM ── Fan must be running ──\n"
+                "120 IF NOT {device-name}-SF-STS THEN LET {device-name}-CHW-VLV = 0 , END\n"
+                "130 REM\n"
+                "140 REM ── Modulate CHW valve proportionally ──\n"
+                "150 REM SLIDE: as SAT rises from SP to SP+5, valve goes 0 to 100\n"
+                "160 LET A = {device-name}-SAT-SP\n"
+                "170 LET {device-name}-CHW-VLV = SLIDE( {device-name}-SAT , A , A + 5 , 0 , 100 )\n"
+                "180 REM\n"
+                "190 REM ── Clamp output 0-100 ──\n"
+                "200 LET {device-name}-CHW-VLV = LIMIT( {device-name}-CHW-VLV , 0 , 100 )\n"
+                "210 END"
+            ),
+        },
+    ],
 }
 
 register_module(module)

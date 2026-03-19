@@ -1,8 +1,10 @@
 """
 SBS Controls — Feature Module: Smoke & Fire Safety
 
-Monitors smoke detector and fire alarm contacts. On activation:
-stops all fans, closes all dampers, generates alarm.
+Monitors smoke detector and fire alarm contacts.
+On activation: stops all fans, closes all dampers.
+
+Contributes lines to the combined {device-name}-ALARM-PRG program.
 
 Add-on code: SMOKE-FIRE
 Applicable: AHU-VAV, AHU-CV, RTU, DOAS, MAU
@@ -20,9 +22,6 @@ module = {
     "exec_order": 80,
 
     "objects": {
-        "AI": [],
-        "AO": [],
-        "AV": [],
         "BI": [
             {
                 "name": "{device-name}-SMOKE",
@@ -35,21 +34,6 @@ module = {
                 "states": {0: "Normal", 1: "Fire Alarm"},
             },
         ],
-        "BO": [],
-        "BV": [
-            {
-                "name": "{device-name}-SMOKE-ALM",
-                "desc": "Smoke Alarm Active",
-                "states": {0: "Normal", 1: "Alarm"},
-                "default": 0,
-            },
-            {
-                "name": "{device-name}-FIRE-SHTDN",
-                "desc": "Fire Shutdown Active",
-                "states": {0: "Normal", 1: "Shutdown"},
-                "default": 0,
-            },
-        ],
     },
 
     "io_map": {
@@ -57,40 +41,22 @@ module = {
         "BI5": "{device-name}-FIRE-ALM",
     },
 
-    "code": """\
-REM ── SMOKE & FIRE SAFETY: Emergency Shutdown ──
-REM On smoke or fire — stop all fans, close all dampers
-
-IF BI4 = 1 OR BI5 = 1 THEN
-  REM *** FIRE/SMOKE SHUTDOWN ***
-
-  REM Stop supply fan
-  BO1 = 0
-  AO4 = 0
-
-  REM Close all dampers
-  AO3 = 0
-
-  REM Close all valves
-  AO1 = 0
-  AO2 = 0
-
-  REM Set mode to Off
-  MV1 = 1
-
-  IF BI4 = 1 THEN
-    BV5 = 1
-    SMOKE_ALARM = 1
-  ENDIF
-  IF BI5 = 1 THEN
-    BV6 = 1
-    FIRE_ALARM = 1
-  ENDIF
-ELSE
-  BV5 = 0
-  BV6 = 0
-ENDIF\
-""",
+    "programs": [
+        {
+            "name": "{device-name}-ALARM-PRG",
+            "description": "Safety Alarms — Smoke and Fire",
+            "code": (
+                "10 REM ***** SAFETY ALARM PROGRAM *****\n"
+                "20 REM SBS Controls — Smoke and Fire Safety\n"
+                "30 REM\n"
+                "40 REM ── Smoke Detection ──\n"
+                "50 IF {device-name}-SMOKE THEN STOP {device-name}-SF-CMD , LET {device-name}-OA-DMP = 0 , END\n"
+                "60 REM\n"
+                "70 REM ── Fire Alarm ──\n"
+                "80 IF {device-name}-FIRE-ALM THEN STOP {device-name}-SF-CMD , LET {device-name}-OA-DMP = 0 , END"
+            ),
+        },
+    ],
 }
 
 register_module(module)

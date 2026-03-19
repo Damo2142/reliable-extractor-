@@ -1,9 +1,12 @@
 """
 SBS Controls — Feature Module: Dry Bulb Economizer
 
-Dry bulb economizer control. Compares outdoor air temperature to a
-switchover setpoint and modulates the outdoor air damper to provide
-free cooling when conditions allow.
+Dry bulb economizer control using proper Control-BASIC SLIDE().
+Compares OAT to high limit and RAT to determine free cooling.
+Modulates OA damper with SLIDE based on MAT vs SAT-SP.
+
+Program:
+    {device-name}-ECON-PRG — Economizer control with SLIDE() modulation
 
 Add-on code: ECON-DB
 Applicable: AHU-VAV, AHU-CV, RTU
@@ -42,8 +45,8 @@ module = {
         ],
         "AV": [
             {
-                "name": "{device-name}-ECON-SP",
-                "desc": "Economizer Switchover Temperature",
+                "name": "{device-name}-CFG-ECON-HI-LIMIT",
+                "desc": "Economizer High Limit Switchover Temp",
                 "units": "deg-f",
                 "min": 50,
                 "max": 75,
@@ -58,8 +61,6 @@ module = {
                 "default": 15.0,
             },
         ],
-        "BI": [],
-        "BO": [],
         "BV": [
             {
                 "name": "{device-name}-ECON-ENA",
@@ -75,45 +76,37 @@ module = {
         "UO3": "{device-name}-OA-DMP",
     },
 
-    "code": """\
-REM ── ECONOMIZER: Dry Bulb Free Cooling ──
-REM Compare OAT to switchover temp, modulate OA damper
-
-ECON_SP = AV9
-MIN_OA_POS = AV10
-
-IF MODE >= 3 AND BO1 = 1 THEN
-  REM Fan running — economizer logic active
-
-  REM Check economizer enable conditions
-  IF OAT < ECON_SP THEN
-    REM OAT below switchover — economizer available
-    BV3 = 1
-
-    REM Modulate OA damper for free cooling
-    REM When OAT is favorable, open damper to cool supply air
-    SAT_ERR = SAT - AV1
-
-    IF SAT_ERR > 0 THEN
-      REM Need cooling — open OA damper proportionally
-      ECON_OUT = MIN_OA_POS + ((SAT_ERR / 3) * (100 - MIN_OA_POS))
-      IF ECON_OUT > 100 THEN ECON_OUT = 100
-      AO3 = ECON_OUT
-    ELSE
-      REM At or below setpoint — hold minimum OA
-      AO3 = MIN_OA_POS
-    ENDIF
-  ELSE
-    REM OAT above switchover — economizer off, minimum OA only
-    BV3 = 0
-    AO3 = MIN_OA_POS
-  ENDIF
-ELSE
-  REM Fan off — close damper
-  AO3 = 0
-  BV3 = 0
-ENDIF\
-""",
+    "programs": [
+        {
+            "name": "{device-name}-ECON-PRG",
+            "description": "Economizer — Dry Bulb Free Cooling",
+            "code": (
+                "10 REM ***** ECONOMIZER PROGRAM *****\n"
+                "20 REM SBS Controls — Dry Bulb Economizer Control\n"
+                "30 REM Compare OAT to high limit and RAT for free cooling\n"
+                "40 REM\n"
+                "50 REM ── Fan must be running ──\n"
+                "60 IF NOT {device-name}-SF-STS THEN LET {device-name}-OA-DMP = 0 , STOP {device-name}-ECON-ENA , END\n"
+                "70 REM\n"
+                "80 REM ── Check economizer enable: OAT < high limit AND OAT < RAT ──\n"
+                "90 LET A = {device-name}-OAT\n"
+                "100 LET B = {device-name}-CFG-ECON-HI-LIMIT\n"
+                "110 LET C = {device-name}-RAT\n"
+                "120 IF A >= B THEN STOP {device-name}-ECON-ENA , LET {device-name}-OA-DMP = {device-name}-MIN-OA , END\n"
+                "130 IF A >= C THEN STOP {device-name}-ECON-ENA , LET {device-name}-OA-DMP = {device-name}-MIN-OA , END\n"
+                "140 REM\n"
+                "150 REM ── Economizer enabled — modulate OA damper ──\n"
+                "160 START {device-name}-ECON-ENA\n"
+                "170 REM SLIDE: as MAT rises above SAT-SP, open damper more\n"
+                "180 LET D = {device-name}-SAT-SP\n"
+                "190 LET {device-name}-OA-DMP = SLIDE( {device-name}-MAT , D , D + 3 , {device-name}-MIN-OA , 100 )\n"
+                "200 REM\n"
+                "210 REM ── Enforce minimum OA position ──\n"
+                "220 IF {device-name}-OA-DMP < {device-name}-MIN-OA THEN LET {device-name}-OA-DMP = {device-name}-MIN-OA\n"
+                "230 END"
+            ),
+        },
+    ],
 }
 
 register_module(module)

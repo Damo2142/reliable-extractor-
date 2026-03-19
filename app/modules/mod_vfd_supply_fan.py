@@ -2,7 +2,10 @@
 SBS Controls — Feature Module: VFD Supply Fan
 
 Variable frequency drive speed control for supply fan.
-Outputs analog speed command, reads speed feedback and VFD fault.
+Uses proper Control-BASIC START/STOP and DALARM for fan failure.
+
+Program:
+    {device-name}-SF-PRG — Supply fan VFD control, start/stop, alarms
 
 Add-on code: SF-VFD
 Applicable: AHU-VAV, RTU-VAV
@@ -65,8 +68,6 @@ module = {
                 "states": {0: "Normal", 1: "Fault"},
             },
         ],
-        "BO": [],
-        "BV": [],
     },
 
     "io_map": {
@@ -75,51 +76,45 @@ module = {
         "BI2": "{device-name}-VFD-FLT",
     },
 
-    "code": """\
-REM ── VFD SUPPLY FAN: Speed Control ──
-REM Manages supply fan VFD speed command based on operating mode
-
-SF_MIN = AV11
-SF_MAX = AV12
-
-IF MODE >= 3 AND BO1 = 1 THEN
-  REM Fan is commanded on
-
-  IF MODE = 4 THEN
-    REM Warmup: run at fixed 50% or min speed, whichever is greater
-    SF_SPD_CMD = MAX(SF_MIN, 50)
-  ELSE
-    IF MODE = 5 THEN
-      REM Cooldown: run at minimum speed
-      SF_SPD_CMD = SF_MIN
-    ELSE
-      REM Normal occupied: speed set by pressure control module
-      REM If no pressure module, default to 70%
-      IF SF_SPD_CMD = 0 THEN SF_SPD_CMD = 70
-    ENDIF
-  ENDIF
-
-  REM Clamp to min/max range
-  IF SF_SPD_CMD < SF_MIN THEN SF_SPD_CMD = SF_MIN
-  IF SF_SPD_CMD > SF_MAX THEN SF_SPD_CMD = SF_MAX
-
-  AO4 = SF_SPD_CMD
-ELSE
-  REM Fan off
-  AO4 = 0
-ENDIF
-
-REM ── VFD Fault Monitoring ──
-IF BI2 = 1 THEN
-  REM VFD has faulted
-  VFD_ALARM = 1
-  REM Stop fan on VFD fault
-  BO1 = 0
-  AO4 = 0
-ELSE
-  VFD_ALARM = 0
-ENDIF\
-""",
+    "programs": [
+        {
+            "name": "{device-name}-SF-PRG",
+            "description": "Supply Fan VFD Control",
+            "code": (
+                "10 REM ***** SUPPLY FAN VFD PROGRAM *****\n"
+                "20 REM SBS Controls — VFD Speed Control and Alarms\n"
+                "30 REM\n"
+                "40 REM ── VFD fault: stop fan immediately ──\n"
+                "50 IF {device-name}-VFD-FLT THEN STOP {device-name}-SF-CMD , LET {device-name}-SF-SPD = 0 , END\n"
+                "60 REM\n"
+                "70 REM ── Emergency stop ──\n"
+                "80 IF {device-name}-EMER-STOP THEN STOP {device-name}-SF-CMD , LET {device-name}-SF-SPD = 0 , END\n"
+                "90 REM\n"
+                "100 REM ── Occupied or Bypass: start fan ──\n"
+                "110 IF {device-name}-OCC-MODE = 1 THEN START {device-name}-SF-CMD\n"
+                "120 IF {device-name}-OCC-MODE = 2 THEN START {device-name}-SF-CMD\n"
+                "130 REM\n"
+                "140 REM ── Off, Standby, or Unoccupied: stop fan ──\n"
+                "150 IF {device-name}-OCC-MODE = 0 THEN STOP {device-name}-SF-CMD , LET {device-name}-SF-SPD = 0 , END\n"
+                "160 IF {device-name}-OCC-MODE = 3 THEN STOP {device-name}-SF-CMD , LET {device-name}-SF-SPD = 0 , END\n"
+                "170 IF {device-name}-OCC-MODE = 4 THEN STOP {device-name}-SF-CMD , LET {device-name}-SF-SPD = 0 , END\n"
+                "180 REM\n"
+                "190 REM ── Set default speed if no pressure module overrides ──\n"
+                "200 REM Static pressure module will override SF-SPD via DSP-LOOP\n"
+                "210 IF {device-name}-SF-SPD < {device-name}-SF-MIN-SPD THEN LET {device-name}-SF-SPD = {device-name}-SF-MIN-SPD\n"
+                "220 REM\n"
+                "230 REM ── Clamp speed to min/max ──\n"
+                "240 LET {device-name}-SF-SPD = LIMIT( {device-name}-SF-SPD , {device-name}-SF-MIN-SPD , {device-name}-SF-MAX-SPD )\n"
+                "250 REM\n"
+                "260 REM ── Fan failure alarm: status not following command ──\n"
+                "270 DALARM {device-name}-SF-CMD <> {device-name}-SF-STS , 90 , Supply fan failure\n"
+                "280 REM\n"
+                "290 REM ── VFD fault alarm ──\n"
+                "300 ALARM {device-name}-VFD-FLT , 0 , VFD fault\n"
+                "310 END"
+            ),
+        },
+    ],
 }
 
 register_module(module)
