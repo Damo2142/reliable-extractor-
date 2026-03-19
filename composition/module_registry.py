@@ -139,207 +139,206 @@ def get_core_modules():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SBS Standard AHU Configurations — SBS-AHU-101 through SBS-AHU-120
-# Organized from least complex to most complex.
+# SBS Standard Equipment Configurations
+#
+# Organized by equipment family, then least to most complex.
 # Pick a standard, then toggle modules on/off to customize.
+#
+# Numbering:
+#   VAV AHU:     SBS-AHU-101 to 120
+#   CV AHU:      SBS-AHU-201 to 220
+#   RTU:         SBS-RTU-301 to 320
+#   DOAS / MAU:  SBS-DOAS-401 to 420
+#   (Future)
+#   VAV Terminal: SBS-VAV-501 to 520
+#   FCU:         SBS-FCU-601 to 620
+#   Plant:       SBS-PLT-701 to 720
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Base safety modules included in all configs
+# Base safety modules
 _SAFETY_BASE = ["safe-freeze", "safe-smoke", "safe-filter"]
 _SAFETY_FULL = ["safe-freeze", "safe-smoke", "safe-hi-static", "safe-filter",
                 "safe-filter-oa", "safe-filter-final"]
 _SAFETY_FULL_EA = _SAFETY_FULL + ["safe-filter-ea"]
 
-STANDARD_CONFIGS = {
-    # ── SIMPLE / PACKAGED RTU (101-104) ──────────────────────────────────
-    "SBS-AHU-101": {
-        "name": "DX-1 / Electric-1 / CS — Minimal RTU",
-        "description": "Simplest packaged unit: single DX, single electric heat, constant speed fan, no economizer",
-        "modules": [
-            "core", "fan-sf-cs",
-            "clg-dx", "htg-elec",
-            "vent-fix",
-        ] + _SAFETY_BASE,
+# Equipment family definitions — drives the UI dropdowns
+EQUIPMENT_FAMILIES = {
+    "VAV-AHU": {
+        "name": "VAV Air Handling Unit",
+        "description": "Variable air volume AHU — VFD supply fan, duct static pressure control, serves VAV terminal units",
+        "prefix": "SBS-AHU",
+        "required_modules": ["core", "fan-sf-vfd", "opt-start"],
+        "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
+                                 "ventilation", "humidity", "fan", "safety", "pump"],
+        "notes": "Supply fan always VFD. Return/exhaust/relief fan optional.",
     },
-    "SBS-AHU-102": {
-        "name": "DX-2 / Electric-2 / VFD / Econ-DB — Standard RTU",
-        "description": "Standard packaged RTU: 2-stage DX, 2-stage electric, VFD, dry bulb economizer",
-        "modules": [
-            "core", "fan-sf-vfd",
-            "clg-dx-2", "htg-elec-2", "econ-db",
-            "vent-fix", "opt-start",
-        ] + _SAFETY_BASE,
+    "CV-AHU": {
+        "name": "Constant Volume AHU",
+        "description": "Constant volume AHU — constant speed or 2-speed fan, SAT control, no duct static",
+        "prefix": "SBS-AHU",
+        "required_modules": ["core"],
+        "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
+                                 "ventilation", "humidity", "fan", "safety", "pump"],
+        "notes": "Fan is constant speed or 2-speed. No DSP loop. SAT reset only.",
     },
-    "SBS-AHU-103": {
-        "name": "DX-2 / Gas-1 / VFD / Econ-DB — Gas RTU",
-        "description": "Gas-fired packaged RTU: 2-stage DX, single gas, VFD, dry bulb economizer",
-        "modules": [
-            "core", "fan-sf-vfd",
-            "clg-dx-2", "htg-gas", "econ-db",
-            "vent-fix", "opt-start",
-        ] + _SAFETY_BASE,
+    "RTU": {
+        "name": "Rooftop Unit (Packaged)",
+        "description": "Packaged rooftop unit — DX cooling, electric or gas heat, factory assembled",
+        "prefix": "SBS-RTU",
+        "required_modules": ["core"],
+        "available_categories": ["cooling", "heating", "economizer", "ventilation", "safety"],
+        "notes": "DX cooling (staged or VFD). Electric or gas heat. Usually no preheat or ERW.",
     },
-    "SBS-AHU-104": {
-        "name": "DX-VFD / Electric-SCR / VFD / Econ-DB — Variable RTU",
-        "description": "Variable capacity RTU: VFD compressor, modulating electric heat, VFD fan",
-        "modules": [
-            "core", "fan-sf-vfd",
-            "clg-dx-vfd", "htg-elec-scr", "econ-db",
-            "vent-fix", "opt-start",
-        ] + _SAFETY_BASE,
+    "DOAS": {
+        "name": "Dedicated Outdoor Air System",
+        "description": "100% outside air unit — no return air, typically with energy recovery",
+        "prefix": "SBS-DOAS",
+        "required_modules": ["core", "fan-sf-vfd", "vent-100"],
+        "available_categories": ["cooling", "heating", "preheat", "energy-recovery", "humidity", "safety", "pump"],
+        "notes": "Always 100% OA. No economizer (no return air). ERW strongly recommended.",
     },
+}
 
-    # ── CHW COOLING / NO HEATING (105-106) ───────────────────────────────
-    "SBS-AHU-105": {
-        "name": "CHW / No Heat / VFD / Econ-DB — Cooling Only",
-        "description": "Cooling-only AHU: CHW coil, VFD fan, dry bulb economizer, no heating",
+STANDARD_CONFIGS = {
+    # ═══════════════════════════════════════════════════════════════════════
+    #  VAV AHU — SBS-AHU-101 to 120
+    #  Supply fan always VFD. Duct static pressure control standard.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-AHU-101": {
+        "family": "VAV-AHU",
+        "name": "CHW / No Heat / Econ-DB",
+        "description": "Simplest VAV AHU: CHW cooling only, dry bulb economizer, no heating",
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "econ-db",
             "vent-fix", "opt-start",
         ] + _SAFETY_BASE,
     },
-    "SBS-AHU-106": {
-        "name": "CHW / Electric-2 / VFD / Econ-DB — CHW + Electric",
-        "description": "CHW cooling with electric backup heat, VFD fan, economizer",
+    "SBS-AHU-102": {
+        "family": "VAV-AHU",
+        "name": "CHW / Electric-2 / Econ-DB",
+        "description": "CHW cooling with 2-stage electric backup heat",
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "htg-elec-2", "econ-db",
             "vent-fix", "opt-start",
         ] + _SAFETY_BASE,
     },
-
-    # ── CHW / HW STANDARD (107-110) ─────────────────────────────────────
-    "SBS-AHU-107": {
-        "name": "CHW / HW / VFD / Econ-DB — Basic CHW-HW",
-        "description": "Standard CHW/HW AHU: dry bulb economizer, fixed ventilation",
+    "SBS-AHU-103": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-DB",
+        "description": "Standard CHW/HW AHU with dry bulb economizer",
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "htg-hw", "econ-db",
             "vent-fix", "opt-start",
         ] + _SAFETY_BASE,
     },
-    "SBS-AHU-108": {
-        "name": "CHW / HW / VFD / Econ-Enth — Standard Enthalpy",
-        "description": "Standard CHW/HW AHU: enthalpy economizer, fixed ventilation",
+    "SBS-AHU-104": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-Enth",
+        "description": "Standard CHW/HW AHU with enthalpy economizer",
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "htg-hw", "econ-enth",
             "vent-fix", "opt-start",
         ] + _SAFETY_BASE,
     },
-    "SBS-AHU-109": {
-        "name": "CHW / HW / VFD / Econ-Enth / RF-VFD — With Return Fan",
-        "description": "CHW/HW AHU with return fan VFD for building pressure control",
+    "SBS-AHU-105": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-Enth / RF-VFD",
+        "description": "CHW/HW with return fan VFD for building pressure control",
         "modules": [
             "core", "fan-sf-vfd", "fan-rf-vfd",
             "clg-chw", "htg-hw", "econ-enth",
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },
-    "SBS-AHU-110": {
-        "name": "CHW / HW / VFD / Econ-Enth / EF-VFD — With Exhaust Fan",
-        "description": "CHW/HW AHU with exhaust fan VFD tracking OA airflow",
+    "SBS-AHU-106": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-Enth / EF-VFD",
+        "description": "CHW/HW with exhaust fan VFD tracking OA airflow",
         "modules": [
             "core", "fan-sf-vfd", "fan-ef-vfd",
             "clg-chw", "htg-hw", "econ-enth",
             "vent-ams", "opt-start",
         ] + _SAFETY_FULL_EA,
     },
-
-    # ── CHW / HW WITH ERW (111-113) ─────────────────────────────────────
-    "SBS-AHU-111": {
-        "name": "CHW / HW / VFD / Econ-Enth / ERW — Standard ERW",
-        "description": "CHW/HW AHU with energy recovery wheel, no exhaust fan",
+    "SBS-AHU-107": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-Enth / ERW",
+        "description": "CHW/HW with energy recovery wheel",
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "htg-hw", "econ-enth", "erw",
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },
-    "SBS-AHU-112": {
-        "name": "CHW / HW / VFD / EF-VFD / Econ-Enth / ERW — Full ERW",
-        "description": "CHW/HW AHU with ERW + exhaust fan VFD + OA airflow",
+    "SBS-AHU-108": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-Enth / ERW / EF-VFD",
+        "description": "CHW/HW with ERW + exhaust fan VFD + OA airflow measurement",
         "modules": [
             "core", "fan-sf-vfd", "fan-ef-vfd",
             "clg-chw", "htg-hw", "econ-enth", "erw",
             "vent-ams", "opt-start",
         ] + _SAFETY_FULL_EA,
     },
-    "SBS-AHU-113": {
-        "name": "CHW / HW / VFD / EF-VFD / Econ-Enth / ERW / DCV-CO2 — ERW + DCV",
-        "description": "Full-featured: CHW/HW, ERW, exhaust fan, DCV-CO2 ventilation — the A201",
+    "SBS-AHU-109": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-Enth / ERW / EF-VFD / DCV-CO2",
+        "description": "Full-featured VAV AHU — the A201 reference config",
         "modules": [
             "core", "fan-sf-vfd", "fan-ef-vfd",
             "clg-chw", "htg-hw", "econ-enth", "erw",
             "dcv-co2", "opt-start",
         ] + _SAFETY_FULL_EA,
     },
-
-    # ── WITH PREHEAT (114-115) ──────────────────────────────────────────
-    "SBS-AHU-114": {
-        "name": "CHW / HW / PH-HW / VFD / Econ-Enth — With Preheat",
-        "description": "CHW/HW AHU with hot water preheat coil + pump",
+    "SBS-AHU-110": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / PH-HW / Econ-Enth",
+        "description": "CHW/HW with hot water preheat coil + pump",
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "htg-hw", "ph-hw", "econ-enth",
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },
-    "SBS-AHU-115": {
-        "name": "CHW / HW / PH-HW / VFD / EF-VFD / Econ-Enth / ERW — Preheat + ERW",
-        "description": "Full preheat config: CHW/HW, preheat, ERW, exhaust fan",
+    "SBS-AHU-111": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / PH-HW / Econ-Enth / ERW / EF-VFD",
+        "description": "Full preheat config: CHW, HW, preheat, ERW, exhaust fan",
         "modules": [
             "core", "fan-sf-vfd", "fan-ef-vfd",
             "clg-chw", "htg-hw", "ph-hw", "econ-enth", "erw",
             "vent-ams", "opt-start",
         ] + _SAFETY_FULL_EA,
     },
-
-    # ── WITH HUMIDITY (116-117) ─────────────────────────────────────────
-    "SBS-AHU-116": {
-        "name": "CHW / HW / VFD / Econ-Enth / HUM-STM — With Humidifier",
-        "description": "CHW/HW AHU with steam humidifier",
+    "SBS-AHU-112": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-Enth / HUM-STM",
+        "description": "CHW/HW with steam humidifier",
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "htg-hw", "econ-enth", "hum-stm",
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },
-    "SBS-AHU-117": {
-        "name": "CHW / HW / VFD / Econ-Enth / DEHUM-SC — With Dehumidification",
-        "description": "CHW/HW AHU with subcooling dehumidification",
+    "SBS-AHU-113": {
+        "family": "VAV-AHU",
+        "name": "CHW / HW / Econ-Enth / DEHUM-SC",
+        "description": "CHW/HW with subcooling dehumidification",
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "htg-hw", "econ-enth", "dehum-sc",
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },
-
-    # ── DOAS / 100% OA (118-119) ────────────────────────────────────────
-    "SBS-AHU-118": {
-        "name": "DOAS — CHW / PH-HW / ERW / 100% OA",
-        "description": "Dedicated outdoor air system: 100% OA, CHW, HW preheat, ERW",
-        "modules": [
-            "core", "fan-sf-vfd",
-            "clg-chw", "ph-hw", "erw",
-            "vent-100",
-        ] + _SAFETY_FULL,
-    },
-    "SBS-AHU-119": {
-        "name": "DOAS — DX-2 / PH-HW / ERW / 100% OA",
-        "description": "Dedicated outdoor air system: 100% OA, DX cooling, HW preheat, ERW",
-        "modules": [
-            "core", "fan-sf-vfd",
-            "clg-dx-2", "ph-hw", "erw",
-            "vent-100",
-        ] + _SAFETY_FULL,
-    },
-
-    # ── MAXIMUM COMPLEXITY (120) ────────────────────────────────────────
-    "SBS-AHU-120": {
-        "name": "FULL — CHW / HW / PH-HW / VFD / EF-VFD / Econ-Enth / ERW / DCV-CO2 / HUM / DEHUM",
-        "description": "Maximum complexity: every feature enabled — CHW, HW, preheat, ERW, exhaust, DCV, humidifier, dehumid",
+    "SBS-AHU-114": {
+        "family": "VAV-AHU",
+        "name": "FULL — CHW / HW / PH-HW / ERW / EF-VFD / DCV / HUM / DEHUM",
+        "description": "Maximum VAV AHU: every feature enabled",
         "modules": [
             "core", "fan-sf-vfd", "fan-ef-vfd",
             "clg-chw", "htg-hw", "ph-hw",
@@ -347,5 +346,173 @@ STANDARD_CONFIGS = {
             "dcv-co2", "hum-stm", "dehum-sc",
             "opt-start",
         ] + _SAFETY_FULL_EA + ["safe-cond-ovf"],
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  RTU (PACKAGED ROOFTOP) — SBS-RTU-301 to 310
+    #  DX cooling, electric or gas heat, factory assembled
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-RTU-301": {
+        "family": "RTU",
+        "name": "DX-1 / Electric-1 / CS — Minimal",
+        "description": "Simplest RTU: single DX, single electric, constant speed, no economizer",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-dx", "htg-elec",
+            "vent-fix",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-RTU-302": {
+        "family": "RTU",
+        "name": "DX-2 / Electric-2 / VFD / Econ-DB",
+        "description": "Standard RTU: 2-stage DX, 2-stage electric, VFD, dry bulb economizer",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-dx-2", "htg-elec-2", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-RTU-303": {
+        "family": "RTU",
+        "name": "DX-2 / Gas-1 / VFD / Econ-DB",
+        "description": "Gas-fired RTU: 2-stage DX, single gas, VFD, economizer",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-dx-2", "htg-gas", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-RTU-304": {
+        "family": "RTU",
+        "name": "DX-2 / Gas-MOD / VFD / Econ-DB",
+        "description": "Modulating gas RTU: 2-stage DX, modulating gas heat",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-dx-2", "htg-gas-mod", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-RTU-305": {
+        "family": "RTU",
+        "name": "DX-VFD / Electric-SCR / VFD / Econ-DB",
+        "description": "Variable capacity RTU: VFD compressor, modulating electric heat",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-dx-vfd", "htg-elec-scr", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-RTU-306": {
+        "family": "RTU",
+        "name": "DX-2 / Electric-3 / VFD / Econ-DB / DCV-CO2",
+        "description": "Full RTU: 2-stage DX, 3-stage electric, VFD, economizer, DCV",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-dx-2", "htg-elec-3", "econ-db",
+            "dcv-co2", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  CV AHU (CONSTANT VOLUME) — SBS-AHU-201 to 210
+    #  Constant speed fan, no duct static, SAT control
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-AHU-201": {
+        "family": "CV-AHU",
+        "name": "CHW / HW / CS / Econ-DB",
+        "description": "Constant volume CHW/HW AHU with dry bulb economizer",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-chw", "htg-hw", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-AHU-202": {
+        "family": "CV-AHU",
+        "name": "CHW / HW / CS / Econ-Enth",
+        "description": "Constant volume CHW/HW AHU with enthalpy economizer",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-chw", "htg-hw", "econ-enth",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-AHU-203": {
+        "family": "CV-AHU",
+        "name": "CHW / HW / CS / Econ-Enth / ERW",
+        "description": "Constant volume with energy recovery wheel",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-chw", "htg-hw", "econ-enth", "erw",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-AHU-204": {
+        "family": "CV-AHU",
+        "name": "CHW / Electric-2 / CS / Econ-DB",
+        "description": "Constant volume CHW + electric heat",
+        "modules": [
+            "core", "fan-sf-cs",
+            "clg-chw", "htg-elec-2", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  DOAS / MAU — SBS-DOAS-401 to 410
+    #  100% outside air, no return, typically with energy recovery
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-DOAS-401": {
+        "family": "DOAS",
+        "name": "CHW / PH-HW / ERW",
+        "description": "Standard DOAS: CHW cooling, HW preheat, energy recovery wheel",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-chw", "ph-hw", "erw",
+            "vent-100",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-DOAS-402": {
+        "family": "DOAS",
+        "name": "DX-2 / PH-HW / ERW",
+        "description": "DX DOAS: 2-stage DX, HW preheat, energy recovery wheel",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-dx-2", "ph-hw", "erw",
+            "vent-100",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-DOAS-403": {
+        "family": "DOAS",
+        "name": "CHW / PH-HW / ERW / HUM-STM",
+        "description": "DOAS with humidifier: CHW, HW preheat, ERW, steam humidifier",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-chw", "ph-hw", "erw", "hum-stm",
+            "vent-100",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-DOAS-404": {
+        "family": "DOAS",
+        "name": "CHW / PH-Glycol / ERW",
+        "description": "DOAS with glycol preheat: CHW cooling, glycol preheat, ERW",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-chw", "ph-glycol", "erw",
+            "vent-100",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-DOAS-405": {
+        "family": "DOAS",
+        "name": "CHW / HW / No ERW",
+        "description": "Simple DOAS without energy recovery: CHW, HW, no ERW",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "clg-chw", "htg-hw",
+            "vent-100",
+        ] + _SAFETY_BASE,
     },
 }
