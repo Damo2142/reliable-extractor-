@@ -16,88 +16,72 @@ DONE_FILL = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="sol
 THIN = Border(left=Side("thin"), right=Side("thin"), top=Side("thin"), bottom=Side("thin"))
 
 SYSTEMS = [
+    # ── HIGH PRIORITY ────────────────────────────────────────────────────
     {
         "tab": "Boiler Plant",
         "folder": "boiler-plant",
-        "controller": "Cascade leader + follower (2 controllers or 1?)",
-        "notes": "This is the #1 priority — gives me the plant control standard",
+        "priority": "HIGH",
+        "controller": "Cascade leader + follower — what controller model(s)?",
+        "notes": "#1 priority — gives me plant control standard. Includes HW pumps.",
         "items": [
             ("Inputs list", "All physical inputs — same format as A201-inputs.txt (terminal, name, type, range, units)"),
             ("Outputs list", "All physical outputs — same format as A201-outputs.txt (terminal, name, type, range, min/max V)"),
             ("Values list", "All AV/BV/MV — same format as A201-values.txt (instance, name, type, default, units)"),
             ("Loops list", "All PID loops — instance, name, input, setpoint, P, I, D, action"),
-            ("Tables list", "All scaling tables — number, name, data points (V→engineering units)"),
+            ("Tables list", "All scaling tables — number, name, data points (V to engineering units)"),
             ("Programs list", "All programs — PRG#, name, enabled, description"),
             (".bas files", "Export every .bas program file individually"),
             ("Schedules", "Any weekly schedules — instance, name, default state"),
             ("Trends", "List of trend logs (or just say 'trend everything')"),
             ("System Groups", "Graphic page names"),
             ("Controller model", "What controller? MPS? How many expansion boards?"),
-            ("Equipment details", "How many boilers? Lead/lag? Cascade or direct fire control? Outdoor reset curve?"),
+            ("Equipment details", "How many boilers? Cascade leader/follower? Outdoor reset curve? HW pump count/type?"),
         ],
     },
     {
-        "tab": "Chiller Plant",
-        "folder": "chiller-plant",
-        "controller": "Plant controller for chiller staging",
-        "notes": "If not on this site, any site will do. Or I can build from SBS standard + PPS.",
+        "tab": "Chiller - Air Cooled",
+        "folder": "chiller-plant-air-cooled",
+        "priority": "HIGH",
+        "controller": "Plant controller — what model?",
+        "notes": "Air-cooled = no CW loop, no towers. Just chillers + CHW pumps.",
         "items": [
             ("Inputs list", "All physical inputs"),
             ("Outputs list", "All physical outputs"),
             ("Values list", "All AV/BV/MV"),
-            ("Loops list", "PID loops"),
+            ("Loops list", "PID loops — CHW temp control, pump DP, etc."),
+            ("Tables list", "Any scaling tables"),
             ("Programs list + .bas files", "All programs with code"),
+            ("Schedules", "Any schedules"),
+            ("System Groups", "Graphic page names"),
             ("Controller model", "MPS? Expansion count?"),
-            ("Equipment details", "How many chillers? Air-cooled or water-cooled? VFD compressors? Staging method?"),
+            ("Equipment details", "How many chillers? Lead/lag? VFD? CHW pump count/type? Primary/secondary?"),
         ],
     },
     {
-        "tab": "Cooling Tower",
-        "folder": "cooling-tower",
-        "controller": "Usually same controller as chiller plant or separate?",
-        "notes": "If on same controller as chiller, just note that. Otherwise export separately.",
+        "tab": "Chiller - Water Cooled",
+        "folder": "chiller-plant-water-cooled",
+        "priority": "HIGH",
+        "controller": "Plant controller(s) — may be multiple controllers",
+        "notes": "Full package: chillers + CW pumps + towers + CHW pumps. Export ALL controllers.",
         "items": [
-            ("Inputs list", "All physical inputs"),
-            ("Outputs list", "All physical outputs — fan staging/VFD, isolation valves"),
-            ("Values list", "All AV/BV/MV"),
-            ("Loops list", "Basin temp control, approach control"),
-            ("Programs list + .bas files", "All programs with code"),
-            ("Equipment details", "How many cells? Fan staging or VFD? Free cooling bypass?"),
-        ],
-    },
-    {
-        "tab": "HW Pump Station",
-        "folder": "pump-station-hw",
-        "controller": "Separate controller or on boiler plant controller?",
-        "notes": "Primary/secondary? Variable primary? DP control?",
-        "items": [
-            ("Inputs list", "All physical inputs — DP sensor, flow, pump status"),
-            ("Outputs list", "All physical outputs — pump commands, VFD speeds"),
-            ("Values list", "All AV/BV/MV"),
-            ("Loops list", "DP control loop, any others"),
-            ("Programs list + .bas files", "All programs with code"),
-            ("Equipment details", "How many pumps? Lead/lag? VFD? Primary/secondary or variable primary?"),
-        ],
-    },
-    {
-        "tab": "CHW Pump Station",
-        "folder": "pump-station-chw",
-        "controller": "Separate controller or on chiller plant controller?",
-        "notes": "Same questions as HW pump station",
-        "items": [
-            ("Inputs list", "All physical inputs"),
-            ("Outputs list", "All physical outputs"),
-            ("Values list", "All AV/BV/MV"),
-            ("Loops list", "DP control loop"),
-            ("Programs list + .bas files", "All programs with code"),
-            ("Equipment details", "How many pumps? Lead/lag? VFD? Primary/secondary?"),
+            ("Inputs list", "All physical inputs — ALL controllers in the plant"),
+            ("Outputs list", "All physical outputs — ALL controllers"),
+            ("Values list", "All AV/BV/MV — ALL controllers"),
+            ("Loops list", "PID loops — CHW temp, CW temp, tower fan, pump DP"),
+            ("Tables list", "Any scaling tables"),
+            ("Programs list + .bas files", "All programs with code — ALL controllers"),
+            ("Schedules", "Any schedules"),
+            ("System Groups", "Graphic page names"),
+            ("Controller model(s)", "What controllers? Separate for towers/pumps? Or all on one MPS?"),
+            ("Equipment details", "How many chillers? Towers? CW pumps? CHW pumps? Staging? Free cooling?"),
         ],
     },
     {
         "tab": "VAV HW Reheat",
         "folder": "vav-hw-reheat",
-        "controller": "RCFA model? Which variant?",
-        "notes": "Get both floating and modulating if you have them. One is fine though.",
+        "priority": "HIGH",
+        "controller": "RCFA model?",
+        "notes": "Get both floating and modulating valve types if you have them. One is fine.",
         "items": [
             ("Inputs list", "All physical inputs (flow sensor, space temp, etc.)"),
             ("Outputs list", "All physical outputs (damper, reheat valve — note floating vs modulating)"),
@@ -111,6 +95,7 @@ SYSTEMS = [
     {
         "tab": "VAV Cooling Only",
         "folder": "vav-cooling-only",
+        "priority": "HIGH",
         "controller": "RCFA model?",
         "notes": "Simplest VAV — just damper, no reheat",
         "items": [
@@ -122,15 +107,19 @@ SYSTEMS = [
             ("Controller model", "RCFA-M-33? RCFA-M-34?"),
         ],
     },
+
+    # ── MEDIUM PRIORITY ──────────────────────────────────────────────────
     {
         "tab": "Fan Coil Unit",
         "folder": "fan-coil",
+        "priority": "MEDIUM",
         "controller": "MPZ? Which model?",
         "notes": "2-pipe or 4-pipe? What fan speeds?",
         "items": [
             ("Inputs list", "All physical inputs (space temp, filter, etc.)"),
             ("Outputs list", "All physical outputs (fan, valves)"),
             ("Values list", "All AV/BV/MV"),
+            ("Loops list", "Any PID loops"),
             ("Programs list + .bas files", "All programs with code"),
             ("Controller model", "MPZ-44? MPZ-88?"),
             ("Equipment details", "2-pipe or 4-pipe? How many fan speeds? HW/CHW/both?"),
@@ -139,12 +128,14 @@ SYSTEMS = [
     {
         "tab": "Unit Ventilator",
         "folder": "unit-vent",
+        "priority": "MEDIUM",
         "controller": "MPZ? MPA?",
         "notes": "Classroom style? With OA damper?",
         "items": [
             ("Inputs list", "All physical inputs"),
             ("Outputs list", "All physical outputs (fan, valves, OA damper)"),
             ("Values list", "All AV/BV/MV"),
+            ("Loops list", "Any PID loops"),
             ("Programs list + .bas files", "All programs with code"),
             ("Controller model", "What model?"),
             ("Equipment details", "HW/CHW/DX? OA damper? How many fan speeds? CO2?"),
@@ -153,6 +144,7 @@ SYSTEMS = [
     {
         "tab": "Exhaust Fan",
         "folder": "exhaust-fan",
+        "priority": "MEDIUM",
         "controller": "MPZ-44? RC-SSC?",
         "notes": "Scheduled, interlock, VFD — whatever types you have on site",
         "items": [
@@ -160,12 +152,15 @@ SYSTEMS = [
             ("Outputs list", "Start/stop, VFD speed if applicable"),
             ("Values list", "Any AV/BV"),
             ("Programs list + .bas files", "All programs with code"),
-            ("Equipment details", "Scheduled? Interlock? VFD? Constant speed? Kitchen hood?"),
+            ("Equipment details", "Scheduled? Interlock? VFD? Constant speed?"),
         ],
     },
+
+    # ── LOW PRIORITY ─────────────────────────────────────────────────────
     {
         "tab": "Unit Heater",
         "folder": "unit-heater",
+        "priority": "LOW",
         "controller": "MPZ-44? Simple thermostat?",
         "notes": "Cabinet, wall-mount, overhead — whatever you have",
         "items": [
@@ -179,8 +174,9 @@ SYSTEMS = [
     {
         "tab": "Radiant Heat",
         "folder": "radiant-heat",
+        "priority": "LOW",
         "controller": "MPZ? Simple?",
-        "notes": "In-floor, overhead panel — whatever you have",
+        "notes": "In-floor, overhead panel — if on site",
         "items": [
             ("Inputs list", "Space temp, slab temp, supply water temp"),
             ("Outputs list", "Valve, pump"),
@@ -211,20 +207,7 @@ def generate():
         ws.cell(row=r, column=c).border = THIN
     r += 1
 
-    priorities = {
-        "Boiler Plant": "HIGH",
-        "VAV HW Reheat": "HIGH",
-        "VAV Cooling Only": "HIGH",
-        "Fan Coil Unit": "MEDIUM",
-        "Unit Ventilator": "MEDIUM",
-        "Exhaust Fan": "MEDIUM",
-        "HW Pump Station": "MEDIUM",
-        "Chiller Plant": "MEDIUM",
-        "Cooling Tower": "LOW",
-        "CHW Pump Station": "LOW",
-        "Unit Heater": "LOW",
-        "Radiant Heat": "LOW",
-    }
+    priorities = {s["tab"]: s.get("priority", "LOW") for s in SYSTEMS}
 
     for i, sys in enumerate(SYSTEMS):
         ws.cell(row=r, column=1, value=i+1)
