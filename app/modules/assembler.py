@@ -217,7 +217,10 @@ def assemble(
     return {
         "equipment_type": equipment_type,
         "device_name": device_name,
-        "modules": [{"id": m["id"], "name": m["name"], "exec_order": m["exec_order"]} for m in modules],
+        "modules": [{"id": m["id"], "name": m["name"], "exec_order": m["exec_order"],
+                     "code": m.get("code", "").strip(),
+                     "objects": {k: [{"name": o["name"], "desc": o.get("desc","")} for o in v] for k, v in m.get("objects", {}).items() if v},
+                     } for m in modules],
         "objects": merged_objects,
         "point_list": point_list,
         "io_map": io_map,
