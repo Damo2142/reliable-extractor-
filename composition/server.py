@@ -258,24 +258,38 @@ let families={}, standards={}, modules={}, controllers={};
 let selected=new Set(), activeCfg='', activeFamily='';
 
 async function init(){
-  [families, standards, modules, controllers] = await Promise.all([
-    fetch('/api/families').then(r=>r.json()),
-    fetch('/api/standards').then(r=>r.json()),
-    fetch('/api/modules').then(r=>r.json()),
-    fetch('/api/controllers').then(r=>r.json()),
-  ]);
-  // Family dropdown
-  const sf=document.getElementById('selFamily');
-  for(const[id,f]of Object.entries(families)){
-    const o=document.createElement('option');o.value=id;o.textContent=f.name;sf.appendChild(o);
-  }
-  // Controller dropdown
-  const sc=document.getElementById('selCtrl');
-  for(const[id,c]of Object.entries(controllers)){
-    if(id==='auto')continue;
-    const o=document.createElement('option');o.value=id;
-    o.textContent=id+' ('+c.family+') — '+c.base_in+'in/'+c.base_out+'out, '+c.max_exp+' exp';
-    sc.appendChild(o);
+  try{
+    var resp=await Promise.all([
+      fetch('/api/families'),fetch('/api/standards'),fetch('/api/modules'),fetch('/api/controllers')
+    ]);
+    families=await resp[0].json();
+    standards=await resp[1].json();
+    modules=await resp[2].json();
+    controllers=await resp[3].json();
+    // Family dropdown
+    var sf=document.getElementById('selFamily');
+    var fkeys=Object.keys(families);
+    for(var i=0;i<fkeys.length;i++){
+      var o=document.createElement('option');
+      o.value=fkeys[i];
+      o.textContent=families[fkeys[i]].name;
+      sf.appendChild(o);
+    }
+    // Controller dropdown
+    var sc=document.getElementById('selCtrl');
+    var ckeys=Object.keys(controllers);
+    for(var i=0;i<ckeys.length;i++){
+      if(ckeys[i]==='auto')continue;
+      var o=document.createElement('option');
+      o.value=ckeys[i];
+      var cc=controllers[ckeys[i]];
+      o.textContent=ckeys[i]+' ('+cc.family+') - '+cc.base_in+'in/'+cc.base_out+'out, '+cc.max_exp+' exp';
+      sc.appendChild(o);
+    }
+    document.getElementById('status').textContent='Loaded: '+fkeys.length+' families, '+Object.keys(standards).length+' configs, '+Object.keys(controllers).length+' controllers. Select a family to begin.';
+  }catch(err){
+    document.getElementById('status').textContent='ERROR loading: '+err.message;
+    console.error('Init error:',err);
   }
 }
 
@@ -292,14 +306,15 @@ function onFamilyChange(){
 }
 
 function renderConfigs(){
-  const el=document.getElementById('cfgList');
+  var el=document.getElementById('cfgList');
   if(!activeFamily){el.innerHTML='<div style="color:#475569;font-size:0.8em">Select a family first</div>';return;}
-  let html='';
-  const sorted=Object.entries(standards).filter(([_,c])=>c.family===activeFamily).sort(([a],[b])=>a.localeCompare(b));
-  if(!sorted.length){el.innerHTML='<div style="color:#475569;font-size:0.8em">No configs for this family</div>';return;}
-  for(const[id,cfg]of sorted){
-    const act=id===activeCfg?'active':'';
-    html+='<div class="cfg-card '+act+'" onclick="selectCfg(\''+id+'\')">';
+  var html='';
+  var keys=Object.keys(standards).filter(function(k){return standards[k].family===activeFamily;}).sort();
+  if(!keys.length){el.innerHTML='<div style="color:#475569;font-size:0.8em">No configs for this family</div>';return;}
+  for(var i=0;i<keys.length;i++){
+    var id=keys[i],cfg=standards[id];
+    var act=id===activeCfg?' active':'';
+    html+='<div class="cfg-card'+act+'" onclick="selectCfg(\\x27'+id+'\\x27)">';
     html+='<h4>'+id+': '+cfg.name+'</h4>';
     html+='<p>'+cfg.description+'</p></div>';
   }
@@ -316,18 +331,20 @@ function selectCfg(id){
 }
 
 function renderModules(){
-  const el=document.getElementById('modList');
+  var el=document.getElementById('modList');
   if(!activeFamily){el.innerHTML='';return;}
-  let html='';
-  const catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','optimum-start'];
-  for(const cat of catOrder){
-    const mods=modules[cat];if(!mods)continue;
+  var html='';
+  var catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','optimum-start'];
+  for(var ci=0;ci<catOrder.length;ci++){
+    var cat=catOrder[ci];
+    var mods=modules[cat];if(!mods)continue;
     html+='<div class="mod-grp"><div class="mod-grp-t">'+cat.toUpperCase()+' ('+mods.length+')</div>';
-    for(const m of mods){
-      const isCore=m.is_core;
-      const checked=isCore||selected.has(m.id)?'checked':'';
-      const cls=isCore?'mod-item core':(selected.has(m.id)?'mod-item on':'mod-item');
-      html+='<div class="'+cls+'"><input type="checkbox" '+checked+' '+(isCore?'disabled':'')+' onchange="toggleMod(\''+m.id+'\',this.checked)"><span>'+m.name+'</span></div>';
+    for(var mi=0;mi<mods.length;mi++){
+      var m=mods[mi];
+      var isCore=m.is_core;
+      var checked=(isCore||selected.has(m.id))?'checked':'';
+      var cls=isCore?'mod-item core':(selected.has(m.id)?'mod-item on':'mod-item');
+      html+='<div class="'+cls+'"><input type="checkbox" '+checked+' '+(isCore?'disabled':'')+' onchange="toggleMod(\\x27'+m.id+'\\x27,this.checked)"><span>'+m.name+'</span></div>';
     }
     html+='</div>';
   }
@@ -340,14 +357,20 @@ function toggleMod(id,on){
 }
 
 async function doAssemble(){
-  const mods=[...selected];
-  for(const[_,ms]of Object.entries(modules))for(const m of ms)if(m.is_core&&!mods.includes(m.id))mods.push(m.id);
-  const body={modules:[...new Set(mods)],controller_model:document.getElementById('selCtrl').value};
+  var mods=Array.from(selected);
+  var cats=Object.keys(modules);
+  for(var ci=0;ci<cats.length;ci++){
+    var ms=modules[cats[ci]];
+    for(var mi=0;mi<ms.length;mi++){
+      if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
+    }
+  }
+  var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
   document.getElementById('status').textContent='Assembling...';
   try{
-    const res=await fetch('/api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!res.ok){const e=await res.json();throw new Error(e.detail);}
-    const r=await res.json();
+    var res=await fetch('/api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res.ok){var e=await res.json();throw new Error(e.detail);}
+    var r=await res.json();
     renderResults(r);
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
@@ -424,16 +447,24 @@ function showTab(i){
 }
 
 async function doGenerate(){
-  const mods=[...selected];
-  for(const[_,ms]of Object.entries(modules))for(const m of ms)if(m.is_core&&!mods.includes(m.id))mods.push(m.id);
-  const body={modules:[...new Set(mods)],controller_model:document.getElementById('selCtrl').value};
+  var mods=Array.from(selected);
+  var cats=Object.keys(modules);
+  for(var ci=0;ci<cats.length;ci++){
+    var ms=modules[cats[ci]];
+    for(var mi=0;mi<ms.length;mi++){
+      if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
+    }
+  }
+  var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
   document.getElementById('status').textContent='Generating package...';
-  const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
-  const blob=await res.blob();
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download='composition-package.zip';a.click();
-  document.getElementById('status').textContent='Package downloaded!';
+  try{
+    var res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
+    var blob=await res.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='composition-package.zip';a.click();
+    document.getElementById('status').textContent='Package downloaded!';
+  }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
 init();
