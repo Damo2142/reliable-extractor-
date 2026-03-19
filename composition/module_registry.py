@@ -6,7 +6,8 @@ Central registry of all available modules. Builds and caches module instances.
 
 from composition.modules import (
     core, fan_supply, fan_return_exhaust, heating, cooling,
-    economizer, erw, ventilation, optimum_start, safety, preheat, humidity, pump
+    economizer, erw, ventilation, optimum_start, safety, preheat, humidity, pump,
+    dual_duct
 )
 
 
@@ -95,6 +96,11 @@ _register("dehum-sc", humidity.build_dehum_sc)
 _register("htg-hw-pump", pump.build_hw_pump)
 _register("clg-chw-pump", pump.build_chw_pump)
 _register("ph-hw-pump", pump.build_ph_pump)
+
+# Dual Duct
+_register("dd-cold-chw", dual_duct.build_dd_cold_chw)
+_register("dd-hot-hw", dual_duct.build_dd_hot_hw)
+_register("dd-hot-elec", dual_duct.build_dd_hot_elec)
 
 
 # Cache built modules
@@ -214,6 +220,24 @@ EQUIPMENT_FAMILIES = {
         "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
                                  "ventilation", "humidity", "safety", "pump"],
         "notes": "VFD supply fan modulates to space temp (NOT duct static). No downstream VAV boxes. Single zone served.",
+    },
+    "DD-AHU": {
+        "name": "Dual Duct AHU",
+        "description": "Hot deck + cold deck — downstream dual-duct mixing boxes blend hot and cold air per zone",
+        "prefix": "SBS-DD",
+        "required_modules": ["core"],
+        "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
+                                 "ventilation", "humidity", "fan", "safety", "pump"],
+        "notes": "Two parallel decks with independent SAT control. Hot deck SAT reset from heating demand, cold deck SAT reset from cooling demand. Common in retrofit.",
+    },
+    "MZ-AHU": {
+        "name": "Multizone AHU",
+        "description": "Zone mixing dampers AT the unit — hot and cold decks with per-zone mixing at the AHU",
+        "prefix": "SBS-MZ",
+        "required_modules": ["core"],
+        "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
+                                 "ventilation", "safety"],
+        "notes": "Zone dampers are outputs on the AHU controller. Limited zone count (4-12 typical). Hot/cold deck SAT control. Common in older buildings / retrofit.",
     },
 }
 
@@ -664,6 +688,108 @@ STANDARD_CONFIGS = {
         "modules": [
             "core", "fan-sf-vfd",
             "clg-chw", "htg-hw", "ph-hw", "econ-enth", "erw",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_FULL,
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  DUAL DUCT AHU — SBS-DD-701 to 710
+    #  Hot deck + cold deck, downstream mixing boxes
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-DD-701": {
+        "family": "DD-AHU",
+        "name": "DD CHW / HW / VFD / Econ-DB",
+        "description": "Dual duct VAV: CHW cold deck, HW hot deck, VFD fan, dry bulb econ",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "dd-cold-chw", "dd-hot-hw", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-DD-702": {
+        "family": "DD-AHU",
+        "name": "DD CHW / HW / VFD / Econ-Enth",
+        "description": "Dual duct VAV: CHW cold deck, HW hot deck, enthalpy econ",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "dd-cold-chw", "dd-hot-hw", "econ-enth",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-DD-703": {
+        "family": "DD-AHU",
+        "name": "DD CHW / HW / CS / Econ-DB — CV Dual Duct",
+        "description": "Dual duct CV: constant speed fan, CHW/HW decks",
+        "modules": [
+            "core", "fan-sf-cs",
+            "dd-cold-chw", "dd-hot-hw", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-DD-704": {
+        "family": "DD-AHU",
+        "name": "DD CHW / Electric / VFD / Econ-DB",
+        "description": "Dual duct VAV: CHW cold deck, electric hot deck",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "dd-cold-chw", "dd-hot-elec", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_FULL,
+    },
+    "SBS-DD-705": {
+        "family": "DD-AHU",
+        "name": "DD CHW / HW / VFD / Econ-Enth / ERW",
+        "description": "Dual duct VAV with energy recovery wheel",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "dd-cold-chw", "dd-hot-hw", "econ-enth", "erw",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_FULL,
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  MULTIZONE AHU — SBS-MZ-801 to 810
+    #  Zone mixing dampers at the unit, hot/cold decks
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-MZ-801": {
+        "family": "MZ-AHU",
+        "name": "MZ CHW / HW / CS / Econ-DB",
+        "description": "Multizone CV: CHW cold deck, HW hot deck, constant speed, dry bulb econ",
+        "modules": [
+            "core", "fan-sf-cs",
+            "dd-cold-chw", "dd-hot-hw", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-MZ-802": {
+        "family": "MZ-AHU",
+        "name": "MZ CHW / HW / CS / Econ-Enth",
+        "description": "Multizone CV: CHW cold deck, HW hot deck, enthalpy econ",
+        "modules": [
+            "core", "fan-sf-cs",
+            "dd-cold-chw", "dd-hot-hw", "econ-enth",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-MZ-803": {
+        "family": "MZ-AHU",
+        "name": "MZ CHW / Electric / CS / Econ-DB",
+        "description": "Multizone CV: CHW cold deck, electric hot deck",
+        "modules": [
+            "core", "fan-sf-cs",
+            "dd-cold-chw", "dd-hot-elec", "econ-db",
+            "vent-fix", "opt-start",
+        ] + _SAFETY_BASE,
+    },
+    "SBS-MZ-804": {
+        "family": "MZ-AHU",
+        "name": "MZ CHW / HW / VFD / Econ-DB",
+        "description": "Multizone with VFD: CHW/HW decks, dry bulb econ",
+        "modules": [
+            "core", "fan-sf-vfd",
+            "dd-cold-chw", "dd-hot-hw", "econ-db",
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },

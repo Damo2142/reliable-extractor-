@@ -3,14 +3,6 @@ SBS Composition Engine v2 — FastAPI Standalone Server
 
 Standalone web server for the composition engine UI.
 Runs on port 8087 (separate from DFA platform and composer).
-
-Endpoints:
-  GET  /                    - UI (HTML)
-  GET  /api/modules         - List all available modules by category
-  GET  /api/modules/{id}    - Get module details
-  GET  /api/standards       - List standard configurations
-  POST /api/assemble        - Assemble a configuration
-  POST /api/generate        - Generate Excel + .bas package (returns zip)
 """
 
 import sys
@@ -32,7 +24,7 @@ from composition.assembler import assemble, CONTROLLER_SPECS
 from composition.excel_gen import generate_excel
 from composition.program_loader import inject_program_code
 from composition.module_registry import (
-    list_modules, list_by_category, get_module, STANDARD_CONFIGS
+    list_modules, list_by_category, get_module, STANDARD_CONFIGS, EQUIPMENT_FAMILIES
 )
 
 app = FastAPI(
@@ -51,17 +43,11 @@ app.add_middleware(
 
 class AssembleRequest(BaseModel):
     modules: List[str]
-    device_name: str = "{device-name}"
-    parent_name: str = "{parent}"
-    equipment_family: str = "AHU-VAV"
     controller_model: str = "auto"
 
 
 class GenerateRequest(BaseModel):
     modules: List[str]
-    device_name: str = "{device-name}"
-    parent_name: str = "{parent}"
-    equipment_family: str = "AHU-VAV"
     controller_model: str = "auto"
 
 
@@ -69,52 +55,45 @@ class GenerateRequest(BaseModel):
 
 @app.get("/api/modules")
 async def api_list_modules():
-    """List all modules grouped by category."""
     return list_by_category()
 
 
 @app.get("/api/modules/{module_id}")
 async def api_get_module(module_id: str):
-    """Get detailed module info."""
     try:
         mod = get_module(module_id)
     except ValueError:
         raise HTTPException(404, f"Module not found: {module_id}")
     return {
-        "id": mod.id,
-        "name": mod.name,
-        "category": mod.category,
-        "description": mod.description,
-        "is_core": mod.is_core,
-        "requires": mod.requires,
-        "conflicts": mod.conflicts,
+        "id": mod.id, "name": mod.name, "category": mod.category,
+        "description": mod.description, "is_core": mod.is_core,
+        "requires": mod.requires, "conflicts": mod.conflicts,
         "mutually_exclusive_group": mod.mutually_exclusive_group,
-        "inputs": len(mod.inputs),
-        "outputs": len(mod.outputs),
-        "values": len(mod.values),
-        "loops": len(mod.loops),
-        "programs": len(mod.programs),
-        "soo_paragraph": mod.soo_paragraph,
+        "inputs": len(mod.inputs), "outputs": len(mod.outputs),
+        "values": len(mod.values), "loops": len(mod.loops),
+        "programs": len(mod.programs), "soo_paragraph": mod.soo_paragraph,
     }
+
+
+@app.get("/api/families")
+async def api_list_families():
+    return EQUIPMENT_FAMILIES
 
 
 @app.get("/api/standards")
 async def api_list_standards():
-    """List standard configurations."""
     return STANDARD_CONFIGS
 
 
 @app.get("/api/controllers")
 async def api_list_controllers():
-    """List available controller models with specs."""
     return {"auto": {"family": "Auto-Select", "base_in": 0, "base_out": 0, "max_exp": 0}, **CONTROLLER_SPECS}
 
 
 @app.post("/api/assemble")
 async def api_assemble(req: AssembleRequest):
-    """Assemble a configuration from selected modules."""
     try:
-        config = assemble(req.modules, req.device_name, req.parent_name, req.equipment_family, req.controller_model)
+        config = assemble(req.modules, controller_model=req.controller_model)
         inject_program_code(config)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -129,323 +108,332 @@ async def api_assemble(req: AssembleRequest):
             "highest_output_row": config.highest_output_row,
         },
         "counts": {
-            "inputs": len(config.inputs),
-            "outputs": len(config.outputs),
-            "values": len(config.values),
-            "loops": len(config.loops),
-            "tables": len(config.tables),
-            "programs": len(config.programs),
-            "schedules": len(config.schedules),
-            "trends": len(config.trends),
+            "inputs": len(config.inputs), "outputs": len(config.outputs),
+            "values": len(config.values), "loops": len(config.loops),
+            "tables": len(config.tables), "programs": len(config.programs),
+            "schedules": len(config.schedules), "trends": len(config.trends),
             "system_groups": len(config.system_groups),
         },
-        "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in config.inputs],
-        "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module, "reverse": p.reverse} for p in config.outputs],
-        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description} for p in sorted(config.programs, key=lambda x: x.exec_order)],
+        "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "units": p.units, "range": p.range_code, "module": p.module} for p in config.inputs],
+        "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module, "reverse": p.reverse, "min_v": p.min_v, "max_v": p.max_v} for p in config.outputs],
+        "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in config.values],
+        "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in config.loops],
+        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50)} for p in sorted(config.programs, key=lambda x: x.exec_order)],
         "soo": config.soo_document,
     }
 
 
 @app.post("/api/generate")
 async def api_generate(req: GenerateRequest):
-    """Generate Excel + .bas zip package."""
     try:
-        config = assemble(req.modules, req.device_name, req.parent_name, req.equipment_family, req.controller_model)
+        config = assemble(req.modules, controller_model=req.controller_model)
         inject_program_code(config)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    # Generate Excel
     excel_data = generate_excel(config)
-
-    # Create zip with Excel + .bas files + SOO
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # Excel workbook
-        fname = f"{config.device_name}-RC-Studio.xlsx" if config.device_name != "{device-name}" else "RC-Studio-Output.xlsx"
-        zf.writestr(fname, excel_data)
-
-        # .bas program files
+        zf.writestr("RC-Studio-Output.xlsx", excel_data)
         for prg in config.programs:
-            code = prg.code or ""
-            if config.device_name != "{device-name}":
-                code = code.replace("{device-name}", config.device_name)
-            if config.parent_name != "{parent}":
-                code = code.replace("{parent}", config.parent_name)
-            zf.writestr(f"programs/{prg.filename}", code)
-
-        # SOO document
+            zf.writestr(f"programs/{prg.filename}", prg.code or "")
         zf.writestr("SOO.txt", config.soo_document)
-
-        # Summary JSON
-        summary = {
+        zf.writestr("summary.json", json.dumps({
             "modules": config.selected_modules,
             "controller": config.controller_model,
             "expansion": f"{config.expansion_count}x {config.expansion_model}" if config.expansion_count else "none",
-            "inputs": len(config.inputs),
-            "outputs": len(config.outputs),
-            "values": len(config.values),
-            "loops": len(config.loops),
-            "programs": len(config.programs),
-        }
-        zf.writestr("summary.json", json.dumps(summary, indent=2))
-
+            "counts": {"inputs": len(config.inputs), "outputs": len(config.outputs),
+                       "values": len(config.values), "loops": len(config.loops),
+                       "programs": len(config.programs), "trends": len(config.trends)},
+        }, indent=2))
     zip_buf.seek(0)
-    filename = f"{config.device_name}-package.zip" if config.device_name != "{device-name}" else "composition-package.zip"
-    return StreamingResponse(
-        zip_buf,
-        media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
+    return StreamingResponse(zip_buf, media_type="application/zip",
+                             headers={"Content-Disposition": "attachment; filename=composition-package.zip"})
 
 
 # --- UI ---
 
 @app.get("/", response_class=HTMLResponse)
 async def ui():
-    """Standalone composition UI."""
-    return """<!DOCTYPE html>
+    return HTML_UI
+
+
+HTML_UI = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SBS Composition Engine v2</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0e17; color: #e0e6ed; }
-  .header { background: linear-gradient(135deg, #1a237e, #0d47a1); padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; }
-  .header h1 { font-size: 1.4em; font-weight: 600; }
-  .header .subtitle { color: #90caf9; font-size: 0.85em; }
-  .container { display: grid; grid-template-columns: 340px 1fr; gap: 0; height: calc(100vh - 70px); }
-  .sidebar { background: #111827; border-right: 1px solid #1e293b; overflow-y: auto; padding: 16px; }
-  .main { overflow-y: auto; padding: 20px 24px; }
-  .section { margin-bottom: 16px; }
-  .section-title { font-size: 0.75em; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-bottom: 8px; font-weight: 600; }
-  .module-group { margin-bottom: 12px; }
-  .module-group-title { font-size: 0.85em; color: #94a3b8; margin-bottom: 4px; font-weight: 500; cursor: pointer; }
-  .module-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.82em; }
-  .module-item:hover { background: #1e293b; }
-  .module-item.selected { background: #1e3a5f; color: #60a5fa; }
-  .module-item.core { opacity: 0.6; }
-  .module-item input[type="checkbox"] { accent-color: #3b82f6; }
-  .btn { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600; }
-  .btn-primary { background: #2563eb; color: white; }
-  .btn-primary:hover { background: #1d4ed8; }
-  .btn-success { background: #059669; color: white; }
-  .btn-success:hover { background: #047857; }
-  .btn-group { display: flex; gap: 8px; margin: 16px 0; }
-  .input-row { display: flex; gap: 8px; margin-bottom: 12px; }
-  .input-row label { font-size: 0.8em; color: #94a3b8; min-width: 100px; }
-  .input-row input, .input-row select { background: #1e293b; border: 1px solid #334155; color: #e0e6ed; padding: 6px 10px; border-radius: 4px; flex: 1; font-size: 0.85em; }
-  .results { background: #111827; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; margin-top: 12px; }
-  .results h3 { color: #60a5fa; margin-bottom: 8px; font-size: 1em; }
-  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 12px 0; }
-  .stat { background: #1e293b; padding: 10px; border-radius: 6px; text-align: center; }
-  .stat .value { font-size: 1.5em; font-weight: 700; color: #60a5fa; }
-  .stat .label { font-size: 0.75em; color: #94a3b8; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.82em; }
-  th { background: #1e293b; padding: 8px; text-align: left; color: #94a3b8; font-weight: 500; }
-  td { padding: 6px 8px; border-bottom: 1px solid #1e293b; }
-  tr.unused td { color: #475569; font-style: italic; }
-  .tag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 600; }
-  .tag-ai { background: #1e3a5f; color: #60a5fa; }
-  .tag-bi { background: #1a3636; color: #5eead4; }
-  .tag-ao { background: #3b1f1f; color: #fca5a5; }
-  .tag-bo { background: #3b2f1f; color: #fbbf24; }
-  .soo-text { white-space: pre-wrap; font-family: 'Courier New', monospace; font-size: 0.8em; line-height: 1.5; background: #0f172a; padding: 16px; border-radius: 6px; max-height: 400px; overflow-y: auto; }
-  .standard-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; cursor: pointer; }
-  .standard-card:hover { border-color: #3b82f6; }
-  .standard-card h4 { color: #e0e6ed; font-size: 0.9em; }
-  .standard-card p { color: #94a3b8; font-size: 0.8em; margin-top: 4px; }
-  #status { padding: 8px 12px; background: #1e293b; border-radius: 4px; font-size: 0.8em; color: #94a3b8; margin-top: 8px; }
-  .tab-bar { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid #1e293b; padding-bottom: 8px; flex-wrap: wrap; }
-  .tab { padding: 6px 14px; border-radius: 4px 4px 0 0; cursor: pointer; font-size: 0.82em; color: #94a3b8; }
-  .tab.active { background: #1e293b; color: #60a5fa; font-weight: 600; }
-  .tab:hover { color: #e0e6ed; }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0e17;color:#e0e6ed}
+.hdr{background:linear-gradient(135deg,#1a237e,#0d47a1);padding:14px 24px;display:flex;justify-content:space-between;align-items:center}
+.hdr h1{font-size:1.3em;font-weight:600}
+.hdr .sub{color:#90caf9;font-size:0.8em}
+.layout{display:grid;grid-template-columns:360px 1fr;height:calc(100vh - 56px)}
+.side{background:#111827;border-right:1px solid #1e293b;overflow-y:auto;padding:14px}
+.main{overflow-y:auto;padding:16px 20px}
+.sec{margin-bottom:14px}
+.sec-t{font-size:0.7em;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:6px;font-weight:600}
+select,input{background:#1e293b;border:1px solid #334155;color:#e0e6ed;padding:7px 10px;border-radius:4px;width:100%;font-size:0.85em;margin-bottom:8px}
+select:focus,input:focus{border-color:#3b82f6;outline:none}
+.btn{padding:9px 18px;border:none;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;transition:background 0.15s}
+.btn-p{background:#2563eb;color:#fff}.btn-p:hover{background:#1d4ed8}
+.btn-s{background:#059669;color:#fff}.btn-s:hover{background:#047857}
+.btn-o{background:#d97706;color:#fff}.btn-o:hover{background:#b45309}
+.btn-grp{display:flex;gap:8px;margin:10px 0}
+.cfg-card{background:#1e293b;border:1px solid #334155;border-radius:6px;padding:10px 14px;margin-bottom:6px;cursor:pointer;transition:border 0.15s}
+.cfg-card:hover{border-color:#3b82f6}
+.cfg-card.active{border-color:#3b82f6;background:#172554}
+.cfg-card h4{color:#e0e6ed;font-size:0.85em}
+.cfg-card p{color:#94a3b8;font-size:0.75em;margin-top:2px}
+.mod-grp{margin-bottom:10px}
+.mod-grp-t{font-size:0.8em;color:#94a3b8;margin-bottom:3px;font-weight:500}
+.mod-item{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:3px;font-size:0.8em}
+.mod-item:hover{background:#1e293b}
+.mod-item.on{color:#60a5fa}
+.mod-item.core{opacity:0.5}
+.mod-item input{width:auto;margin:0}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin:10px 0}
+.stat{background:#1e293b;padding:8px;border-radius:5px;text-align:center}
+.stat .v{font-size:1.4em;font-weight:700;color:#60a5fa}
+.stat .l{font-size:0.7em;color:#94a3b8}
+.tabs{display:flex;gap:3px;border-bottom:1px solid #1e293b;padding-bottom:6px;margin-bottom:10px;flex-wrap:wrap}
+.tab{padding:5px 12px;border-radius:4px 4px 0 0;cursor:pointer;font-size:0.8em;color:#94a3b8;transition:all 0.15s}
+.tab.act{background:#1e293b;color:#60a5fa;font-weight:600}
+.tab:hover{color:#e0e6ed}
+.tp{display:none}.tp.act{display:block}
+table{width:100%;border-collapse:collapse;font-size:0.8em}
+th{background:#1e293b;padding:6px 8px;text-align:left;color:#94a3b8;font-weight:500;position:sticky;top:0}
+td{padding:5px 8px;border-bottom:1px solid #1e293b}
+tr.unused td{color:#475569;font-style:italic}
+.tag{display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.75em;font-weight:600}
+.tag-ai{background:#1e3a5f;color:#60a5fa}.tag-bi{background:#1a3636;color:#5eead4}
+.tag-ao{background:#3b1f1f;color:#fca5a5}.tag-bo{background:#3b2f1f;color:#fbbf24}
+.tag-av{background:#1e293b;color:#a78bfa}.tag-bv{background:#1e293b;color:#34d399}.tag-mv{background:#1e293b;color:#fb923c}
+.soo{white-space:pre-wrap;font-family:'Courier New',monospace;font-size:0.78em;line-height:1.4;background:#0f172a;padding:14px;border-radius:5px;max-height:500px;overflow-y:auto}
+#status{padding:6px 10px;background:#1e293b;border-radius:4px;font-size:0.8em;color:#94a3b8;margin-bottom:10px}
+.row-label{font-size:0.7em;color:#475569;text-align:right;padding-right:4px}
 </style>
 </head>
 <body>
-<div class="header">
-  <div>
-    <h1>SBS Composition Engine v2</h1>
-    <div class="subtitle">Vendor-Neutral HVAC Modules + Reliable Controls Output</div>
-  </div>
-  <div style="display:flex;gap:8px">
-    <button class="btn btn-primary" onclick="doAssemble()">Assemble</button>
-    <button class="btn btn-success" onclick="doGenerate()">Download Package</button>
+<div class="hdr">
+  <div><h1>SBS Composition Engine v2</h1><div class="sub">Reliable Controls Output Tool</div></div>
+  <div class="btn-grp">
+    <button class="btn btn-p" onclick="doAssemble()">Assemble</button>
+    <button class="btn btn-s" onclick="doGenerate()">Download Package</button>
   </div>
 </div>
-<div class="container">
-  <div class="sidebar">
-    <div class="section">
-      <div class="section-title">Device Configuration</div>
-      <div class="input-row"><label>Device Name</label><input id="deviceName" value="{device-name}" /></div>
-      <div class="input-row"><label>Parent</label><input id="parentName" value="{parent}" /></div>
-    </div>
-    <div class="section">
-      <div class="section-title">Standard Configs</div>
-      <div id="standards"></div>
-    </div>
-    <div class="section">
-      <div class="section-title">Module Selection</div>
-      <div id="moduleList"></div>
-    </div>
+<div class="layout">
+<div class="side">
+  <div class="sec">
+    <div class="sec-t">Equipment Family</div>
+    <select id="selFamily" onchange="onFamilyChange()"><option value="">-- Select Family --</option></select>
+    <div id="familyDesc" style="font-size:0.75em;color:#64748b;margin-bottom:8px"></div>
   </div>
-  <div class="main">
-    <div id="status">Select modules or a standard config, then click Assemble.</div>
-    <div id="results" style="display:none">
-      <div class="stat-grid" id="stats"></div>
-      <div class="tab-bar" id="tabBar"></div>
-      <div id="tabContents"></div>
-    </div>
+  <div class="sec">
+    <div class="sec-t">Standard Configuration</div>
+    <div id="cfgList"></div>
   </div>
+  <div class="sec">
+    <div class="sec-t">Controller Model</div>
+    <select id="selCtrl"><option value="auto">Auto-Select (recommended)</option></select>
+  </div>
+  <div class="sec">
+    <div class="sec-t">Module Toggles <span style="font-size:0.85em;color:#475569">(on/off from standard)</span></div>
+    <div id="modList"></div>
+  </div>
+</div>
+<div class="main">
+  <div id="status">Select an equipment family to begin.</div>
+  <div id="results" style="display:none">
+    <div class="stat-grid" id="stats"></div>
+    <div class="tabs" id="tabBar"></div>
+    <div id="tabContents"></div>
+  </div>
+</div>
 </div>
 <script>
-let modules = {};
-let selected = new Set();
-let assemblyResult = null;
+let families={}, standards={}, modules={}, controllers={};
+let selected=new Set(), activeCfg='', activeFamily='';
 
-async function init() {
-  const [mods, stds] = await Promise.all([
-    fetch('/api/modules').then(r=>r.json()),
+async function init(){
+  [families, standards, modules, controllers] = await Promise.all([
+    fetch('/api/families').then(r=>r.json()),
     fetch('/api/standards').then(r=>r.json()),
+    fetch('/api/modules').then(r=>r.json()),
+    fetch('/api/controllers').then(r=>r.json()),
   ]);
-  modules = mods;
-  renderModules(mods);
-  renderStandards(stds);
+  // Family dropdown
+  const sf=document.getElementById('selFamily');
+  for(const[id,f]of Object.entries(families)){
+    const o=document.createElement('option');o.value=id;o.textContent=f.name;sf.appendChild(o);
+  }
+  // Controller dropdown
+  const sc=document.getElementById('selCtrl');
+  for(const[id,c]of Object.entries(controllers)){
+    if(id==='auto')continue;
+    const o=document.createElement('option');o.value=id;
+    o.textContent=id+' ('+c.family+') — '+c.base_in+'in/'+c.base_out+'out, '+c.max_exp+' exp';
+    sc.appendChild(o);
+  }
 }
 
-function renderModules(byCategory) {
-  const el = document.getElementById('moduleList');
-  let html = '';
-  for (const [cat, mods] of Object.entries(byCategory).sort()) {
-    html += `<div class="module-group"><div class="module-group-title">${cat.toUpperCase()} (${mods.length})</div>`;
-    for (const m of mods) {
-      const isCore = m.is_core;
-      const checked = isCore || selected.has(m.id) ? 'checked' : '';
-      const cls = isCore ? 'module-item core' : 'module-item';
-      html += `<div class="${cls}${selected.has(m.id)?' selected':''}">
-        <input type="checkbox" ${checked} ${isCore?'disabled':''} onchange="toggleModule('${m.id}',this.checked)" />
-        <span>${m.name}</span></div>`;
+function onFamilyChange(){
+  activeFamily=document.getElementById('selFamily').value;
+  const f=families[activeFamily];
+  document.getElementById('familyDesc').textContent=f?f.description:'';
+  activeCfg='';
+  selected.clear();
+  renderConfigs();
+  renderModules();
+  document.getElementById('results').style.display='none';
+  document.getElementById('status').textContent=f?'Select a standard configuration, then click Assemble.':'Select an equipment family.';
+}
+
+function renderConfigs(){
+  const el=document.getElementById('cfgList');
+  if(!activeFamily){el.innerHTML='<div style="color:#475569;font-size:0.8em">Select a family first</div>';return;}
+  let html='';
+  const sorted=Object.entries(standards).filter(([_,c])=>c.family===activeFamily).sort(([a],[b])=>a.localeCompare(b));
+  if(!sorted.length){el.innerHTML='<div style="color:#475569;font-size:0.8em">No configs for this family</div>';return;}
+  for(const[id,cfg]of sorted){
+    const act=id===activeCfg?'active':'';
+    html+='<div class="cfg-card '+act+'" onclick="selectCfg(\''+id+'\')">';
+    html+='<h4>'+id+': '+cfg.name+'</h4>';
+    html+='<p>'+cfg.description+'</p></div>';
+  }
+  el.innerHTML=html;
+}
+
+function selectCfg(id){
+  activeCfg=id;
+  const cfg=standards[id];
+  selected=new Set(cfg.modules);
+  renderConfigs();
+  renderModules();
+  document.getElementById('status').textContent='Loaded: '+id+' — '+cfg.name;
+}
+
+function renderModules(){
+  const el=document.getElementById('modList');
+  if(!activeFamily){el.innerHTML='';return;}
+  let html='';
+  const catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','optimum-start'];
+  for(const cat of catOrder){
+    const mods=modules[cat];if(!mods)continue;
+    html+='<div class="mod-grp"><div class="mod-grp-t">'+cat.toUpperCase()+' ('+mods.length+')</div>';
+    for(const m of mods){
+      const isCore=m.is_core;
+      const checked=isCore||selected.has(m.id)?'checked':'';
+      const cls=isCore?'mod-item core':(selected.has(m.id)?'mod-item on':'mod-item');
+      html+='<div class="'+cls+'"><input type="checkbox" '+checked+' '+(isCore?'disabled':'')+' onchange="toggleMod(\''+m.id+'\',this.checked)"><span>'+m.name+'</span></div>';
     }
-    html += '</div>';
+    html+='</div>';
   }
-  el.innerHTML = html;
+  el.innerHTML=html;
 }
 
-function renderStandards(stds) {
-  const el = document.getElementById('standards');
-  let html = '';
-  for (const [id, cfg] of Object.entries(stds)) {
-    html += `<div class="standard-card" onclick="selectStandard('${id}')">
-      <h4>${cfg.name}</h4><p>${cfg.description}</p></div>`;
-  }
-  el.innerHTML = html;
+function toggleMod(id,on){
+  if(on)selected.add(id);else selected.delete(id);
+  renderModules();
 }
 
-function toggleModule(id, on) {
-  if (on) selected.add(id); else selected.delete(id);
-  renderModules(modules);
+async function doAssemble(){
+  const mods=[...selected];
+  for(const[_,ms]of Object.entries(modules))for(const m of ms)if(m.is_core&&!mods.includes(m.id))mods.push(m.id);
+  const body={modules:[...new Set(mods)],controller_model:document.getElementById('selCtrl').value};
+  document.getElementById('status').textContent='Assembling...';
+  try{
+    const res=await fetch('/api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res.ok){const e=await res.json();throw new Error(e.detail);}
+    const r=await res.json();
+    renderResults(r);
+  }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
-async function selectStandard(id) {
-  const stds = await fetch('/api/standards').then(r=>r.json());
-  const cfg = stds[id];
-  selected = new Set(cfg.modules);
-  renderModules(modules);
-  document.getElementById('status').textContent = `Loaded: ${cfg.name}`;
-}
+function renderResults(r){
+  document.getElementById('results').style.display='block';
+  const c=r.counts,ctrl=r.controller;
+  const exp=ctrl.expansion_count?ctrl.expansion_count+'x '+ctrl.expansion_model:'none';
+  document.getElementById('status').textContent=ctrl.model+(ctrl.expansion_count?' + '+exp:'')+' | '+r.modules.length+' modules | '+c.inputs+' inputs, '+c.outputs+' outputs, '+c.programs+' programs';
 
-async function doAssemble() {
-  const mods = [...selected];
-  // Add core modules
-  for (const [cat, ms] of Object.entries(modules)) {
-    for (const m of ms) { if (m.is_core) mods.push(m.id); }
-  }
-  const body = {
-    modules: [...new Set(mods)],
-    device_name: document.getElementById('deviceName').value,
-    parent_name: document.getElementById('parentName').value,
-  };
-  document.getElementById('status').textContent = 'Assembling...';
-  try {
-    const res = await fetch('/api/assemble', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
-    assemblyResult = await res.json();
-    renderResults(assemblyResult);
-    document.getElementById('status').textContent = `Assembled: ${assemblyResult.modules.length} modules, ${assemblyResult.controller.model} + ${assemblyResult.controller.expansion_count}x expansion`;
-  } catch(e) { document.getElementById('status').textContent = 'Error: ' + e.message; }
-}
+  document.getElementById('stats').innerHTML=
+    '<div class="stat"><div class="v">'+ctrl.model+'</div><div class="l">Controller</div></div>'+
+    '<div class="stat"><div class="v">'+(ctrl.expansion_count||0)+'</div><div class="l">Expansion</div></div>'+
+    '<div class="stat"><div class="v">'+c.inputs+'</div><div class="l">Inputs (r'+ctrl.highest_input_row+')</div></div>'+
+    '<div class="stat"><div class="v">'+c.outputs+'</div><div class="l">Outputs (r'+ctrl.highest_output_row+')</div></div>'+
+    '<div class="stat"><div class="v">'+c.values+'</div><div class="l">Values</div></div>'+
+    '<div class="stat"><div class="v">'+c.loops+'</div><div class="l">PID Loops</div></div>'+
+    '<div class="stat"><div class="v">'+c.programs+'</div><div class="l">Programs</div></div>'+
+    '<div class="stat"><div class="v">'+c.trends+'</div><div class="l">Trends</div></div>';
 
-function renderResults(r) {
-  document.getElementById('results').style.display = 'block';
-  // Stats
-  const c = r.counts;
-  const ctrl = r.controller;
-  document.getElementById('stats').innerHTML = `
-    <div class="stat"><div class="value">${ctrl.model}</div><div class="label">Controller</div></div>
-    <div class="stat"><div class="value">${ctrl.expansion_count}</div><div class="label">Expansion Boards</div></div>
-    <div class="stat"><div class="value">${c.inputs}</div><div class="label">Inputs</div></div>
-    <div class="stat"><div class="value">${c.outputs}</div><div class="label">Outputs</div></div>
-    <div class="stat"><div class="value">${c.values}</div><div class="label">Values</div></div>
-    <div class="stat"><div class="value">${c.loops}</div><div class="label">PID Loops</div></div>
-    <div class="stat"><div class="value">${c.programs}</div><div class="label">Programs</div></div>
-    <div class="stat"><div class="value">${c.trends}</div><div class="label">Trends</div></div>
-  `;
-  // Tabs
-  const tabs = ['Inputs','Outputs','Programs','SOO'];
-  document.getElementById('tabBar').innerHTML = tabs.map((t,i) =>
-    `<div class="tab${i===0?' active':''}" onclick="showTab(${i})">${t}</div>`).join('');
-  let tc = '';
+  const tabs=['Inputs','Outputs','Values','Loops','Programs','SOO'];
+  document.getElementById('tabBar').innerHTML=tabs.map((t,i)=>'<div class="tab'+(i===0?' act':'')+'" onclick="showTab('+i+')">'+t+'</div>').join('');
+
+  let tc='';
   // Inputs
-  tc += `<div class="tab-content active" id="tab0"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Description</th><th>Module</th></tr>`;
-  for (let row=1; row<=ctrl.highest_input_row; row++) {
-    const pt = r.inputs.find(p=>p.row===row);
-    if (pt) { tc += `<tr><td>${row}</td><td><span class="tag tag-${pt.type.toLowerCase()}">${pt.type}</span></td><td>${pt.name}</td><td>${pt.desc}</td><td>${pt.module}</td></tr>`; }
-    else { tc += `<tr class="unused"><td>${row}</td><td></td><td>--- unused ---</td><td></td><td></td></tr>`; }
+  tc+='<div class="tp act" id="t0"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Range</th><th>Units</th><th>Description</th><th>Module</th></tr>';
+  for(let row=1;row<=ctrl.highest_input_row;row++){
+    const pt=r.inputs.find(p=>p.row===row);
+    if(pt)tc+='<tr><td>'+row+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+'</td><td>'+pt.range+'</td><td>'+(pt.units||'')+'</td><td>'+pt.desc+'</td><td>'+pt.module+'</td></tr>';
+    else tc+='<tr class="unused"><td>'+row+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
   }
-  tc += '</table></div>';
+  tc+='</table></div>';
+
   // Outputs
-  tc += `<div class="tab-content" id="tab1"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Description</th><th>Module</th></tr>`;
-  for (let row=1; row<=ctrl.highest_output_row; row++) {
-    const pt = r.outputs.find(p=>p.row===row);
-    if (pt) { tc += `<tr><td>${row}</td><td><span class="tag tag-${pt.type.toLowerCase()}">${pt.type}</span></td><td>${pt.name}${pt.reverse?' (REV)':''}</td><td>${pt.desc}</td><td>${pt.module}</td></tr>`; }
-    else { tc += `<tr class="unused"><td>${row}</td><td></td><td>--- unused ---</td><td></td><td></td></tr>`; }
+  tc+='<div class="tp" id="t1"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Min V</th><th>Max V</th><th>Description</th><th>Module</th></tr>';
+  for(let row=1;row<=ctrl.highest_output_row;row++){
+    const pt=r.outputs.find(p=>p.row===row);
+    if(pt)tc+='<tr><td>'+row+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+(pt.reverse?' (REV)':'')+'</td><td>'+(pt.min_v||'')+'</td><td>'+(pt.max_v||'')+'</td><td>'+pt.desc+'</td><td>'+pt.module+'</td></tr>';
+    else tc+='<tr class="unused"><td>'+row+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
   }
-  tc += '</table></div>';
+  tc+='</table></div>';
+
+  // Values
+  tc+='<div class="tp" id="t2"><table><tr><th>Instance</th><th>Type</th><th>Name</th><th>Default</th><th>Units</th><th>Description</th><th>Module</th></tr>';
+  for(const v of r.values){
+    const pre={AV:'AV',BV:'BV',MV:'MV'}[v.type]||'AV';
+    tc+='<tr><td>'+pre+v.instance+'</td><td><span class="tag tag-'+v.type.toLowerCase()+'">'+v.type+'</span></td><td>{device-name}-'+v.name+'</td><td>'+v.default+'</td><td>'+(v.units||'')+'</td><td>'+v.desc+'</td><td>'+v.module+'</td></tr>';
+  }
+  tc+='</table></div>';
+
+  // Loops
+  tc+='<div class="tp" id="t3"><table><tr><th>Loop</th><th>Name</th><th>Input</th><th>Setpoint</th><th>Action</th><th>P Band</th><th>Integral</th><th>Description</th></tr>';
+  for(const l of r.loops){
+    tc+='<tr><td>LOOP'+l.instance+'</td><td>'+l.name+'</td><td>{device-name}-'+l.input+'</td><td>{device-name}-'+l.setpoint+'</td><td>'+(l.action==='direct'?'+':'-')+'</td><td>'+l.p+'</td><td>'+l.i+'</td><td>'+l.desc+'</td></tr>';
+  }
+  tc+='</table></div>';
+
   // Programs
-  tc += `<div class="tab-content" id="tab2"><table><tr><th>PRG#</th><th>Name</th><th>Filename</th><th>Enabled</th><th>Description</th></tr>`;
-  for (const p of r.programs) { tc += `<tr><td>PRG${p.instance}</td><td>${p.name}</td><td>${p.filename}</td><td>${p.enabled?'Yes':'No'}</td><td>${p.desc}</td></tr>`; }
-  tc += '</table></div>';
-  // SOO
-  tc += `<div class="tab-content" id="tab3"><div class="soo-text">${r.soo.replace(/</g,'&lt;')}</div></div>`;
-  document.getElementById('tabContents').innerHTML = tc;
-}
-
-function showTab(i) {
-  document.querySelectorAll('.tab').forEach((t,j) => t.classList.toggle('active',j===i));
-  document.querySelectorAll('.tab-content').forEach((t,j) => t.classList.toggle('active',j===i));
-}
-
-async function doGenerate() {
-  const mods = [...selected];
-  for (const [cat, ms] of Object.entries(modules)) {
-    for (const m of ms) { if (m.is_core) mods.push(m.id); }
+  tc+='<div class="tp" id="t4"><table><tr><th>PRG#</th><th>Name</th><th>Filename</th><th>Enabled</th><th>Code</th><th>Description</th></tr>';
+  for(const p of r.programs){
+    tc+='<tr><td>PRG'+p.instance+'</td><td>{device-name}-'+p.name+'</td><td>'+p.filename+'</td><td>'+(p.enabled?'Yes':'No')+'</td><td>'+(p.has_code?'OK':'STUB')+'</td><td>'+p.desc+'</td></tr>';
   }
-  const body = {
-    modules: [...new Set(mods)],
-    device_name: document.getElementById('deviceName').value,
-    parent_name: document.getElementById('parentName').value,
-  };
-  document.getElementById('status').textContent = 'Generating package...';
-  const res = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-  if (!res.ok) { document.getElementById('status').textContent = 'Error generating'; return; }
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'composition-package.zip'; a.click();
-  document.getElementById('status').textContent = 'Package downloaded!';
+  tc+='</table></div>';
+
+  // SOO
+  tc+='<div class="tp" id="t5"><div class="soo">'+r.soo.replace(/</g,'&lt;')+'</div></div>';
+
+  document.getElementById('tabContents').innerHTML=tc;
+}
+
+function showTab(i){
+  document.querySelectorAll('.tab').forEach((t,j)=>t.classList.toggle('act',j===i));
+  document.querySelectorAll('.tp').forEach((t,j)=>t.classList.toggle('act',j===i));
+}
+
+async function doGenerate(){
+  const mods=[...selected];
+  for(const[_,ms]of Object.entries(modules))for(const m of ms)if(m.is_core&&!mods.includes(m.id))mods.push(m.id);
+  const body={modules:[...new Set(mods)],controller_model:document.getElementById('selCtrl').value};
+  document.getElementById('status').textContent='Generating package...';
+  const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
+  const blob=await res.blob();
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download='composition-package.zip';a.click();
+  document.getElementById('status').textContent='Package downloaded!';
 }
 
 init();
