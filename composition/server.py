@@ -752,20 +752,36 @@ function getModList(){
   return mods;
 }
 
-function doGeneratePan(){
+async function doGeneratePan(){
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
-  document.getElementById('status').textContent='Downloading .pan...';
-  var ctrl=document.getElementById('selCtrl').value;
-  window.location.href='/api/download-pan?modules='+encodeURIComponent(mods.join(','))+'&controller='+ctrl;
+  var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value});
+  document.getElementById('status').textContent='Generating .pan...';
+  try{
+    var res=await fetch('/api/generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
+    if(!res.ok){document.getElementById('status').textContent='Error';return;}
+    var blob=await res.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='SBS-controller.pan';
+    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    document.getElementById('status').textContent='.pan downloaded ('+Math.round(blob.size/1024)+'KB)';
+  }catch(e){document.getElementById('status').textContent='Error: '+e;}
 }
 
-function doGenerateFull(){
+async function doGenerateFull(){
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
-  document.getElementById('status').textContent='Downloading full package...';
-  var ctrl=document.getElementById('selCtrl').value;
-  window.location.href='/api/download-full?modules='+encodeURIComponent(mods.join(','))+'&controller='+ctrl;
+  var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value});
+  document.getElementById('status').textContent='Generating full package...';
+  try{
+    var res=await fetch('/api/generate-full',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
+    if(!res.ok){document.getElementById('status').textContent='Error';return;}
+    var blob=await res.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='sbs-full-package.zip';
+    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    document.getElementById('status').textContent='Full package downloaded!';
+  }catch(e){document.getElementById('status').textContent='Error: '+e;}
 }
 
 init();
