@@ -18,12 +18,12 @@ def build_clg_chw():
         description="CHW cooling coil with modulating valve",
 
         inputs=[
-            InputPoint(33, "CHWC-SUPW-T", "AI", "10K -40->250", "CHW Coil Supply Water Temp", "°F"),
-            InputPoint(34, "CHWC-RETW-T", "AI", "10K -40->250", "CHW Coil Return Water Temp", "°F"),
+            InputPoint(33, "CHWC-SUPW-T", "AI", "10K -40 ->250", "CHW Coil Supply Water Temp", "°F"),
+            InputPoint(34, "CHWC-RETW-T", "AI", "10K -40 ->250", "CHW Coil Return Water Temp", "°F"),
         ],
 
         outputs=[
-            OutputPoint(5, "CHW-VLV", "AO", "0->100%", "Chilled Water Valve", 2.0, 10.0),
+            OutputPoint(5, "CHW-VLV", "AO", "0.0 ->100%", "Chilled Water Valve", 2.0, 10.0),
         ],
 
         values=[
@@ -155,7 +155,7 @@ def build_clg_dx_vfd():
 
         outputs=[
             OutputPoint(20, "DX-COMP-1",   "BO", "Stop/Start", "DX Compressor Enable"),
-            OutputPoint(27, "DX-VFD-SPD",  "AO", "0->100%",   "DX VFD Compressor Speed", 0.0, 10.0),
+            OutputPoint(27, "DX-VFD-SPD",  "AO", "0.0 ->100%",   "DX VFD Compressor Speed", 0.0, 10.0),
         ],
 
         values=[

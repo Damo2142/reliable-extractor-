@@ -19,12 +19,12 @@ def build_rf_vfd():
 
         inputs=[
             InputPoint(2,  "RF-S",        "BI", "Off/On",       "Return Fan Status"),
-            InputPoint(14, "BLDG-PRESS",  "AI", "Table:BLDG-P", "Building Static Pressure", "WC", "BLDG-P-TBL"),
+            InputPoint(14, "BLDG-PRESS",  "AI", "Table4", "Building Static Pressure", "WC", "BLDG-P-TBL"),
         ],
 
         outputs=[
             OutputPoint(11, "RF",         "BO", "Stop/Start",  "Return Fan Command"),
-            OutputPoint(12, "RF-VFD-SPD", "AO", "0->100%",    "Return Fan VFD Speed", 0.0, 10.0),
+            OutputPoint(12, "RF-VFD-SPD", "AO", "0.0 ->100%",    "Return Fan VFD Speed", 0.0, 10.0),
         ],
 
         values=[
@@ -111,14 +111,14 @@ def build_ef_vfd():
         inputs=[
             InputPoint(2,  "EF-S",      "BI", "Off/On",         "Exhaust Fan Status"),
             InputPoint(15, "EA-HPS",    "BI", "Normal/Alarm",   "Exhaust Air High Static Switch"),
-            InputPoint(22, "EA-CFM",    "AI", "Table:EA-VEL",   "Exhaust Airflow", "CFM", "EA-VEL-TBL"),
+            InputPoint(22, "EA-CFM",    "AI", "Table5",   "Exhaust Airflow", "CFM", "EA-VEL-TBL"),
             InputPoint(23, "EA-DMP-ES", "BI", "Close/Open",     "Exhaust Damper End Switch"),
         ],
 
         outputs=[
-            OutputPoint(3,  "EAD",        "AO", "0->100%", "Exhaust Air Damper",     2.0, 10.0),
+            OutputPoint(3,  "EAD",        "AO", "0.0 ->100%", "Exhaust Air Damper",     2.0, 10.0),
             OutputPoint(11, "EF",         "BO", "Stop/Start", "Exhaust Fan Command"),
-            OutputPoint(12, "EF-VFD-SPD", "AO", "0->100%",  "Exhaust Fan VFD Speed", 0.0, 10.0),
+            OutputPoint(12, "EF-VFD-SPD", "AO", "0.0 ->100%",  "Exhaust Fan VFD Speed", 0.0, 10.0),
         ],
 
         values=[
@@ -181,7 +181,7 @@ def build_ef_cs():
         ],
 
         outputs=[
-            OutputPoint(3,  "EAD", "AO", "0->100%",   "Exhaust Air Damper", 2.0, 10.0),
+            OutputPoint(3,  "EAD", "AO", "0.0 ->100%",   "Exhaust Air Damper", 2.0, 10.0),
             OutputPoint(11, "EF",  "BO", "Stop/Start", "Exhaust Fan Command"),
         ],
 
@@ -219,12 +219,12 @@ def build_rlf_vfd():
 
         inputs=[
             InputPoint(28, "RLF-S",      "BI", "Off/On",       "Relief Fan Status"),
-            InputPoint(14, "BLDG-PRESS", "AI", "Table:BLDG-P", "Building Static Pressure", "WC", "BLDG-P-TBL"),
+            InputPoint(14, "BLDG-PRESS", "AI", "Table4", "Building Static Pressure", "WC", "BLDG-P-TBL"),
         ],
 
         outputs=[
             OutputPoint(14, "RLF",         "BO", "Stop/Start", "Relief Fan Command"),
-            OutputPoint(15, "RLF-VFD-SPD", "AO", "0->100%",   "Relief Fan VFD Speed", 0.0, 10.0),
+            OutputPoint(15, "RLF-VFD-SPD", "AO", "0.0 ->100%",   "Relief Fan VFD Speed", 0.0, 10.0),
         ],
 
         values=[

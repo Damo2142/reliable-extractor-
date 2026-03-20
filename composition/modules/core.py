@@ -24,14 +24,14 @@ def build():
 
         inputs=[
             InputPoint(1, "SF-S",    "BI", "Off/On",        "Supply Fan Status"),
-            InputPoint(5, "MAT",     "AI", "10K -40->250",  "Mixed Air Temperature",     "°F"),
-            InputPoint(6, "SAT",     "AI", "10K -40->250",  "Supply Air Temperature",    "°F"),
-            InputPoint(7, "RAT",     "AI", "10K -40->250",  "Return Air Temperature",    "°F"),
-            InputPoint(12,"SA-DSP",  "AI", "Table:SA-DSP",  "Duct Static Pressure",      "WC", "SA-DSP-TBL"),
+            InputPoint(5, "MAT",     "AI", "10K -40 ->250",  "Mixed Air Temperature",     "°F"),
+            InputPoint(6, "SAT",     "AI", "10K -40 ->250",  "Supply Air Temperature",    "°F"),
+            InputPoint(7, "RAT",     "AI", "10K -40 ->250",  "Return Air Temperature",    "°F"),
+            InputPoint(12,"SA-DSP",  "AI", "Table2",  "Duct Static Pressure",      "WC", "SA-DSP-TBL"),
         ],
 
         outputs=[
-            OutputPoint(1, "OAD", "AO", "0->100%", "Outside Air Damper", 2.0, 10.0),
+            OutputPoint(1, "OAD", "AO", "0.0 ->100%", "Outside Air Damper", 2.0, 10.0),
         ],
 
         values=[

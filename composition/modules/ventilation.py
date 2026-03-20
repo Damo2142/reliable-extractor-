@@ -48,7 +48,7 @@ def build_vent_ams():
         description="OA airflow measuring station with flow-based minimum control",
 
         inputs=[
-            InputPoint(21, "OA-CFM", "AI", "Table:OA-VEL", "Outside Airflow", "CFM", "OA-VEL-TBL"),
+            InputPoint(21, "OA-CFM", "AI", "Table3", "Outside Airflow", "CFM", "OA-VEL-TBL"),
         ],
 
         values=[
@@ -96,7 +96,7 @@ def build_dcv_co2():
         description="Demand controlled ventilation using return air CO2 sensor",
 
         inputs=[
-            InputPoint(9, "RA-CO2", "AI", "Table:CO2", "Return Air CO2", "ppm", "CO2-TBL"),
+            InputPoint(9, "RA-CO2", "AI", "Table1", "Return Air CO2", "ppm", "CO2-TBL"),
         ],
 
         values=[

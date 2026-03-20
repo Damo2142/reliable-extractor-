@@ -23,13 +23,13 @@ def build_dd_cold_chw():
         description="Dual duct cold deck — CHW cooling coil with SAT control",
 
         inputs=[
-            InputPoint(6, "COLD-DECK-T", "AI", "10K -40->250", "Cold Deck Temperature", "°F"),
-            InputPoint(33, "CHWC-SUPW-T", "AI", "10K -40->250", "CHW Coil Supply Water Temp", "°F"),
-            InputPoint(34, "CHWC-RETW-T", "AI", "10K -40->250", "CHW Coil Return Water Temp", "°F"),
+            InputPoint(6, "COLD-DECK-T", "AI", "10K -40 ->250", "Cold Deck Temperature", "°F"),
+            InputPoint(33, "CHWC-SUPW-T", "AI", "10K -40 ->250", "CHW Coil Supply Water Temp", "°F"),
+            InputPoint(34, "CHWC-RETW-T", "AI", "10K -40 ->250", "CHW Coil Return Water Temp", "°F"),
         ],
 
         outputs=[
-            OutputPoint(5, "CHW-VLV", "AO", "0->100%", "Cold Deck CHW Valve", 2.0, 10.0),
+            OutputPoint(5, "CHW-VLV", "AO", "0.0 ->100%", "Cold Deck CHW Valve", 2.0, 10.0),
         ],
 
         values=[
@@ -70,13 +70,13 @@ def build_dd_hot_hw():
         description="Dual duct hot deck — HW heating coil with SAT control",
 
         inputs=[
-            InputPoint(8, "HOT-DECK-T", "AI", "10K -40->250", "Hot Deck Temperature", "°F"),
-            InputPoint(31, "HWC-SUPW-T", "AI", "10K -40->250", "HW Coil Supply Water Temp", "°F"),
-            InputPoint(32, "HWC-RETW-T", "AI", "10K -40->250", "HW Coil Return Water Temp", "°F"),
+            InputPoint(8, "HOT-DECK-T", "AI", "10K -40 ->250", "Hot Deck Temperature", "°F"),
+            InputPoint(31, "HWC-SUPW-T", "AI", "10K -40 ->250", "HW Coil Supply Water Temp", "°F"),
+            InputPoint(32, "HWC-RETW-T", "AI", "10K -40 ->250", "HW Coil Return Water Temp", "°F"),
         ],
 
         outputs=[
-            OutputPoint(4, "HW-VLV", "AO", "0->100%", "Hot Deck HW Valve (reverse)", 10.0, 2.0, True),
+            OutputPoint(4, "HW-VLV", "AO", "0.0 ->100%", "Hot Deck HW Valve (reverse)", 10.0, 2.0, True),
         ],
 
         values=[
@@ -140,7 +140,7 @@ def build_dd_hot_elec():
         description="Dual duct hot deck — 2-stage electric heat with SAT control",
 
         inputs=[
-            InputPoint(8, "HOT-DECK-T", "AI", "10K -40->250", "Hot Deck Temperature", "°F"),
+            InputPoint(8, "HOT-DECK-T", "AI", "10K -40 ->250", "Hot Deck Temperature", "°F"),
         ],
 
         outputs=[

@@ -118,7 +118,7 @@ async def api_assemble(req: AssembleRequest):
         "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module, "reverse": p.reverse, "min_v": p.min_v, "max_v": p.max_v} for p in config.outputs],
         "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in config.values],
         "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in config.loops],
-        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50)} for p in sorted(config.programs, key=lambda x: x.exec_order)],
+        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50), "code": p.code or ""} for p in sorted(config.programs, key=lambda x: x.exec_order)],
         "soo": config.soo_document,
     }
 
@@ -429,16 +429,27 @@ function renderResults(r){
   tc+='</table></div>';
 
   // Programs
-  tc+='<div class="tp" id="t4"><table><tr><th>PRG#</th><th>Name</th><th>Filename</th><th>Enabled</th><th>Code</th><th>Description</th></tr>';
-  for(const p of r.programs){
-    tc+='<tr><td>PRG'+p.instance+'</td><td>{device-name}-'+p.name+'</td><td>'+p.filename+'</td><td>'+(p.enabled?'Yes':'No')+'</td><td>'+(p.has_code?'OK':'STUB')+'</td><td>'+p.desc+'</td></tr>';
+  window._programs=r.programs;
+  tc+='<div class="tp" id="t4"><table><tr><th>PRG#</th><th>Name</th><th>Filename</th><th>Enabled</th><th>Status</th><th>Description</th><th>View</th></tr>';
+  for(var pi=0;pi<r.programs.length;pi++){
+    var p=r.programs[pi];
+    tc+='<tr><td>PRG'+p.instance+'</td><td>{device-name}-'+p.name+'</td><td>'+p.filename+'</td><td>'+(p.enabled?'Yes':'No')+'</td><td>'+(p.has_code?'OK':'STUB')+'</td><td>'+p.desc+'</td>';
+    tc+='<td><button class="btn btn-p" style="padding:3px 10px;font-size:0.75em" onclick="viewProgram('+pi+')">View</button></td></tr>';
   }
-  tc+='</table></div>';
+  tc+='</table><div id="prgViewer" style="display:none;margin-top:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h4 id="prgViewerTitle" style="color:#60a5fa;font-size:0.9em"></h4><button class="btn btn-o" style="padding:3px 10px;font-size:0.75em" onclick="document.getElementById(\\x27prgViewer\\x27).style.display=\\x27none\\x27">Close</button></div><pre class="soo" id="prgViewerCode" style="max-height:400px"></pre></div></div>';
 
   // SOO
   tc+='<div class="tp" id="t5"><div class="soo">'+r.soo.replace(/</g,'&lt;')+'</div></div>';
 
   document.getElementById('tabContents').innerHTML=tc;
+}
+
+function viewProgram(idx){
+  var p=window._programs[idx];
+  document.getElementById('prgViewer').style.display='block';
+  document.getElementById('prgViewerTitle').textContent='PRG'+p.instance+': '+p.filename;
+  document.getElementById('prgViewerCode').textContent=p.code||'(no code)';
+  showTab(4);
 }
 
 function showTab(i){

@@ -18,7 +18,7 @@ def build_econ_db():
         description="Economizer with OAT dry bulb high limit lockout",
 
         outputs=[
-            OutputPoint(2, "RAD", "AO", "0->100%", "Return Air Damper (reverse)", 10.0, 2.0, True),
+            OutputPoint(2, "RAD", "AO", "0.0 ->100%", "Return Air Damper (reverse)", 10.0, 2.0, True),
         ],
 
         values=[
@@ -60,7 +60,7 @@ def build_econ_enth():
         description="Economizer with enthalpy-based changeover",
 
         outputs=[
-            OutputPoint(2, "RAD", "AO", "0->100%", "Return Air Damper (reverse)", 10.0, 2.0, True),
+            OutputPoint(2, "RAD", "AO", "0.0 ->100%", "Return Air Damper (reverse)", 10.0, 2.0, True),
         ],
 
         values=[
@@ -105,7 +105,7 @@ def build_econ_diff():
         description="Economizer with differential enthalpy (OA vs RA)",
 
         outputs=[
-            OutputPoint(2, "RAD", "AO", "0->100%", "Return Air Damper (reverse)", 10.0, 2.0, True),
+            OutputPoint(2, "RAD", "AO", "0.0 ->100%", "Return Air Damper (reverse)", 10.0, 2.0, True),
         ],
 
         values=[
@@ -145,7 +145,7 @@ def build_econ_diff_db():
         description="Economizer with differential dry bulb (OAT vs RAT)",
 
         outputs=[
-            OutputPoint(2, "RAD", "AO", "0->100%", "Return Air Damper (reverse)", 10.0, 2.0, True),
+            OutputPoint(2, "RAD", "AO", "0.0 ->100%", "Return Air Damper (reverse)", 10.0, 2.0, True),
         ],
 
         values=[

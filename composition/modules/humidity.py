@@ -18,12 +18,12 @@ def build_hum_stm():
         description="Modulating steam humidifier with status feedback",
 
         inputs=[
-            InputPoint(10, "RAH",     "AI", "0->100% (0-10V)", "Return Air Humidity",   "%"),
+            InputPoint(10, "RAH",     "AI", "0 ->100% (0-5V)", "Return Air Humidity",   "%"),
             InputPoint(37, "HUM-STS", "BI", "Off/On",          "Humidifier Status"),
         ],
 
         outputs=[
-            OutputPoint(16, "HUM", "AO", "0->100%", "Humidifier Output", 2.0, 10.0),
+            OutputPoint(16, "HUM", "AO", "0.0 ->100%", "Humidifier Output", 2.0, 10.0),
         ],
 
         values=[
@@ -62,12 +62,12 @@ def build_hum_elec():
         description="Modulating electric humidifier",
 
         inputs=[
-            InputPoint(10, "RAH",     "AI", "0->100% (0-10V)", "Return Air Humidity", "%"),
+            InputPoint(10, "RAH",     "AI", "0 ->100% (0-5V)", "Return Air Humidity", "%"),
             InputPoint(37, "HUM-STS", "BI", "Off/On",          "Humidifier Status"),
         ],
 
         outputs=[
-            OutputPoint(16, "HUM", "AO", "0->100%", "Humidifier Output", 2.0, 10.0),
+            OutputPoint(16, "HUM", "AO", "0.0 ->100%", "Humidifier Output", 2.0, 10.0),
         ],
 
         values=[
@@ -102,12 +102,12 @@ def build_hum_ultra():
         description="Ultrasonic humidifier — modulating output",
 
         inputs=[
-            InputPoint(10, "RAH",     "AI", "0->100% (0-10V)", "Return Air Humidity", "%"),
+            InputPoint(10, "RAH",     "AI", "0 ->100% (0-5V)", "Return Air Humidity", "%"),
             InputPoint(37, "HUM-STS", "BI", "Off/On",          "Humidifier Status"),
         ],
 
         outputs=[
-            OutputPoint(16, "HUM", "AO", "0->100%", "Humidifier Output", 2.0, 10.0),
+            OutputPoint(16, "HUM", "AO", "0.0 ->100%", "Humidifier Output", 2.0, 10.0),
         ],
 
         values=[
@@ -141,8 +141,8 @@ def build_dehum_sc():
         description="Dehumidification by subcooling — overcool SA then reheat",
 
         inputs=[
-            InputPoint(10, "RAH",   "AI", "0->100% (0-10V)", "Return Air Humidity", "%"),
-            InputPoint(18, "ZN-RH", "AI", "0->100% (0-10V)", "Zone Humidity",       "%"),
+            InputPoint(10, "RAH",   "AI", "0 ->100% (0-5V)", "Return Air Humidity", "%"),
+            InputPoint(18, "ZN-RH", "AI", "0 ->100% (0-5V)", "Zone Humidity",       "%"),
         ],
 
         values=[

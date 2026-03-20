@@ -18,14 +18,14 @@ def build_ph_hw():
         description="HW preheat coil with modulating valve, pump, and entering/leaving temps",
 
         inputs=[
-            InputPoint(8,  "PH-LAT",    "AI", "10K -40->250", "Preheat Leaving Air Temp",       "°F"),
-            InputPoint(35, "PH-EAT",    "AI", "10K -40->250", "Preheat Entering Air Temp",      "°F"),
-            InputPoint(39, "PH-SUPW-T", "AI", "10K -40->250", "Preheat Coil Supply Water Temp", "°F"),
-            InputPoint(40, "PH-RETW-T", "AI", "10K -40->250", "Preheat Coil Return Water Temp", "°F"),
+            InputPoint(8,  "PH-LAT",    "AI", "10K -40 ->250", "Preheat Leaving Air Temp",       "°F"),
+            InputPoint(35, "PH-EAT",    "AI", "10K -40 ->250", "Preheat Entering Air Temp",      "°F"),
+            InputPoint(39, "PH-SUPW-T", "AI", "10K -40 ->250", "Preheat Coil Supply Water Temp", "°F"),
+            InputPoint(40, "PH-RETW-T", "AI", "10K -40 ->250", "Preheat Coil Return Water Temp", "°F"),
         ],
 
         outputs=[
-            OutputPoint(8,  "PH-VLV", "AO", "0->100%", "Preheat Valve (reverse)", 10.0, 2.0, True),
+            OutputPoint(8,  "PH-VLV", "AO", "0.0 ->100%", "Preheat Valve (reverse)", 10.0, 2.0, True),
             OutputPoint(17, "PH-PMP", "BO", "Stop/Start", "Preheat Pump Command"),
         ],
 
@@ -70,7 +70,7 @@ def build_ph_elec():
         description="Electric preheat coil",
 
         inputs=[
-            InputPoint(8, "PH-LAT", "AI", "10K -40->250", "Preheat Leaving Air Temp", "°F"),
+            InputPoint(8, "PH-LAT", "AI", "10K -40 ->250", "Preheat Leaving Air Temp", "°F"),
         ],
 
         outputs=[
@@ -107,12 +107,12 @@ def build_ph_glycol():
         description="Glycol preheat coil with pump and valve",
 
         inputs=[
-            InputPoint(8,  "PH-LAT",    "AI", "10K -40->250", "Preheat Leaving Air Temp",       "°F"),
-            InputPoint(35, "PH-EAT",    "AI", "10K -40->250", "Preheat Entering Air Temp",      "°F"),
+            InputPoint(8,  "PH-LAT",    "AI", "10K -40 ->250", "Preheat Leaving Air Temp",       "°F"),
+            InputPoint(35, "PH-EAT",    "AI", "10K -40 ->250", "Preheat Entering Air Temp",      "°F"),
         ],
 
         outputs=[
-            OutputPoint(8,  "PH-VLV", "AO", "0->100%",   "Preheat Glycol Valve (reverse)", 10.0, 2.0, True),
+            OutputPoint(8,  "PH-VLV", "AO", "0.0 ->100%",   "Preheat Glycol Valve (reverse)", 10.0, 2.0, True),
             OutputPoint(17, "PH-PMP", "BO", "Stop/Start", "Preheat Glycol Pump Command"),
         ],
 

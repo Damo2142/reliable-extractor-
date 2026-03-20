@@ -179,7 +179,7 @@ def _build_values_tab(wb, config: ControllerConfig):
     ws = wb.create_sheet("Values")
     start = _add_title(ws, "VALUES (AV / BV / MV)", f"{config.device_name}")
 
-    headers = ["Instance", "Name", "Type", "Default Value", "Units", "Min", "Max", "Description", "Module"]
+    headers = ["Instance", "Name", "Type", "Default Value", "Units", "Range / States", "Min", "Max", "Description", "Module"]
     for c, h in enumerate(headers, 1):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
@@ -192,10 +192,18 @@ def _build_values_tab(wb, config: ControllerConfig):
         ws.cell(row=r, column=3, value=val.point_type)
         ws.cell(row=r, column=4, value=str(val.default))
         ws.cell(row=r, column=5, value=val.units)
-        ws.cell(row=r, column=6, value=val.min_val if val.min_val is not None else "")
-        ws.cell(row=r, column=7, value=val.max_val if val.max_val is not None else "")
-        ws.cell(row=r, column=8, value=val.description)
-        ws.cell(row=r, column=9, value=val.module)
+        # Range/States column — BV gets Off/On, MV gets state list
+        if val.point_type == "BV":
+            ws.cell(row=r, column=6, value="Off/On")
+        elif val.point_type == "MV" and val.states:
+            state_str = " / ".join([f"{k}={v}" for k, v in sorted(val.states.items())])
+            ws.cell(row=r, column=6, value=state_str)
+        else:
+            ws.cell(row=r, column=6, value="")
+        ws.cell(row=r, column=7, value=val.min_val if val.min_val is not None else "")
+        ws.cell(row=r, column=8, value=val.max_val if val.max_val is not None else "")
+        ws.cell(row=r, column=9, value=val.description)
+        ws.cell(row=r, column=10, value=val.module)
         _style_data(ws, r, len(headers))
 
     ws.column_dimensions["A"].width = 10
@@ -203,10 +211,11 @@ def _build_values_tab(wb, config: ControllerConfig):
     ws.column_dimensions["C"].width = 6
     ws.column_dimensions["D"].width = 14
     ws.column_dimensions["E"].width = 10
-    ws.column_dimensions["F"].width = 8
+    ws.column_dimensions["F"].width = 45
     ws.column_dimensions["G"].width = 8
-    ws.column_dimensions["H"].width = 40
-    ws.column_dimensions["I"].width = 16
+    ws.column_dimensions["H"].width = 8
+    ws.column_dimensions["I"].width = 40
+    ws.column_dimensions["J"].width = 16
 
 
 def _build_loops_tab(wb, config: ControllerConfig):
@@ -253,8 +262,9 @@ def _build_tables_tab(wb, config: ControllerConfig):
         ws.cell(row=r, column=2, value=tbl.name)
         ws.cell(row=r, column=3, value=tbl.input_units)
         ws.cell(row=r, column=4, value=tbl.output_units)
-        dp_str = "; ".join([f"{p[0]}→{p[1]}" for p in tbl.data_points])
-        ws.cell(row=r, column=5, value=dp_str)
+        dp_str = "\n".join([f"{p[0]} → {p[1]}" for p in tbl.data_points])
+        cell = ws.cell(row=r, column=5, value=dp_str)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
         ws.cell(row=r, column=6, value=tbl.description)
         ws.cell(row=r, column=7, value=tbl.module)
         _style_data(ws, r, len(headers))

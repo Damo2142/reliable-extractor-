@@ -18,13 +18,13 @@ def build_htg_hw():
         description="HW heating coil with modulating valve, freeze protection, lockout",
 
         inputs=[
-            InputPoint(8,  "HWC-DAT",    "AI", "10K -40->250", "HW Coil Discharge Air Temp", "°F"),
-            InputPoint(31, "HWC-SUPW-T", "AI", "10K -40->250", "HW Coil Supply Water Temp",  "°F"),
-            InputPoint(32, "HWC-RETW-T", "AI", "10K -40->250", "HW Coil Return Water Temp",  "°F"),
+            InputPoint(8,  "HWC-DAT",    "AI", "10K -40 ->250", "HW Coil Discharge Air Temp", "°F"),
+            InputPoint(31, "HWC-SUPW-T", "AI", "10K -40 ->250", "HW Coil Supply Water Temp",  "°F"),
+            InputPoint(32, "HWC-RETW-T", "AI", "10K -40 ->250", "HW Coil Return Water Temp",  "°F"),
         ],
 
         outputs=[
-            OutputPoint(4, "HW-VLV", "AO", "0->100%", "Hot Water Valve (reverse)", 10.0, 2.0, True),
+            OutputPoint(4, "HW-VLV", "AO", "0.0 ->100%", "Hot Water Valve (reverse)", 10.0, 2.0, True),
         ],
 
         values=[
@@ -211,7 +211,7 @@ def build_htg_elec_scr():
         description="Modulating electric heat via SCR controller",
 
         outputs=[
-            OutputPoint(28, "ELEC-SCR", "AO", "0->100%", "Electric Heat SCR Output", 0.0, 10.0),
+            OutputPoint(28, "ELEC-SCR", "AO", "0.0 ->100%", "Electric Heat SCR Output", 0.0, 10.0),
         ],
 
         values=[
@@ -298,7 +298,7 @@ def build_htg_gas_mod():
 
         outputs=[
             OutputPoint(25, "GAS-VLV", "BO", "Stop/Start", "Gas Valve Enable"),
-            OutputPoint(29, "GAS-MOD", "AO", "0->100%",    "Gas Modulating Output", 2.0, 10.0),
+            OutputPoint(29, "GAS-MOD", "AO", "0.0 ->100%",    "Gas Modulating Output", 2.0, 10.0),
         ],
 
         values=[

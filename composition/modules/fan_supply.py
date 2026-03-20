@@ -19,7 +19,7 @@ def build_sf_vfd():
 
         outputs=[
             OutputPoint(9,  "SF",         "BO", "Stop/Start", "Supply Fan Command"),
-            OutputPoint(10, "SF-VFD-SPD", "AO", "0->100%",   "Supply Fan VFD Speed", 0.0, 10.0),
+            OutputPoint(10, "SF-VFD-SPD", "AO", "0.0 ->100%",   "Supply Fan VFD Speed", 0.0, 10.0),
         ],
 
         values=[
@@ -88,7 +88,7 @@ def build_sf_ecm():
         description="Supply fan with ECM motor — analog speed output (0% = off)",
 
         outputs=[
-            OutputPoint(10, "SF-VFD-SPD", "AO", "0->100%", "Supply Fan ECM Speed", 0.0, 10.0),
+            OutputPoint(10, "SF-VFD-SPD", "AO", "0.0 ->100%", "Supply Fan ECM Speed", 0.0, 10.0),
         ],
 
         values=[

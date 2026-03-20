@@ -19,15 +19,15 @@ def build():
         description="ERW fixed speed — start/stop + OA/EA bypass dampers + defrost logic",
 
         inputs=[
-            InputPoint(11, "ERW-EA-EAT", "AI", "10K -40->250", "ERW Exhaust Entering Air Temp", "°F"),
+            InputPoint(11, "ERW-EA-EAT", "AI", "10K -40 ->250", "ERW Exhaust Entering Air Temp", "°F"),
             InputPoint(24, "ERW-STATUS", "BI", "Off/On",       "ERW Status Feedback"),
-            InputPoint(29, "ERW-OA-DAT", "AI", "10K -40->250", "ERW OA Leaving Air Temp",       "°F"),
-            InputPoint(30, "ERW-EA-DAT", "AI", "10K -40->250", "ERW Exhaust Leaving Air Temp",  "°F"),
+            InputPoint(29, "ERW-OA-DAT", "AI", "10K -40 ->250", "ERW OA Leaving Air Temp",       "°F"),
+            InputPoint(30, "ERW-EA-DAT", "AI", "10K -40 ->250", "ERW Exhaust Leaving Air Temp",  "°F"),
         ],
 
         outputs=[
-            OutputPoint(6,  "ERW-OA-BYP-DMP", "AO", "0->100%", "ERW OA Bypass Damper",  2.0, 10.0),
-            OutputPoint(7,  "ERW-EA-BYP-DMP", "AO", "0->100%", "ERW EA Bypass Damper",  2.0, 10.0),
+            OutputPoint(6,  "ERW-OA-BYP-DMP", "AO", "0.0 ->100%", "ERW OA Bypass Damper",  2.0, 10.0),
+            OutputPoint(7,  "ERW-EA-BYP-DMP", "AO", "0.0 ->100%", "ERW EA Bypass Damper",  2.0, 10.0),
             OutputPoint(13, "ERW",             "BO", "Stop/Start", "Energy Recovery Wheel Command"),
         ],
 
