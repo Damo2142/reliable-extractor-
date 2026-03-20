@@ -59,16 +59,20 @@ import re
 
 
 # BACnet object type to 3-byte encoding
+# Format: 00 [type_hi] [type_lo] where type is split across 2 bytes
+# Verified against compiled .pan files from RC Studio
 TYPE_ENCODE = {
-    "AI":  b'\x00\x00\x00',   # type 0
-    "AO":  b'\x00\x40\x00',   # type 1
-    "AV":  b'\x00\x80\x00',   # type 2
-    "BI":  b'\x00\xc0\x00',   # type 3
-    "BO":  b'\x01\x00\x00',   # type 4
-    "BV":  b'\x01\x40\x00',   # type 5
-    "MV":  b'\x00\xc0\x04',   # type 19
-    "MO":  b'\x00\x80\x03',   # type 14
-    "LOOP": b'\x00\x00\x03',  # type 12
+    "AI":   b'\x00\x00\x00',   # type 0
+    "AO":   b'\x00\x00\x01',   # type 1
+    "AV":   b'\x00\x80\x00',   # type 2
+    "BI":   b'\x00\xc0\x00',   # type 3  (need to verify)
+    "BO":   b'\x01\x00\x00',   # type 4  (need to verify)
+    "BV":   b'\x00\x40\x01',   # type 5  (VERIFIED from compiled .pan)
+    "MV":   b'\x00\xc0\x04',   # type 19 (VERIFIED)
+    "MO":   b'\x00\x80\x03',   # type 14 (from .pan analysis)
+    "LOOP": b'\x00\x00\x03',   # type 12 (from .pan analysis)
+    "SCHED": b'\x00\x40\x04', # type 17 (schedule)
+    "PROGRAM": b'\x00\x00\x04', # type 16 (program)
 }
 
 # Local variable name to slot number (A=2, B=3, ... Z=27 — offset of 2 from Reliable's convention)
