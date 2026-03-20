@@ -742,9 +742,10 @@ async function doGenerate(){
 }
 
 function getModList(){
-  var mods=Object.keys(modState).filter(k=>modState[k]);
-  for(var ci=0;ci<allModules.length;ci++){
-    var ms=allModules[ci].modules||[];
+  var mods=Array.from(selected);
+  var cats=Object.keys(modules);
+  for(var ci=0;ci<cats.length;ci++){
+    var ms=modules[cats[ci]];
     for(var mi=0;mi<ms.length;mi++){
       if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
     }
