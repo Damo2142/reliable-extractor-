@@ -485,17 +485,90 @@ def _read_index_entry(data: bytes, idx_offset: int) -> Tuple[int, int, int, int]
 # Seed-based approach: inject programs into PFG seed
 # ============================================================
 
+def _step_zeros(init: int, n: int) -> int:
+    """Process n zero bytes through CRC-16/KERMIT."""
+    crc = init
+    for _ in range(n):
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0x8408
+            else:
+                crc >>= 1
+    return crc
+
+
+def _find_block_init(block: bytes) -> int:
+    """
+    Find the CRC-16/KERMIT init value for a block using linear algebra.
+    Exploits CRC linearity: CRC(data, init) = CRC(data, 0) XOR f(init)
+    where f(init) = step_zeros(init, len(data)).
+    Solves for init in O(N) time instead of O(65536*N) brute-force.
+    """
+    stored_crc = (block[10] << 8) | block[11]
+    crc_data = bytearray(block[4:])
+    crc_data[6] = 0
+    crc_data[7] = 0
+    data_bytes = bytes(crc_data)
+    N = len(data_bytes)
+
+    # CRC(data, 0)
+    crc_zero = crc16_kermit(data_bytes, 0)
+    # target = step_zeros(init, N)
+    target = stored_crc ^ crc_zero
+
+    # Build basis: for each bit of init, compute step_zeros output
+    basis = [_step_zeros(1 << bit, N) for bit in range(16)]
+
+    # Gaussian elimination in GF(2) to solve: XOR combo of basis = target
+    matrix = []
+    for row in range(16):
+        val = 0
+        for col in range(16):
+            if basis[col] & (1 << row):
+                val |= (1 << col)
+        if target & (1 << row):
+            val |= (1 << 16)
+        matrix.append(val)
+
+    for col in range(16):
+        pivot = None
+        for row in range(col, 16):
+            if matrix[row] & (1 << col):
+                pivot = row
+                break
+        if pivot is None:
+            continue
+        matrix[col], matrix[pivot] = matrix[pivot], matrix[col]
+        for row in range(16):
+            if row != col and matrix[row] & (1 << col):
+                matrix[row] ^= matrix[col]
+
+    init = 0
+    for col in range(16):
+        if matrix[col] & (1 << 16):
+            init |= (1 << col)
+
+    return init
+
+
+def _recompute_block_crc(block: bytearray, init: int):
+    """Recompute CRC for a modified block using its known init."""
+    size = struct.unpack_from('<H', block, 0)[0]
+    total = size + 2
+    crc_data = bytearray(block[4:total])
+    crc_data[6] = 0
+    crc_data[7] = 0
+    crc = crc16_kermit(bytes(crc_data), init)
+    struct.pack_into('>H', block, 10, crc)
+
+
 def inject_programs_into_seed(seed_data: bytes, config: ControllerConfig,
                                controller_model: str = "MPS") -> bytes:
     """
     Take a PFG-generated seed .pan and inject compiled program bytecode.
 
-    The seed has all objects visible but programs are empty shells.
-    This function:
-    1. Finds the PROGRAM type section in the seed
-    2. Builds new program blocks with compiled bytecode
-    3. Replaces the program section
-    4. Updates index offsets for subsequent type sections
+    Uses the CORRECT per-block CRC init values extracted from the original
+    seed blocks. This ensures CRC validity even after modifying block content.
     """
     data = bytearray(seed_data)
 
@@ -508,36 +581,42 @@ def inject_programs_into_seed(seed_data: bytes, config: ControllerConfig,
         entry = _read_index_entry(data, 0x440 + i * 0x40)
         entries.append(entry)
 
-    # Find PROGRAM entry and entries after it
+    # Find PROGRAM entry
     prg_entry_idx = None
     prg_idx_offset = None
     for i, (v0, type_id, offset, count) in enumerate(entries):
-        if type_id == 16:  # PROGRAM
+        if type_id == 16:
             prg_entry_idx = i
             prg_idx_offset = 0x400 + i * 0x40 if i == 0 else 0x440 + (i - 1) * 0x40
             break
 
     if prg_entry_idx is None:
-        return bytes(data)  # No programs in seed
+        return bytes(data)
 
     _, _, prg_offset, prg_count = entries[prg_entry_idx]
 
-    # Find the end of the program section (start of next type section)
-    # Walk through all program blocks
+    # Extract per-block CRC inits from original program blocks
+    prg_block_inits = {}  # instance -> init
     pos = prg_offset
     for _ in range(prg_count):
-        if pos + 2 >= len(data):
+        if pos + 12 >= len(data):
             break
-        block_size = struct.unpack_from('<H', data, pos)[0] + 2
-        pos += block_size
+        size = struct.unpack_from('<H', data, pos)[0]
+        total = size + 2
+        block = data[pos:pos+total]
+        objid = struct.unpack_from('>I', block, 6)[0]
+        inst = objid & 0x3FFFFF
+        init = _find_block_init(bytes(block))
+        prg_block_inits[inst] = init
+        pos += total
     prg_section_end = pos
     old_prg_section_size = prg_section_end - prg_offset
 
-    # Build new program blocks with bytecode
+    # Build new program blocks with bytecode and CORRECT CRC
     new_program_blocks = bytearray()
     for prg in sorted(config.programs, key=lambda p: p.instance):
         code = prg.code or ""
-        block = build_program_block(
+        block_bytes = build_program_block(
             name=f"{{device-name}}-{prg.name}",
             instance=prg.instance,
             code=code,
@@ -545,6 +624,10 @@ def inject_programs_into_seed(seed_data: bytes, config: ControllerConfig,
             description=prg.description or "",
             controller_model=controller_model,
         )
+        # Recompute CRC with the CORRECT init for this instance
+        block = bytearray(block_bytes)
+        init = prg_block_inits.get(prg.instance, 0x954D)
+        _recompute_block_crc(block, init)
         new_program_blocks += block
 
     new_prg_section_size = len(new_program_blocks)
