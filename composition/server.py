@@ -563,15 +563,17 @@ async function doGeneratePan(){
       if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
     }
   }
+  if(mods.length===0){document.getElementById('status').textContent='Select modules first';return;}
   var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
-  document.getElementById('status').textContent='Generating .pan with compiled programs...';
+  document.getElementById('status').textContent='Generating .pan file...';
   try{
     var res=await fetch('/api/generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!res.ok){document.getElementById('status').textContent='Error generating .pan';return;}
+    if(!res.ok){var err=await res.text();document.getElementById('status').textContent='Error: '+err;return;}
     var blob=await res.blob();
     var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');a.href=url;a.download='controller.pan';a.click();
-    document.getElementById('status').textContent='.pan downloaded! ('+Math.round(blob.size/1024)+'KB, programs compiled)';
+    var a=document.createElement('a');a.href=url;a.download='SBS-controller.pan';document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    document.getElementById('status').textContent='.pan downloaded ('+Math.round(blob.size/1024)+'KB)';
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
@@ -583,15 +585,17 @@ async function doGenerateFull(){
       if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
     }
   }
+  if(mods.length===0){document.getElementById('status').textContent='Select modules first';return;}
   var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
-  document.getElementById('status').textContent='Generating full package (Excel + .pan + .bas + SOO)...';
+  document.getElementById('status').textContent='Generating full package...';
   try{
     var res=await fetch('/api/generate-full',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!res.ok){document.getElementById('status').textContent='Error generating package';return;}
+    if(!res.ok){var err=await res.text();document.getElementById('status').textContent='Error: '+err;return;}
     var blob=await res.blob();
     var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');a.href=url;a.download='sbs-full-package.zip';a.click();
-    document.getElementById('status').textContent='Full package downloaded! (Excel + .pan + programs + SOO)';
+    var a=document.createElement('a');a.href=url;a.download='sbs-full-package.zip';document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    document.getElementById('status').textContent='Full package downloaded (Excel + .pan + .bas + SOO)';
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
