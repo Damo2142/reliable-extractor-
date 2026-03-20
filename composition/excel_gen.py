@@ -193,11 +193,12 @@ def _build_values_tab(wb, config: ControllerConfig):
         ws.cell(row=r, column=2, value=f"{config.device_name}-{val.name}")
         ws.cell(row=r, column=3, value=val.point_type)
         ws.cell(row=r, column=4, value=str(val.default))
-        # Units — MV gets state text, BV gets Off/On, AV gets engineering units
+        # Units + Range — MV gets state text in BOTH columns, BV gets Off/On
         if val.point_type == "MV" and val.states:
-            state_str = "/".join([f"{i+1}-{s}" for i, s in enumerate(val.states)] if isinstance(val.states, list) else [f"{k}-{v}" for k, v in sorted(val.states.items())])
-            ws.cell(row=r, column=5, value=state_str)
-            ws.cell(row=r, column=6, value=state_str)
+            state_str = "/".join([f"{k}-{v}" for k, v in sorted(val.states.items())])
+            ws.cell(row=r, column=5, value=state_str)  # Units
+            ws.cell(row=r, column=6, value=state_str)  # Range/States
+            ws.cell(row=r, column=9, value=state_str)  # Description too
         elif val.point_type == "BV":
             ws.cell(row=r, column=5, value="Off/On")
             ws.cell(row=r, column=6, value="Off/On")
