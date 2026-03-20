@@ -193,14 +193,16 @@ def _build_values_tab(wb, config: ControllerConfig):
         ws.cell(row=r, column=2, value=f"{config.device_name}-{val.name}")
         ws.cell(row=r, column=3, value=val.point_type)
         ws.cell(row=r, column=4, value=str(val.default))
-        ws.cell(row=r, column=5, value=val.units)
-        # Range/States column — BV gets Off/On, MV gets state list
-        if val.point_type == "BV":
-            ws.cell(row=r, column=6, value="Off/On")
-        elif val.point_type == "MV" and val.states:
-            state_str = " / ".join([f"{k}={v}" for k, v in sorted(val.states.items())])
+        # Units — MV gets state text, BV gets Off/On, AV gets engineering units
+        if val.point_type == "MV" and val.states:
+            state_str = "/".join([f"{i+1}-{s}" for i, s in enumerate(val.states)] if isinstance(val.states, list) else [f"{k}-{v}" for k, v in sorted(val.states.items())])
+            ws.cell(row=r, column=5, value=state_str)
             ws.cell(row=r, column=6, value=state_str)
+        elif val.point_type == "BV":
+            ws.cell(row=r, column=5, value="Off/On")
+            ws.cell(row=r, column=6, value="Off/On")
         else:
+            ws.cell(row=r, column=5, value=val.units or "")
             ws.cell(row=r, column=6, value="")
         ws.cell(row=r, column=7, value=val.min_val if val.min_val is not None else "")
         ws.cell(row=r, column=8, value=val.max_val if val.max_val is not None else "")

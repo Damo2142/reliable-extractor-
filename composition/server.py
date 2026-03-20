@@ -156,10 +156,16 @@ async def api_generate(req: GenerateRequest):
                              headers={"Content-Disposition": "attachment; filename=composition-package.zip"})
 
 
+# Store last assembled config for GET-based downloads
+_last_config = {"modules": [], "controller_model": "auto"}
+
+
 @app.post("/api/generate-pan")
 async def api_generate_pan(req: GenerateRequest):
     """Generate a .pan binary file with compiled programs."""
     from composition.pan_builder import build_pan_from_config, build_from_seed
+    _last_config["modules"] = req.modules
+    _last_config["controller_model"] = req.controller_model
     try:
         config = assemble(req.modules, controller_model=req.controller_model)
         inject_program_code(config)
@@ -228,6 +234,60 @@ async def api_generate_full(req: GenerateRequest):
                        "values": len(config.values), "loops": len(config.loops),
                        "programs": len(config.programs), "trends": len(config.trends)},
         }, indent=2))
+    zip_buf.seek(0)
+    return StreamingResponse(zip_buf, media_type="application/zip",
+                             headers={"Content-Disposition": "attachment; filename=sbs-full-package.zip"})
+
+
+@app.get("/api/download-pan")
+async def api_download_pan(modules: str = "", controller: str = "auto"):
+    """GET-based .pan download (browser-friendly)."""
+    from composition.pan_filler import fill_pan
+    mod_list = [m.strip() for m in modules.split(",") if m.strip()]
+    if not mod_list:
+        raise HTTPException(400, "No modules specified")
+    config = assemble(mod_list, controller_model=controller)
+    inject_program_code(config)
+    model = config.controller_model or "MPS"
+    seed_path = Path('/srv/dfa/shared/files/vendors/reliable/seeds/MACH-ProSys-88-AHU114.pan')
+    if seed_path.exists() and model in ("MPS", "MPWS", "auto"):
+        pan_data = fill_pan(seed_path.read_bytes(), config)
+    else:
+        from composition.pan_builder import build_pan_from_config
+        pan_data = build_pan_from_config(config, device_id=1000, controller_model=model)
+    buf = io.BytesIO(pan_data)
+    return StreamingResponse(buf, media_type="application/octet-stream",
+                             headers={"Content-Disposition": f"attachment; filename=SBS-{config.equipment_family}-{model}.pan"})
+
+
+@app.get("/api/download-full")
+async def api_download_full(modules: str = "", controller: str = "auto"):
+    """GET-based full package download (browser-friendly)."""
+    from composition.alarm_gen import generate_alarm_bas
+    from composition.pan_filler import fill_pan
+    mod_list = [m.strip() for m in modules.split(",") if m.strip()]
+    if not mod_list:
+        raise HTTPException(400, "No modules specified")
+    config = assemble(mod_list, controller_model=controller)
+    inject_program_code(config)
+    model = config.controller_model or "MPS"
+    excel_data = generate_excel(config)
+    alarm_bas = generate_alarm_bas(config)
+    seed_path = Path('/srv/dfa/shared/files/vendors/reliable/seeds/MACH-ProSys-88-AHU114.pan')
+    if seed_path.exists() and model in ("MPS", "MPWS", "auto"):
+        pan_data = fill_pan(seed_path.read_bytes(), config)
+    else:
+        from composition.pan_builder import build_pan_from_config
+        pan_data = build_pan_from_config(config, device_id=1000, controller_model=model)
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("RC-Studio-Output.xlsx", excel_data)
+        zf.writestr(f"SBS-{config.equipment_family}-{model}.pan", pan_data)
+        for prg in config.programs:
+            zf.writestr(f"programs/{prg.filename}", prg.code or "")
+        if alarm_bas:
+            zf.writestr("programs/PRG-ALARMS.bas", alarm_bas)
+        zf.writestr("SOO.txt", config.soo_document)
     zip_buf.seek(0)
     return StreamingResponse(zip_buf, media_type="application/zip",
                              headers={"Content-Disposition": "attachment; filename=sbs-full-package.zip"})
@@ -563,15 +623,7 @@ async function doGenerate(){
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
-function triggerDownload(blob, filename){
-  var a=document.getElementById('hiddenDownload');
-  var url=URL.createObjectURL(blob);
-  a.href=url;a.download=filename;a.style.display='inline';a.textContent='Click to save';
-  a.click();
-  setTimeout(function(){URL.revokeObjectURL(url);a.style.display='none';},5000);
-}
-
-async function doGeneratePan(){
+function getModList(){
   var mods=Object.keys(modState).filter(k=>modState[k]);
   for(var ci=0;ci<allModules.length;ci++){
     var ms=allModules[ci].modules||[];
@@ -579,36 +631,25 @@ async function doGeneratePan(){
       if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
     }
   }
-  if(mods.length===0){document.getElementById('status').textContent='Select modules first';return;}
-  var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
-  document.getElementById('status').textContent='Generating .pan file...';
-  try{
-    var res=await fetch('/api/generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!res.ok){document.getElementById('status').textContent='Error: '+(await res.text());return;}
-    var blob=await res.blob();
-    triggerDownload(blob,'SBS-controller.pan');
-    document.getElementById('status').textContent='.pan ready ('+Math.round(blob.size/1024)+'KB)';
-  }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
+  return mods;
 }
 
-async function doGenerateFull(){
-  var mods=Object.keys(modState).filter(k=>modState[k]);
-  for(var ci=0;ci<allModules.length;ci++){
-    var ms=allModules[ci].modules||[];
-    for(var mi=0;mi<ms.length;mi++){
-      if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
-    }
-  }
-  if(mods.length===0){document.getElementById('status').textContent='Select modules first';return;}
-  var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
-  document.getElementById('status').textContent='Generating full package...';
-  try{
-    var res=await fetch('/api/generate-full',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!res.ok){document.getElementById('status').textContent='Error: '+(await res.text());return;}
-    var blob=await res.blob();
-    triggerDownload(blob,'sbs-full-package.zip');
-    document.getElementById('status').textContent='Full package ready (Excel + .pan + .bas + SOO)';
-  }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
+function doGeneratePan(){
+  var mods=getModList();
+  if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
+  document.getElementById('status').textContent='Downloading .pan...';
+  var ctrl=document.getElementById('selCtrl').value;
+  window.open('/api/download-pan?modules='+encodeURIComponent(mods.join(','))+'&controller='+ctrl,'_blank');
+  document.getElementById('status').textContent='.pan download started';
+}
+
+function doGenerateFull(){
+  var mods=getModList();
+  if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
+  document.getElementById('status').textContent='Downloading full package...';
+  var ctrl=document.getElementById('selCtrl').value;
+  window.open('/api/download-full?modules='+encodeURIComponent(mods.join(','))+'&controller='+ctrl,'_blank');
+  document.getElementById('status').textContent='Full package download started';
 }
 
 init();
