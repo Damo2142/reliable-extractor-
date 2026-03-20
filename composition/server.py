@@ -299,6 +299,7 @@ tr.unused td{color:#475569;font-style:italic}
     <button class="btn btn-s" onclick="doGenerate()">Download Excel + .bas</button>
     <button class="btn btn-s" style="background:#1e40af" onclick="doGeneratePan()">Download .pan</button>
     <button class="btn btn-s" style="background:#065f46" onclick="doGenerateFull()">Full Package</button>
+    <a id="hiddenDownload" style="display:none"></a>
   </div>
 </div>
 <div class="layout">
@@ -555,6 +556,14 @@ async function doGenerate(){
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
+function triggerDownload(blob, filename){
+  var a=document.getElementById('hiddenDownload');
+  var url=URL.createObjectURL(blob);
+  a.href=url;a.download=filename;a.style.display='inline';a.textContent='Click to save';
+  a.click();
+  setTimeout(function(){URL.revokeObjectURL(url);a.style.display='none';},5000);
+}
+
 async function doGeneratePan(){
   var mods=Object.keys(modState).filter(k=>modState[k]);
   for(var ci=0;ci<allModules.length;ci++){
@@ -568,12 +577,10 @@ async function doGeneratePan(){
   document.getElementById('status').textContent='Generating .pan file...';
   try{
     var res=await fetch('/api/generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!res.ok){var err=await res.text();document.getElementById('status').textContent='Error: '+err;return;}
+    if(!res.ok){document.getElementById('status').textContent='Error: '+(await res.text());return;}
     var blob=await res.blob();
-    var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');a.href=url;a.download='SBS-controller.pan';document.body.appendChild(a);a.click();document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    document.getElementById('status').textContent='.pan downloaded ('+Math.round(blob.size/1024)+'KB)';
+    triggerDownload(blob,'SBS-controller.pan');
+    document.getElementById('status').textContent='.pan ready ('+Math.round(blob.size/1024)+'KB)';
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
@@ -590,12 +597,10 @@ async function doGenerateFull(){
   document.getElementById('status').textContent='Generating full package...';
   try{
     var res=await fetch('/api/generate-full',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!res.ok){var err=await res.text();document.getElementById('status').textContent='Error: '+err;return;}
+    if(!res.ok){document.getElementById('status').textContent='Error: '+(await res.text());return;}
     var blob=await res.blob();
-    var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');a.href=url;a.download='sbs-full-package.zip';document.body.appendChild(a);a.click();document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    document.getElementById('status').textContent='Full package downloaded (Excel + .pan + .bas + SOO)';
+    triggerDownload(blob,'sbs-full-package.zip');
+    document.getElementById('status').textContent='Full package ready (Excel + .pan + .bas + SOO)';
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
