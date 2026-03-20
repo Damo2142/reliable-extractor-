@@ -365,35 +365,42 @@ def build_program_block(name: str, instance: int, code: str = "",
 
     mu = _build_mu_header(name)
 
-    # Program Mu properties — matches RC Studio format exactly
-    # Real format (from 1003.pan): [prefix_byte] 00 00 04 29 65 [code_encoding] [bytecode]
+    # Program Mu properties — matches PFU compiled format exactly
+    # PFU format: description INSIDE Mu props, then code
     mu_props = bytearray()
 
     if bytecode:
-        code_data_size = len(bytecode) + 2  # +2 for sub-header bytes
-        mu_props += bytes([0x00, 0x00, 0x00])  # prefix
+        # Description inside Mu props (PFU format)
+        desc_bytes = description.encode('utf-8') if description else b''
+        if desc_bytes:
+            desc_len = len(desc_bytes) + 1  # +1 for null
+            mu_props += bytes([(desc_len + 8) & 0xFF])  # PFU: single byte = desc_len + 8
+            mu_props += bytes([0x00, 0x00, 0x00])
+            mu_props += bytes([0x1c, 0x75, desc_len & 0xFF, 0x00])
+            mu_props += desc_bytes + b'\x00'
+        # Code separator + property
+        mu_props += bytes([0x1a, 0x00, 0x00])
         mu_props += bytes([0x04, 0x29])  # code property ID
+        # Code data = sub-header(2) + bytecode + end_markers(5)
+        end_markers = bytes([0x00, 0x00, 0x0e, 0x00, 0xff])
+        code_data_size = 2 + len(bytecode) + len(end_markers)
         if code_data_size < 254:
-            mu_props += bytes([0x65, code_data_size & 0xFF])  # marker + 1B size
+            mu_props += bytes([0x65, code_data_size & 0xFF])
         else:
-            mu_props += bytes([0x65, 0xfe])  # marker + extended flag
-            mu_props += struct.pack('>H', code_data_size)  # 2B size
-        mu_props += bytes([0x00, 0x00])  # sub-header (state/version)
+            mu_props += bytes([0x65, 0xfe])
+            mu_props += struct.pack('>H', code_data_size)
+        mu_props += bytes([0x0b, 0x00])  # sub-header (from PFU)
         mu_props += bytecode
+        mu_props += end_markers
     else:
-        # Empty program — format from davetest.pan
+        # Empty program
         mu_props += bytes([0x08, 0x00, 0x00, 0x04, 0x0a, 0x91])
         mu_props += bytes([0x01 if enabled else 0x00])
         mu_props += bytes([0x00, 0x08, 0x00, 0x00, 0x04, 0x29, 0x61])
         mu_props += bytes([0x00, 0x00, 0x07, 0x00, 0x00, 0x04, 0x41, 0x10])
 
-    # Pre-Mu template: description
-    pre_mu = bytes([0x00, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00])
-    desc_block = _build_description_block(description)
-    if desc_block:
-        pre_mu += desc_block + bytes([0x21, 0x00, 0x00, 0x00])
-    else:
-        pre_mu += bytes([0x21, 0x00, 0x00, 0x00])
+    # Pre-Mu: just 7 bytes (PFU format, NOT seed format)
+    pre_mu = bytes([0x00, 0x00, 0x00, 0x27, 0x00, 0x00, 0x00])
 
     content = pre_mu + mu + bytes(mu_props)
     size = len(content) + 10

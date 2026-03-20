@@ -163,13 +163,13 @@ def _compile_line(line_num: int, statement: str) -> bytes:
         result.append(0x09)
         return bytes(result)
 
-    # REM line
+    # REM line — PFU format: 1a [length] [text] (length-prefixed, no 02 end marker)
     if statement.upper().startswith('REM'):
         rem_text = statement[3:].lstrip()
-        result.append(0x00)  # separator after line num for REM
+        rem_bytes = rem_text.encode('ascii', errors='replace')
         result.append(0x1a)  # REM opcode
-        result.extend(rem_text.encode('ascii', errors='replace'))
-        result.append(0x02)  # End REM marker
+        result.append(len(rem_bytes) & 0xFF)  # length prefix
+        result.extend(rem_bytes)
         return bytes(result)
 
     # Code line — no separator, opcodes start immediately
