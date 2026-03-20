@@ -80,6 +80,8 @@ def generate_excel(config: ControllerConfig) -> bytes:
     _build_system_groups_tab(wb, config)
     _build_programs_tab(wb, config)
     _build_custom_units_tab(wb, config)
+    _build_alarms_tab(wb, config)
+    _build_commissioning_tab(wb, config)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -424,4 +426,61 @@ def _build_custom_units_tab(wb, config: ControllerConfig):
         _style_data(ws, r, len(headers))
 
     for c, w in enumerate([8, 12, 14, 14, 12, 12, 12, 14, 12, 12, 12, 12], 1):
+        ws.column_dimensions[get_column_letter(c)].width = w
+
+
+def _build_alarms_tab(wb, config: ControllerConfig):
+    """Alarms tab — auto-generated alarm definitions (from Dave's Alarm Builder format)."""
+    from composition.alarm_gen import generate_alarm_excel_data, generate_alarm_bas
+    ws = wb.create_sheet("Alarms")
+    start = _add_title(ws, "ALARM DEFINITIONS", f"{config.device_name}")
+
+    headers = ["Point", "Type", "AlarmType", "Priority", "Delay", "Deadband",
+               "High", "Low", "Condition", "Message", "ReverseLogic"]
+    _add_headers(ws, start, headers)
+
+    rows = generate_alarm_excel_data(config)
+    for i, row in enumerate(rows):
+        r = start + 1 + i
+        for c, key in enumerate(headers, 1):
+            ws.cell(row=r, column=c, value=row.get(key, ""))
+        _style_data(ws, r, len(headers))
+
+    # Add alarm BAS code preview at the bottom
+    bas_code = generate_alarm_bas(config)
+    if bas_code:
+        gap = start + len(rows) + 3
+        ws.cell(row=gap, column=1, value="ALARM PROGRAM (.BAS)")
+        ws.cell(row=gap, column=1).font = Font(name="Calibri", bold=True, size=11, color="1F4E79")
+        for j, line in enumerate(bas_code.split("\n")):
+            ws.cell(row=gap + 1 + j, column=1, value=line)
+            ws.cell(row=gap + 1 + j, column=1).font = Font(name="Consolas", size=9)
+
+    for c, w in enumerate([35, 8, 14, 14, 8, 10, 8, 8, 12, 35, 12], 1):
+        ws.column_dimensions[get_column_letter(c)].width = w
+
+
+def _build_commissioning_tab(wb, config: ControllerConfig):
+    """Commissioning checklist — field point checkout (from Dave's Report Generator concept)."""
+    from composition.alarm_gen import generate_commissioning_checklist
+    ws = wb.create_sheet("Commissioning")
+    start = _add_title(ws, "COMMISSIONING POINT CHECKLIST", f"{config.device_name}")
+
+    headers = ["Point", "Object", "Type", "Range", "Description",
+               "Check", "Expected", "Actual", "Pass", "Notes"]
+    _add_headers(ws, start, headers)
+
+    GREEN_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+
+    rows = generate_commissioning_checklist(config)
+    for i, row in enumerate(rows):
+        r = start + 1 + i
+        for c, key in enumerate(headers, 1):
+            cell = ws.cell(row=r, column=c, value=row.get(key, ""))
+            cell.font = DATA_FONT
+            # Green fill for "Actual", "Pass", "Notes" columns (field entry)
+            if key in ("Actual", "Pass", "Notes"):
+                cell.fill = GREEN_FILL
+
+    for c, w in enumerate([35, 10, 6, 20, 35, 30, 20, 15, 8, 25], 1):
         ws.column_dimensions[get_column_letter(c)].width = w

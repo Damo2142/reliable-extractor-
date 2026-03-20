@@ -131,12 +131,16 @@ async def api_generate(req: GenerateRequest):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    from composition.alarm_gen import generate_alarm_bas
     excel_data = generate_excel(config)
+    alarm_bas = generate_alarm_bas(config)
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("RC-Studio-Output.xlsx", excel_data)
         for prg in config.programs:
             zf.writestr(f"programs/{prg.filename}", prg.code or "")
+        if alarm_bas:
+            zf.writestr("programs/PRG-ALARMS.bas", alarm_bas)
         zf.writestr("SOO.txt", config.soo_document)
         zf.writestr("summary.json", json.dumps({
             "modules": config.selected_modules,
@@ -144,7 +148,8 @@ async def api_generate(req: GenerateRequest):
             "expansion": f"{config.expansion_count}x {config.expansion_model}" if config.expansion_count else "none",
             "counts": {"inputs": len(config.inputs), "outputs": len(config.outputs),
                        "values": len(config.values), "loops": len(config.loops),
-                       "programs": len(config.programs), "trends": len(config.trends)},
+                       "programs": len(config.programs), "trends": len(config.trends),
+                       "alarms": len(alarm_bas.split("\n")) if alarm_bas else 0},
         }, indent=2))
     zip_buf.seek(0)
     return StreamingResponse(zip_buf, media_type="application/zip",
@@ -190,17 +195,17 @@ async def api_generate_full(req: GenerateRequest):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    from composition.alarm_gen import generate_alarm_bas
     model = config.controller_model or "MPS"
     excel_data = generate_excel(config)
+    alarm_bas = generate_alarm_bas(config)
 
-    # Build .pan
+    # Build .pan — use seed for data fill only
     seed_path = Path('/srv/dfa/shared/files/vendors/reliable/seeds/MACH-ProSys-88-AHU114.pan')
     if seed_path.exists() and model in ("MPS", "MPWS", "auto"):
         from composition.pan_filler import fill_pan
-        from composition.pan_builder import inject_programs_into_seed
         seed_data = seed_path.read_bytes()
-        filled = fill_pan(seed_data, config)
-        pan_data = inject_programs_into_seed(filled, config, model)
+        pan_data = fill_pan(seed_data, config)
     else:
         pan_data = build_pan_from_config(config, device_id=1000, controller_model=model)
 
@@ -210,6 +215,8 @@ async def api_generate_full(req: GenerateRequest):
         zf.writestr(f"SBS-{config.equipment_family}-{model}.pan", pan_data)
         for prg in config.programs:
             zf.writestr(f"programs/{prg.filename}", prg.code or "")
+        if alarm_bas:
+            zf.writestr("programs/PRG-ALARMS.bas", alarm_bas)
         zf.writestr("SOO.txt", config.soo_document)
         zf.writestr("summary.json", json.dumps({
             "modules": config.selected_modules,
