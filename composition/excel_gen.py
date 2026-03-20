@@ -192,22 +192,28 @@ def _build_values_tab(wb, config: ControllerConfig):
         ws.cell(row=r, column=1, value=f"{prefix}{val.instance}")
         ws.cell(row=r, column=2, value=f"{config.device_name}-{val.name}")
         ws.cell(row=r, column=3, value=val.point_type)
-        ws.cell(row=r, column=4, value=str(val.default))
-        # Units + Range — MV gets state text in BOTH columns, BV gets Off/On
+        # Default value — MV shows state text, BV shows Off/On
         if val.point_type == "MV" and val.states:
             state_str = "/".join([f"{k}-{v}" for k, v in sorted(val.states.items())])
-            ws.cell(row=r, column=5, value=state_str)  # Units
-            ws.cell(row=r, column=6, value=state_str)  # Range/States
-            ws.cell(row=r, column=9, value=state_str)  # Description too
+            default_text = val.states.get(val.default, str(val.default)) if val.default else ""
+            ws.cell(row=r, column=4, value=default_text)
+            ws.cell(row=r, column=5, value=state_str)
+            ws.cell(row=r, column=6, value=state_str)
         elif val.point_type == "BV":
+            ws.cell(row=r, column=4, value="Off" if not val.default else "On")
             ws.cell(row=r, column=5, value="Off/On")
             ws.cell(row=r, column=6, value="Off/On")
         else:
+            ws.cell(row=r, column=4, value=str(val.default))
             ws.cell(row=r, column=5, value=val.units or "")
             ws.cell(row=r, column=6, value="")
         ws.cell(row=r, column=7, value=val.min_val if val.min_val is not None else "")
         ws.cell(row=r, column=8, value=val.max_val if val.max_val is not None else "")
-        ws.cell(row=r, column=9, value=val.description)
+        # Description — MV gets state text, others get description
+        if val.point_type == "MV" and val.states:
+            ws.cell(row=r, column=9, value=state_str)
+        else:
+            ws.cell(row=r, column=9, value=val.description)
         ws.cell(row=r, column=10, value=val.module)
         _style_data(ws, r, len(headers))
 
@@ -440,7 +446,9 @@ def _build_alarms_tab(wb, config: ControllerConfig):
 
     headers = ["Point", "Type", "AlarmType", "Priority", "Delay", "Deadband",
                "High", "Low", "Condition", "Message", "ReverseLogic"]
-    _add_headers(ws, start, headers)
+    for c, h in enumerate(headers, 1):
+        ws.cell(row=start, column=c, value=h)
+    _style_header(ws, start, len(headers))
 
     rows = generate_alarm_excel_data(config)
     for i, row in enumerate(rows):
@@ -471,7 +479,9 @@ def _build_commissioning_tab(wb, config: ControllerConfig):
 
     headers = ["Point", "Object", "Type", "Range", "Description",
                "Check", "Expected", "Actual", "Pass", "Notes"]
-    _add_headers(ws, start, headers)
+    for c, h in enumerate(headers, 1):
+        ws.cell(row=start, column=c, value=h)
+    _style_header(ws, start, len(headers))
 
     GREEN_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
 
