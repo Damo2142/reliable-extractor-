@@ -365,28 +365,23 @@ def build_program_block(name: str, instance: int, code: str = "",
 
     mu = _build_mu_header(name)
 
-    # Program Mu properties
+    # Program Mu properties — matches RC Studio format exactly
+    # Real format (from 1003.pan): [prefix_byte] 00 00 04 29 65 [code_encoding] [bytecode]
     mu_props = bytearray()
 
     if bytecode:
-        # Status flags
-        mu_props += bytes([0x08, 0x00, 0x00, 0x00, 0x1c, 0x71, 0x00])
-        # Program stop flag
-        mu_props += bytes([0x00, 0x07, 0x00, 0x00, 0x04, 0x41, 0x10])
-        # Code property: 04 29
-        mu_props += bytes([0x04, 0x29])
-        # Code header: 65 fe [size_BE16] 91 [state]
-        mu_props += bytes([0x65, 0xfe])
-        mu_props += struct.pack('>H', len(bytecode))
-        state = 0x02 if enabled else 0x00
-        mu_props += bytes([0x91, state])
-        # Bytecode
+        code_data_size = len(bytecode) + 2  # +2 for sub-header bytes
+        mu_props += bytes([0x00, 0x00, 0x00])  # prefix
+        mu_props += bytes([0x04, 0x29])  # code property ID
+        if code_data_size < 254:
+            mu_props += bytes([0x65, code_data_size & 0xFF])  # marker + 1B size
+        else:
+            mu_props += bytes([0x65, 0xfe])  # marker + extended flag
+            mu_props += struct.pack('>H', code_data_size)  # 2B size
+        mu_props += bytes([0x00, 0x00])  # sub-header (state/version)
         mu_props += bytecode
-        # Program enabled: 08 00 00 04 0a 91 [01/00]
-        mu_props += bytes([0x08, 0x00, 0x00, 0x04, 0x0a, 0x91])
-        mu_props += bytes([0x01 if enabled else 0x00])
     else:
-        # Empty program
+        # Empty program — format from davetest.pan
         mu_props += bytes([0x08, 0x00, 0x00, 0x04, 0x0a, 0x91])
         mu_props += bytes([0x01 if enabled else 0x00])
         mu_props += bytes([0x00, 0x08, 0x00, 0x00, 0x04, 0x29, 0x61])
