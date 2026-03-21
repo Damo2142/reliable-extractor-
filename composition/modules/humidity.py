@@ -27,7 +27,7 @@ def build_hum_stm():
         ],
 
         values=[
-            ValuePoint(13,  "RMH",         "AV", 37.4,  "Room Humidity",            "%"),
+            ValuePoint(12,  "RMH",         "AV", 37.4,  "Room Humidity",            "%"),
             ValuePoint(240, "HUM-SP",      "AV", 40.0,  "Humidity Setpoint",        "%"),
             ValuePoint(241, "HUM-DB",      "AV", 5.0,   "Humidity Deadband",        "%"),
             ValuePoint(242, "HUM-FAIL",    "BV", False,  "Humidifier Failure Alarm"),
@@ -71,7 +71,7 @@ def build_hum_elec():
         ],
 
         values=[
-            ValuePoint(13,  "RMH",        "AV", 37.4,  "Room Humidity",           "%"),
+            ValuePoint(12,  "RMH",        "AV", 37.4,  "Room Humidity",           "%"),
             ValuePoint(240, "HUM-SP",     "AV", 40.0,  "Humidity Setpoint",       "%"),
             ValuePoint(241, "HUM-DB",     "AV", 5.0,   "Humidity Deadband",       "%"),
             ValuePoint(242, "HUM-FAIL",   "BV", False,  "Humidifier Failure"),
@@ -111,7 +111,7 @@ def build_hum_ultra():
         ],
 
         values=[
-            ValuePoint(13,  "RMH",        "AV", 37.4,  "Room Humidity",           "%"),
+            ValuePoint(12,  "RMH",        "AV", 37.4,  "Room Humidity",           "%"),
             ValuePoint(240, "HUM-SP",     "AV", 40.0,  "Humidity Setpoint",       "%"),
             ValuePoint(241, "HUM-DB",     "AV", 5.0,   "Humidity Deadband",       "%"),
             ValuePoint(242, "HUM-FAIL",   "BV", False,  "Humidifier Failure"),
@@ -146,7 +146,7 @@ def build_dehum_sc():
         ],
 
         values=[
-            ValuePoint(13,  "RMH",           "AV", 37.4,  "Room Humidity",            "%"),
+            ValuePoint(12,  "RMH",           "AV", 37.4,  "Room Humidity",            "%"),
             ValuePoint(250, "DEHUM-SP",      "AV", 55.0,  "Dehumidification RH SP",   "%"),
             ValuePoint(251, "DEHUM-DB",      "AV", 5.0,   "Dehumidification Deadband","%"),
             ValuePoint(252, "DEHUM-MODE",    "BV", False,  "Dehumidification Active"),
