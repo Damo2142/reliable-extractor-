@@ -92,10 +92,41 @@ FUNCTIONS = {
     "RAMP": 0x45,
     "TIME-ON": 0x46,
     "TIME-OFF": 0x47,
+    "FLOAT": 0xd8,      # FLOAT(open, close, pos_cmd, drive_time, deadband, sync)
     "SCHED": 0x4a,
     "INTERVAL": 0x4b,
     "BIT-TEST": 0x4c,
 }
+
+# System variables (load as single opcode, no args)
+SYSTEM_VARS = {
+    "POWER-LOSS": 0x4c,  # TRUE on first scan after power restore
+    # Note: 0x4C shared with BIT-TEST. Disambiguation:
+    #   0x4C alone (no args) = POWER-LOSS system variable
+    #   0x4C after pushed args = BIT-TEST function
+}
+
+# Statement opcodes (followed by object reference or literal value)
+STATEMENTS = {
+    "SET-PRIORITY": 0x08,  # SET-PRIORITY n — sets write priority level
+    "RELINQUISH": 0x07,    # RELINQUISH obj — releases priority control
+    "IDLE": 0x31,          # IDLE obj — stops motor/damper at current position
+    "END": 0x17,           # END — terminates program execution
+}
+
+# Sensor functions — follow a c3 object reference (not c2)
+# Pattern: c3 [inst] [type_3B] [sensor_opcode]
+SENSOR_FUNCTIONS = {
+    "SENSOR-ON": 0x51,   # Detects sensor shorted/activated (thermostat button press)
+    "SENSOR-OFF": 0x55,  # Detects sensor returned to normal (button released)
+    # Note: 0x55 = SENSOR-OFF in bytecode context after c3 ref
+    #        0x55 = present-value in TLV property context
+    # Note: SENSOR-ON/OFF use c3 (not c2) for the object reference
+}
+
+# NEEDS-RESEARCH — not in our current .bas programs:
+#   ENABLE: enables a program to run — may alias START
+#   STATUS: system function STATUS(obj)
 
 # Operators
 OPERATORS = {

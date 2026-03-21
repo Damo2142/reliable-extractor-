@@ -1,0 +1,149 @@
+RC-FLEXair Factory Points (All Object Types)
+================================================================================
+
+RC-FLEXair-12-A-F
+-----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      4 VAV{device-number}-VP                    0        WC    Differential Pressure
+  AI      5 VAV{device-number}-DMP-POS               0        %     Damper Position
+  AV      1 VAV{device-number}-DIAM                  0        in    Duct Diameter
+  AV      2 VAV{device-number}-FLO-CAL               0        CFM   Flow Calibration
+  AV      3 VAV{device-number}-CAL-K                 1        #     Calibration Constant (K)
+  AV      4 VAV{device-number}-FLO                   0        CFM   Volumetric Flow
+  AV      5 VAV{device-number}-FLO-SP                0        CFM   Flow Setpoint
+  AV      7 VAV{device-number}-FLO-DB                0        CFM   Flow Deadband
+  BI      6 VAV{device-number}-DMP@END               1              Damper at End
+  BO      8 VAV{device-number}-CW-CLS                0              Damper Clockwise to Close
+  BV      6 VAV{device-number}-FLO-CTRL              0              Flow Control
+  MO      7 VAV{device-number}-DMP                   3              Damper Control
+
+RC-FLEXair-12-A-M
+-----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      4 VAV{device-number}-VP                    0        WC    Differential Pressure
+  AI      5 VAV{device-number}-DMP-POS               0        %     Damper Position
+  AV      1 VAV{device-number}-DIAM                  0        in    Duct Diameter
+  AV      2 VAV{device-number}-FLO-CAL               0        CFM   Flow Calibration
+  AV      3 VAV{device-number}-CAL-K                 1        #     Calibration Constant (K)
+  AV      4 VAV{device-number}-FLO                   0        CFM   Volumetric Flow
+  AV      5 VAV{device-number}-FLO-SP                0        CFM   Flow Setpoint
+  AV      7 VAV{device-number}-FLO-DB                0        CFM   Flow Deadband
+  BI      6 VAV{device-number}-DMP@END               1              Damper at End
+  BO      8 VAV{device-number}-CW-CLS                0              Damper Clockwise to Close
+  BV      6 VAV{device-number}-FLO-CTRL              0              Flow Control
+  MO      7 VAV{device-number}-DMP                   3              Damper Control
+
+RC-FLEXair-34-A-F
+-----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      4 VAV{device-number}-VP                    0        WC    Differential Pressure
+  AI      5 VAV{device-number}-DMP-POS               0        %     Damper Position
+  AV      1 VAV{device-number}-DIAM                  0        in    Duct Diameter
+  AV      2 VAV{device-number}-FLO-CAL               0        CFM   Flow Calibration
+  AV      3 VAV{device-number}-CAL-K                 1        #     Calibration Constant (K)
+  AV      4 VAV{device-number}-FLO                   0        CFM   Volumetric Flow
+  AV      5 VAV{device-number}-FLO-SP                0        CFM   Flow Setpoint
+  AV      7 VAV{device-number}-FLO-DB                0        CFM   Flow Deadband
+  BI      6 VAV{device-number}-DMP@END               1              Damper at End
+  BO      8 VAV{device-number}-CW-CLS                0              Damper Clockwise to Close
+  BV      6 VAV{device-number}-FLO-CTRL              0              Flow Control
+  MO      7 VAV{device-number}-DMP                   3              Damper Control
+
+RC-FLEXair-34-A-M
+-----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      4 VAV{device-number}-VP                    0        WC    Differential Pressure
+  AI      5 VAV{device-number}-DMP-POS               0        %     Damper Position
+  AV      1 VAV{device-number}-DIAM                  0        in    Duct Diameter
+  AV      2 VAV{device-number}-FLO-CAL               0        CFM   Flow Calibration
+  AV      3 VAV{device-number}-CAL-K                 1        #     Calibration Constant (K)
+  AV      4 VAV{device-number}-FLO                   0        CFM   Volumetric Flow
+  AV      5 VAV{device-number}-FLO-SP                0        CFM   Flow Setpoint
+  AV      7 VAV{device-number}-FLO-DB                0        CFM   Flow Deadband
+  BI      6 VAV{device-number}-DMP@END               1              Damper at End
+  BO      8 VAV{device-number}-CW-CLS                0              Damper Clockwise to Close
+  BV      6 VAV{device-number}-FLO-CTRL              0              Flow Control
+  MO      7 VAV{device-number}-DMP                   3              Damper Control
+
+RC-FLEXair-35-A-F
+-----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      4 VAV{device-number}-VP                    0        WC    Differential Pressure
+  AI      5 VAV{device-number}-DMP-POS               0        %     Damper Position
+  AV      1 VAV{device-number}-DIAM                  0        in    Duct Diameter
+  AV      2 VAV{device-number}-FLO-CAL               0        CFM   Flow Calibration
+  AV      3 VAV{device-number}-CAL-K                 1        #     Calibration Constant (K)
+  AV      4 VAV{device-number}-FLO                   0        CFM   Volumetric Flow
+  AV      5 VAV{device-number}-FLO-SP                0        CFM   Flow Setpoint
+  AV      7 VAV{device-number}-FLO-DB                0        CFM   Flow Deadband
+  BI      6 VAV{device-number}-DMP@END               1              Damper at End
+  BO      8 VAV{device-number}-CW-CLS                0              Damper Clockwise to Close
+  BV      6 VAV{device-number}-FLO-CTRL              0              Flow Control
+  MO      7 VAV{device-number}-DMP                   3              Damper Control
+
+RC-FLEXair-35-A-M
+-----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      4 VAV{device-number}-VP                    0        WC    Differential Pressure
+  AI      5 VAV{device-number}-DMP-POS               0        %     Damper Position
+  AV      1 VAV{device-number}-DIAM                  0        in    Duct Diameter
+  AV      2 VAV{device-number}-FLO-CAL               0        CFM   Flow Calibration
+  AV      3 VAV{device-number}-CAL-K                 1        #     Calibration Constant (K)
+  AV      4 VAV{device-number}-FLO                   0        CFM   Volumetric Flow
+  AV      5 VAV{device-number}-FLO-SP                0        CFM   Flow Setpoint
+  AV      7 VAV{device-number}-FLO-DB                0        CFM   Flow Deadband
+  BI      6 VAV{device-number}-DMP@END               1              Damper at End
+  BO      8 VAV{device-number}-CW-CLS                0              Damper Clockwise to Close
+  BV      6 VAV{device-number}-FLO-CTRL              0              Flow Control
+  MO      7 VAV{device-number}-DMP                   3              Damper Control
+
+RC-FLEXair-36-A-F
+-----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      4 VAV{device-number}-VP                    0        WC    Differential Pressure
+  AI      5 VAV{device-number}-DMP-POS               0        %     Damper Position
+  AV      1 VAV{device-number}-DIAM                  0        in    Duct Diameter
+  AV      2 VAV{device-number}-FLO-CAL               0        CFM   Flow Calibration
+  AV      3 VAV{device-number}-CAL-K                 1        #     Calibration Constant (K)
+  AV      4 VAV{device-number}-FLO                   0        CFM   Volumetric Flow
+  AV      5 VAV{device-number}-FLO-SP                0        CFM   Flow Setpoint
+  AV      7 VAV{device-number}-FLO-DB                0        CFM   Flow Deadband
+  BI      6 VAV{device-number}-DMP@END               1              Damper at End
+  BO      8 VAV{device-number}-CW-CLS                0              Damper Clockwise to Close
+  BV      6 VAV{device-number}-FLO-CTRL              0              Flow Control
+  MO      7 VAV{device-number}-DMP                   3              Damper Control
+
+RC-FLEXair-36-A-M
+-----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      4 VAV{device-number}-VP                    0        WC    Differential Pressure
+  AI      5 VAV{device-number}-DMP-POS               0        %     Damper Position
+  AV      1 VAV{device-number}-DIAM                  0        in    Duct Diameter
+  AV      2 VAV{device-number}-FLO-CAL               0        CFM   Flow Calibration
+  AV      3 VAV{device-number}-CAL-K                 1        #     Calibration Constant (K)
+  AV      4 VAV{device-number}-FLO                   0        CFM   Volumetric Flow
+  AV      5 VAV{device-number}-FLO-SP                0        CFM   Flow Setpoint
+  AV      7 VAV{device-number}-FLO-DB                0        CFM   Flow Deadband
+  BI      6 VAV{device-number}-DMP@END               1              Damper at End
+  BO      8 VAV{device-number}-CW-CLS                0              Damper Clockwise to Close
+  BV      6 VAV{device-number}-FLO-CTRL              0              Flow Control
+  MO      7 VAV{device-number}-DMP                   3              Damper Control
+
+
+RC-FLEXone Factory Points (All Object Types)
+================================================================================
+
+RC-FLEXone-B4B: no I/O points
+
+RC-FLEXone-B6B: no I/O points
+
+RC-FLEXone-B8B: no I/O points
+

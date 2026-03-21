@@ -1,0 +1,30 @@
+MACH-ProView LCD Factory Points (All Object Types)
+================================================================================
+
+MACH-ProView LCD
+----------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      7 TEMPERATURE                              94.96    °F    
+  AI      8 HUMIDITY                                 0        0x1D  *** BLANK ENCODING ERROR: 0x1D=BTU/lb — use 0x62=%RH ***  
+  AI     10                                          0        ppm   
+  BI      9 OCCUPANCY                                0              
+
+MACH-ProView LCD OD
+-------------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      7 TEMPERATURE                              94.96    °F    
+  AI      8 HUMIDITY                                 0        0x1D  *** BLANK ENCODING ERROR: 0x1D=BTU/lb — use 0x62=%RH ***  
+  AI     10                                          0        ppm   
+  BI      9 OCCUPANCY                                0              
+
+MACH-ProView LCD-R
+------------------
+  Type Inst Name                                     Default  Units Description
+  ---- ---- ----                                     -------  ----- -----------
+  AI      7 TEMPERATURE                              94.96    °F    
+  AI      8 HUMIDITY                                 0        0x1D  *** BLANK ENCODING ERROR: 0x1D=BTU/lb — use 0x62=%RH ***  
+  AI     10                                          0        ppm   
+  BI      9 OCCUPANCY                                0              
+

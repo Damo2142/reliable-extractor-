@@ -21,7 +21,21 @@ FUNC_DECODE = {
     0x5d: 'LIMIT', 0x37: 'MAX', 0x38: 'MIN', 0x3f: 'AVG',
     0x33: 'ABS', 0xda: 'SELECT', 0x42: 'ENTHALPY', 0x43: 'SLIDE',
     0x44: 'SWITCH', 0x45: 'RAMP', 0x46: 'TIME-ON', 0x47: 'TIME-OFF',
-    0x4a: 'SCHED', 0x4b: 'INTERVAL',
+    0xd8: 'FLOAT', 0x4a: 'SCHED', 0x4b: 'INTERVAL',
+}
+
+# Sensor functions (follow c3 obj ref, not c2)
+SENSOR_DECODE = {
+    0x51: 'SENSOR-ON',   # sensor activated (thermostat button press)
+    0x55: 'SENSOR-OFF',  # sensor deactivated (button released)
+}
+
+# Statement opcodes
+STMT_DECODE = {
+    0x08: 'SET-PRIORITY',  # followed by priority value byte
+    0x07: 'RELINQUISH',   # followed by c2 obj ref
+    0x31: 'IDLE',          # followed by c2 obj ref
+    0x17: 'END',           # no args
 }
 
 OP_DECODE = {

@@ -1,0 +1,41 @@
+Property Schema + Compiler Progress
+=====================================
+2026-03-21 END OF DAY
+
+ALL 12 SEED BLOCK WRITERS BYTE-EXACT VERIFIED
+against RC Studio ground truth file SBS-AHU-VAV-MPS.pan
+
+  AV        84B   BYTE-EXACT
+  AI        78B   BYTE-EXACT
+  AO        75B   BYTE-EXACT
+  BI        75B   BYTE-EXACT
+  BO        74B   BYTE-EXACT
+  BV        90B   BYTE-EXACT
+  MV       128B   BYTE-EXACT
+  LOOP     120B   BYTE-EXACT
+  PRG      114B   BYTE-EXACT
+  SCHED     51B   BYTE-EXACT
+  NOTIF_CLS 50B   BYTE-EXACT
+  SYS_GROUP 71B   BYTE-EXACT
+
+  NC_GROUP: copied from blank (byte-exact)
+  DEVICE:   copied from blank (byte-exact)
+  TREND:    not written — RC Studio adds
+  ARRAY:    not written — RC Studio adds
+
+KEY DISCOVERY: .pan files are SEED format, not populated.
+  - RC Studio fills all runtime properties on open
+  - Seed blocks have only: desc + name + range code
+  - No present-value, priority-array, status flags, alarms
+  - No bytecode in PRG (RC Studio compiles .bas separately)
+  - No XY data in TABLE seeds
+  - No TREND blocks in seed
+
+READY FOR:
+  - Full compile from v2 Excel package
+  - RC Studio verification test
+
+CRC: LOCKED — CRC-16/KERMIT init=0xF321 block[12:]
+INDEX: (LE16_hi, LE16_lo) pairs, blocks_start = 0x0400 + num_types * 0x40 + 6
+INPUT: /srv/dfa/drops/sbs-full-package (4).zip
+BLANK: /srv/dfa/shared/files/vendors/reliable/blanks/MACH-ProSys-88/MACH-ProSys-88.panx
