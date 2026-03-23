@@ -528,6 +528,21 @@ async def api_bas_save(req: BasSaveRequest):
     return {"ok": True, "filename": req.filename, "size": len(req.code)}
 
 
+# --- .pan Intake ---
+
+@app.post("/api/intake/upload")
+async def api_intake_upload(file: UploadFile = File(...), token: str = ""):
+    """Upload and decompile a .pan file."""
+    _check_admin(token)
+    from composition.pan_intake import decompile_pan
+    content = await file.read()
+    if len(content) < 0x0410:
+        raise HTTPException(400, "File too small to be a valid .pan")
+    result = decompile_pan(content)
+    result["filename"] = file.filename
+    return result
+
+
 # --- Standard I/O Map Export/Import ---
 
 IO_MAP_PATH = Path(__file__).parent / "standard_io_map.json"
@@ -754,6 +769,7 @@ tr.unused td{color:#475569;font-style:italic}
     <button class="btn btn-o" id="btnEditor" style="display:none" onclick="openEditor()">Edit .bas</button>
     <button class="btn btn-o" id="btnExportIO" style="display:none;background:#7c3aed" onclick="exportIOMap()">Export I/O Map</button>
     <button class="btn btn-o" id="btnImportIO" style="display:none;background:#5b21b6" onclick="document.getElementById('ioMapFile').click()">Import I/O Map</button>
+    <button class="btn btn-o" id="btnIntake" style="display:none;background:#0e7490" onclick="openIntake()">Intake .pan</button>
     <button class="btn btn-o" id="btnUsers" style="display:none;background:#991b1b" onclick="openUsers()">Users</button>
     <input type="file" id="ioMapFile" accept=".xlsx" style="display:none" onchange="importIOMap(this)">
     <a id="hiddenDownload" style="display:none"></a>
@@ -1104,6 +1120,7 @@ async function doAdminLogin(){
     document.getElementById('btnExportIO').style.display='';
     document.getElementById('btnImportIO').style.display='';
     document.getElementById('btnUsers').style.display='';
+    document.getElementById('btnIntake').style.display='';
     document.getElementById('status').textContent='Admin access granted';
   }catch(e){document.getElementById('loginError').textContent='Error: '+e;}
 }
@@ -1125,6 +1142,77 @@ function importIOMap(input){
     else document.getElementById('status').textContent='Import error: '+JSON.stringify(d);
   }).catch(e=>{document.getElementById('status').textContent='Import error: '+e;});
   input.value='';
+}
+
+// --- .pan Intake ---
+var intakeData=null;
+function openIntake(){document.getElementById('intakeModal').classList.add('open');}
+function closeIntake(){document.getElementById('intakeModal').classList.remove('open');intakeData=null;}
+async function uploadPan(){
+  var f=document.getElementById('panFile').files[0];
+  if(!f){document.getElementById('intakeStatus').textContent='Select a .pan file';return;}
+  var fd=new FormData();fd.append('file',f);
+  document.getElementById('intakeStatus').textContent='Analyzing...';
+  try{
+    var res=await fetch('/api/intake/upload?token='+adminToken,{method:'POST',body:fd});
+    if(!res.ok){var e=await res.json();document.getElementById('intakeStatus').textContent='Error: '+e.detail;return;}
+    intakeData=await res.json();
+    renderIntake(intakeData);
+  }catch(e){document.getElementById('intakeStatus').textContent='Error: '+e;}
+}
+function renderIntake(d){
+  document.getElementById('intakeStatus').textContent=d.filename+' — '+d.file_size.toLocaleString()+' bytes, '+d.total_blocks+' blocks';
+  // Summary
+  var bc=d.block_counts;
+  var summary='<div class="stat-grid" style="margin:8px 0">';
+  var keys=Object.keys(bc);
+  for(var i=0;i<keys.length;i++){
+    if(keys[i]==='PRG'||keys[i]==='DEVICE'||keys[i]==='NOTIF_CLS'||keys[i]==='NC_GROUP')continue;
+    summary+='<div class="stat"><div class="v">'+bc[keys[i]]+'</div><div class="l">'+keys[i]+'</div></div>';
+  }
+  summary+='</div>';
+  document.getElementById('intakeSummary').innerHTML=summary;
+  // Tabs
+  var tabs=['Inputs','Outputs','Values','Loops','Schedules','Tables','Trends'];
+  document.getElementById('intakeTabBar').innerHTML=tabs.map(function(t,i){return '<div class="tab'+(i===0?' act':'')+'" onclick="showIntakeTab('+i+')">'+t+'</div>';}).join('');
+  var tc='';
+  // Inputs
+  var inp=d.inputs.filter(function(x){return x.name;});
+  tc+='<div class="tp act" id="it0"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Units</th><th>Range</th><th>Description</th></tr>';
+  inp.forEach(function(p){tc+='<tr><td>'+p.instance+'</td><td><span class="tag tag-'+p.type.toLowerCase()+'">'+p.type+'</span></td><td>'+p.name+'</td><td>'+p.units+'</td><td>'+p.range+'</td><td>'+p.desc+'</td></tr>';});
+  tc+='</table></div>';
+  // Outputs
+  var out=d.outputs.filter(function(x){return x.name;});
+  tc+='<div class="tp" id="it1"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Units</th><th>Range</th><th>Description</th></tr>';
+  out.forEach(function(p){tc+='<tr><td>'+p.instance+'</td><td><span class="tag tag-'+p.type.toLowerCase()+'">'+p.type+'</span></td><td>'+p.name+'</td><td>'+p.units+'</td><td>'+p.range+'</td><td>'+p.desc+'</td></tr>';});
+  tc+='</table></div>';
+  // Values
+  var vals=d.values.filter(function(x){return x.name;});
+  tc+='<div class="tp" id="it2"><table><tr><th>Instance</th><th>Type</th><th>Name</th><th>Default</th><th>Units</th><th>Description</th></tr>';
+  vals.forEach(function(v){tc+='<tr><td>'+v.type+v.instance+'</td><td><span class="tag tag-'+v.type.toLowerCase()+'">'+v.type+'</span></td><td>'+v.name+'</td><td>'+(v.default||'')+'</td><td>'+v.units+'</td><td>'+(v.desc||(v.states||''))+'</td></tr>';});
+  tc+='</table></div>';
+  // Loops
+  var lps=d.loops.filter(function(x){return x.name;});
+  tc+='<div class="tp" id="it3"><table><tr><th>Loop</th><th>Name</th><th>Action</th><th>P Band</th><th>Integral</th><th>Derivative</th></tr>';
+  lps.forEach(function(l){tc+='<tr><td>LOOP'+l.instance+'</td><td>'+l.name+'</td><td>'+l.action+'</td><td>'+l.p_band+'</td><td>'+l.integral+'</td><td>'+l.derivative+'</td></tr>';});
+  tc+='</table></div>';
+  // Schedules
+  tc+='<div class="tp" id="it4"><table><tr><th>Schedule</th><th>Name</th></tr>';
+  d.schedules.forEach(function(s){tc+='<tr><td>SCHED'+s.instance+'</td><td>'+s.name+'</td></tr>';});
+  tc+='</table></div>';
+  // Tables
+  tc+='<div class="tp" id="it5"><table><tr><th>Table</th><th>Name</th><th>Units</th><th>Description</th></tr>';
+  d.tables.forEach(function(t){tc+='<tr><td>TBL'+t.instance+'</td><td>'+t.name+'</td><td>'+t.units+'</td><td>'+t.desc+'</td></tr>';});
+  tc+='</table></div>';
+  // Trends
+  tc+='<div class="tp" id="it6"><table><tr><th>STL</th><th>Name</th><th>Monitored</th><th>Type</th><th>Interval</th><th>Buffer</th></tr>';
+  d.trends.forEach(function(t){tc+='<tr><td>STL'+t.instance+'</td><td>'+t.name+'</td><td>'+t.monitored+'</td><td>'+t.type+'</td><td>'+t.interval+'</td><td>'+t.buffer+'</td></tr>';});
+  tc+='</table></div>';
+  document.getElementById('intakeContents').innerHTML=tc;
+}
+function showIntakeTab(i){
+  document.querySelectorAll('#intakeTabBar .tab').forEach(function(t,j){t.classList.toggle('act',j===i);});
+  for(var j=0;j<7;j++){var el=document.getElementById('it'+j);if(el)el.classList.toggle('act',j===i);}
 }
 
 // --- User Management ---
@@ -1200,6 +1288,22 @@ async function saveBasFile(){
 
 init();
 </script>
+<div class="modal-bg" id="intakeModal">
+  <div class="modal" style="height:80vh">
+    <div class="modal-hdr">
+      <h3>.pan Intake Tool</h3>
+      <button class="btn btn-o" style="padding:4px 12px;font-size:0.8em" onclick="closeIntake()">Close</button>
+    </div>
+    <div style="padding:12px 16px;border-bottom:1px solid #1e293b;display:flex;gap:8px;align-items:center">
+      <input type="file" id="panFile" accept=".pan,.panx" style="width:auto;margin:0">
+      <button class="btn btn-p" style="padding:5px 14px" onclick="uploadPan()">Upload &amp; Analyze</button>
+      <span id="intakeStatus" style="color:#94a3b8;font-size:0.8em;margin-left:8px">Select a .pan file</span>
+    </div>
+    <div id="intakeSummary" style="padding:0 16px"></div>
+    <div class="tabs" id="intakeTabBar" style="padding:0 16px"></div>
+    <div id="intakeContents" style="flex:1;overflow-y:auto;padding:0 16px"></div>
+  </div>
+</div>
 <div class="modal-bg" id="usersModal">
   <div style="background:#111827;border:1px solid #334155;border-radius:8px;padding:24px;width:400px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
