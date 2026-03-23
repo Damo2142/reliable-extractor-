@@ -405,17 +405,31 @@ async def api_download_full(modules: str = "", controller: str = "auto"):
 
 # --- Admin Auth ---
 
-ADMIN_USER = "Admin"
-ADMIN_PASS = "D@mo2142"
-# Active sessions: set of token strings
-_admin_sessions = set()
-
 import hashlib, time
+
+ADMIN_USERS_PATH = Path(__file__).parent / "admin_users.json"
+_admin_sessions = {}  # token -> username
+
+
+def _load_admin_users() -> dict:
+    if ADMIN_USERS_PATH.exists():
+        return json.loads(ADMIN_USERS_PATH.read_text())
+    return {"Admin": "D@mo2142"}
+
+
+def _save_admin_users(users: dict):
+    ADMIN_USERS_PATH.write_text(json.dumps(users, indent=2))
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class AdminUserRequest(BaseModel):
+    username: str
+    password: str
+    token: str = ""
 
 
 class BasSaveRequest(BaseModel):
@@ -431,11 +445,47 @@ def _check_admin(token: str):
 
 @app.post("/api/admin/login")
 async def api_admin_login(req: LoginRequest):
-    if req.username != ADMIN_USER or req.password != ADMIN_PASS:
+    users = _load_admin_users()
+    if req.username not in users or users[req.username] != req.password:
         raise HTTPException(403, "Invalid credentials")
     token = hashlib.sha256(f"{time.time()}-{req.username}".encode()).hexdigest()[:32]
-    _admin_sessions.add(token)
-    return {"ok": True, "token": token}
+    _admin_sessions[token] = req.username
+    return {"ok": True, "token": token, "username": req.username}
+
+
+@app.post("/api/admin/add-user")
+async def api_admin_add_user(req: AdminUserRequest):
+    _check_admin(req.token)
+    if not req.username or not req.password:
+        raise HTTPException(400, "Username and password required")
+    users = _load_admin_users()
+    users[req.username] = req.password
+    _save_admin_users(users)
+    return {"ok": True, "users": list(users.keys())}
+
+
+@app.post("/api/admin/remove-user")
+async def api_admin_remove_user(req: AdminUserRequest):
+    _check_admin(req.token)
+    users = _load_admin_users()
+    if req.username not in users:
+        raise HTTPException(404, f"User not found: {req.username}")
+    if len(users) <= 1:
+        raise HTTPException(400, "Cannot remove last admin user")
+    del users[req.username]
+    _save_admin_users(users)
+    # Invalidate any sessions for removed user
+    to_remove = [t for t, u in _admin_sessions.items() if u == req.username]
+    for t in to_remove:
+        del _admin_sessions[t]
+    return {"ok": True, "users": list(users.keys())}
+
+
+@app.get("/api/admin/list-users")
+async def api_admin_list_users(token: str = ""):
+    _check_admin(token)
+    users = _load_admin_users()
+    return {"users": list(users.keys())}
 
 
 # --- .bas Editor API (admin-protected) ---
@@ -704,6 +754,7 @@ tr.unused td{color:#475569;font-style:italic}
     <button class="btn btn-o" id="btnEditor" style="display:none" onclick="openEditor()">Edit .bas</button>
     <button class="btn btn-o" id="btnExportIO" style="display:none;background:#7c3aed" onclick="exportIOMap()">Export I/O Map</button>
     <button class="btn btn-o" id="btnImportIO" style="display:none;background:#5b21b6" onclick="document.getElementById('ioMapFile').click()">Import I/O Map</button>
+    <button class="btn btn-o" id="btnUsers" style="display:none;background:#991b1b" onclick="openUsers()">Users</button>
     <input type="file" id="ioMapFile" accept=".xlsx" style="display:none" onchange="importIOMap(this)">
     <a id="hiddenDownload" style="display:none"></a>
   </div>
@@ -1052,6 +1103,7 @@ async function doAdminLogin(){
     document.getElementById('btnEditor').style.display='';
     document.getElementById('btnExportIO').style.display='';
     document.getElementById('btnImportIO').style.display='';
+    document.getElementById('btnUsers').style.display='';
     document.getElementById('status').textContent='Admin access granted';
   }catch(e){document.getElementById('loginError').textContent='Error: '+e;}
 }
@@ -1073,6 +1125,38 @@ function importIOMap(input){
     else document.getElementById('status').textContent='Import error: '+JSON.stringify(d);
   }).catch(e=>{document.getElementById('status').textContent='Import error: '+e;});
   input.value='';
+}
+
+// --- User Management ---
+function openUsers(){
+  document.getElementById('usersModal').classList.add('open');
+  loadUserList();
+}
+function closeUsers(){document.getElementById('usersModal').classList.remove('open');}
+async function loadUserList(){
+  var res=await fetch('/api/admin/list-users?token='+adminToken);
+  var d=await res.json();
+  var el=document.getElementById('userList');
+  el.innerHTML=d.users.map(function(u){
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #1e293b"><span style="color:#e0e6ed;font-size:0.85em">'+u+'</span>'+(d.users.length>1?'<button class="btn btn-o" style="padding:2px 8px;font-size:0.7em" onclick="removeUser(\\x27'+u+'\\x27)">Remove</button>':'')+'</div>';
+  }).join('');
+}
+async function addUser(){
+  var u=document.getElementById('newUser').value.trim();
+  var p=document.getElementById('newPass').value;
+  if(!u||!p){document.getElementById('userStatus').textContent='Enter username and password';return;}
+  var res=await fetch('/api/admin/add-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,token:adminToken})});
+  if(!res.ok){var e=await res.json();document.getElementById('userStatus').textContent='Error: '+e.detail;return;}
+  document.getElementById('newUser').value='';document.getElementById('newPass').value='';
+  document.getElementById('userStatus').textContent='User added: '+u;
+  loadUserList();
+}
+async function removeUser(u){
+  if(!confirm('Remove user: '+u+'?'))return;
+  var res=await fetch('/api/admin/remove-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:'',token:adminToken})});
+  if(!res.ok){var e=await res.json();document.getElementById('userStatus').textContent='Error: '+e.detail;return;}
+  document.getElementById('userStatus').textContent='Removed: '+u;
+  loadUserList();
 }
 
 // --- .bas Editor ---
@@ -1116,6 +1200,22 @@ async function saveBasFile(){
 
 init();
 </script>
+<div class="modal-bg" id="usersModal">
+  <div style="background:#111827;border:1px solid #334155;border-radius:8px;padding:24px;width:400px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="color:#60a5fa">Admin Users</h3>
+      <button class="btn btn-o" style="padding:4px 12px;font-size:0.8em" onclick="closeUsers()">Close</button>
+    </div>
+    <div id="userList" style="border:1px solid #1e293b;border-radius:4px;margin-bottom:16px;max-height:200px;overflow-y:auto"></div>
+    <div style="font-size:0.8em;color:#94a3b8;margin-bottom:8px">Add new admin user:</div>
+    <input type="text" id="newUser" placeholder="Username" style="margin-bottom:6px">
+    <input type="password" id="newPass" placeholder="Password" style="margin-bottom:10px" onkeydown="if(event.key==='Enter')addUser()">
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn btn-p" style="padding:5px 14px" onclick="addUser()">Add User</button>
+      <span id="userStatus" style="color:#94a3b8;font-size:0.8em"></span>
+    </div>
+  </div>
+</div>
 <div class="modal-bg" id="loginModal">
   <div style="background:#111827;border:1px solid #334155;border-radius:8px;padding:24px;width:340px">
     <h3 style="color:#60a5fa;margin-bottom:16px">Admin Login</h3>
