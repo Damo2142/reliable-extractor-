@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -410,6 +410,182 @@ async def api_download_full(modules: str = "", controller: str = "auto"):
                              headers={"Content-Disposition": "attachment; filename=sbs-full-package.zip"})
 
 
+# --- .bas Editor API (password-protected) ---
+
+EDITOR_PASSWORD = "sbs2026"
+BAS_DIR = Path(__file__).parent / "programs" / "reliable"
+
+
+class BasSaveRequest(BaseModel):
+    filename: str
+    code: str
+    password: str
+
+
+@app.get("/api/bas/list")
+async def api_bas_list():
+    """List all .bas template files."""
+    files = sorted(f.name for f in BAS_DIR.glob("*.bas") if not f.name.endswith(".bak-20260323"))
+    return {"files": files}
+
+
+@app.get("/api/bas/read")
+async def api_bas_read(filename: str):
+    """Read a .bas template file."""
+    path = BAS_DIR / filename
+    if not path.exists() or not path.is_file() or ".." in filename:
+        raise HTTPException(404, f"File not found: {filename}")
+    return {"filename": filename, "code": path.read_text(encoding="utf-8", errors="replace")}
+
+
+@app.post("/api/bas/save")
+async def api_bas_save(req: BasSaveRequest):
+    """Save a .bas template file (password-protected)."""
+    if req.password != EDITOR_PASSWORD:
+        raise HTTPException(403, "Wrong password")
+    if ".." in req.filename or "/" in req.filename or "\\" in req.filename:
+        raise HTTPException(400, "Invalid filename")
+    path = BAS_DIR / req.filename
+    if not path.exists():
+        raise HTTPException(404, f"File not found: {req.filename}")
+    # Backup before overwrite
+    import shutil
+    bak = BAS_DIR / (req.filename + ".editor-bak")
+    shutil.copy2(path, bak)
+    path.write_text(req.code, encoding="utf-8")
+    return {"ok": True, "filename": req.filename, "size": len(req.code)}
+
+
+# --- Standard I/O Map Export/Import ---
+
+IO_MAP_PATH = Path(__file__).parent / "standard_io_map.json"
+
+
+@app.get("/api/io-map/export")
+async def api_io_map_export():
+    """Export standard I/O map as Excel."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    if not IO_MAP_PATH.exists():
+        raise HTTPException(404, "Standard I/O map not found")
+
+    data = json.loads(IO_MAP_PATH.read_text())
+    wb = openpyxl.Workbook()
+
+    # --- Inputs sheet ---
+    ws = wb.active
+    ws.title = "Inputs"
+    headers = ["Row", "Name", "Type", "Range", "Units", "Description", "Module"]
+    hdr_font = Font(bold=True, color="FFFFFF")
+    hdr_fill = PatternFill("solid", fgColor="1a237e")
+    thin = Side(style="thin", color="334155")
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=c, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+    for i, pt in enumerate(data["inputs"], 2):
+        ws.cell(row=i, column=1, value=pt["row"])
+        ws.cell(row=i, column=2, value=pt["name"])
+        ws.cell(row=i, column=3, value=pt["type"])
+        ws.cell(row=i, column=4, value=pt["range"])
+        ws.cell(row=i, column=5, value=pt.get("units", ""))
+        ws.cell(row=i, column=6, value=pt["description"])
+        ws.cell(row=i, column=7, value=pt["module"])
+    for col in [("A", 6), ("B", 16), ("C", 6), ("D", 18), ("E", 8), ("F", 35), ("G", 16)]:
+        ws.column_dimensions[col[0]].width = col[1]
+
+    # --- Outputs sheet ---
+    ws2 = wb.create_sheet("Outputs")
+    headers2 = ["Row", "Name", "Type", "Range", "Description", "Module", "Min V", "Max V", "Reverse"]
+    for c, h in enumerate(headers2, 1):
+        cell = ws2.cell(row=1, column=c, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+    for i, pt in enumerate(data["outputs"], 2):
+        ws2.cell(row=i, column=1, value=pt["row"])
+        ws2.cell(row=i, column=2, value=pt["name"])
+        ws2.cell(row=i, column=3, value=pt["type"])
+        ws2.cell(row=i, column=4, value=pt["range"])
+        ws2.cell(row=i, column=5, value=pt["description"])
+        ws2.cell(row=i, column=6, value=pt["module"])
+        ws2.cell(row=i, column=7, value=pt.get("min_v", ""))
+        ws2.cell(row=i, column=8, value=pt.get("max_v", ""))
+        ws2.cell(row=i, column=9, value="Yes" if pt.get("reverse") else "")
+    for col in [("A", 6), ("B", 20), ("C", 6), ("D", 14), ("E", 35), ("F", 16), ("G", 8), ("H", 8), ("I", 8)]:
+        ws2.column_dimensions[col[0]].width = col[1]
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": "attachment; filename=SBS-Standard-IO-Map.xlsx"})
+
+
+@app.post("/api/io-map/import")
+async def api_io_map_import(file: UploadFile = File(...)):
+    """Import standard I/O map from Excel. Updates the JSON reference."""
+    import openpyxl
+
+    content = await file.read()
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+
+    inputs = []
+    if "Inputs" in wb.sheetnames:
+        ws = wb["Inputs"]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            inputs.append({
+                "row": int(row[0]),
+                "name": str(row[1] or ""),
+                "type": str(row[2] or ""),
+                "range": str(row[3] or ""),
+                "units": str(row[4] or "") if len(row) > 4 else "",
+                "description": str(row[5] or "") if len(row) > 5 else "",
+                "module": str(row[6] or "") if len(row) > 6 else "",
+            })
+
+    outputs = []
+    if "Outputs" in wb.sheetnames:
+        ws = wb["Outputs"]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            outputs.append({
+                "row": int(row[0]),
+                "name": str(row[1] or ""),
+                "type": str(row[2] or ""),
+                "range": str(row[3] or ""),
+                "description": str(row[4] or "") if len(row) > 4 else "",
+                "module": str(row[5] or "") if len(row) > 5 else "",
+                "min_v": float(row[6]) if len(row) > 6 and row[6] else 0.0,
+                "max_v": float(row[7]) if len(row) > 7 and row[7] else 0.0,
+                "reverse": (str(row[8] or "").strip().lower() in ("yes", "true", "1")) if len(row) > 8 else False,
+            })
+
+    wb.close()
+
+    # Backup existing
+    if IO_MAP_PATH.exists():
+        import shutil
+        shutil.copy2(IO_MAP_PATH, IO_MAP_PATH.with_suffix(".json.bak"))
+
+    data = {"inputs": sorted(inputs, key=lambda x: x["row"]),
+            "outputs": sorted(outputs, key=lambda x: x["row"])}
+    IO_MAP_PATH.write_text(json.dumps(data, indent=2))
+
+    return {"ok": True, "inputs": len(inputs), "outputs": len(outputs)}
+
+
+@app.get("/api/io-map/json")
+async def api_io_map_json():
+    """Return the standard I/O map as JSON (for UI display)."""
+    if not IO_MAP_PATH.exists():
+        raise HTTPException(404, "Standard I/O map not found")
+    return json.loads(IO_MAP_PATH.read_text())
+
+
 # --- UI ---
 
 @app.get("/", response_class=HTMLResponse)
@@ -473,6 +649,22 @@ tr.unused td{color:#475569;font-style:italic}
 .soo{white-space:pre-wrap;font-family:'Courier New',monospace;font-size:0.78em;line-height:1.4;background:#0f172a;padding:14px;border-radius:5px;max-height:500px;overflow-y:auto}
 #status{padding:6px 10px;background:#1e293b;border-radius:4px;font-size:0.8em;color:#94a3b8;margin-bottom:10px}
 .row-label{font-size:0.7em;color:#475569;text-align:right;padding-right:4px}
+.modal-bg{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;justify-content:center;align-items:center}
+.modal-bg.open{display:flex}
+.modal{background:#111827;border:1px solid #334155;border-radius:8px;width:90%;max-width:1100px;height:85vh;display:flex;flex-direction:column;overflow:hidden}
+.modal-hdr{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #1e293b}
+.modal-hdr h3{color:#60a5fa;font-size:1em}
+.modal-body{display:flex;flex:1;overflow:hidden}
+.modal-side{width:220px;border-right:1px solid #1e293b;overflow-y:auto;padding:8px}
+.modal-side .bf{padding:5px 8px;cursor:pointer;border-radius:4px;font-size:0.8em;color:#94a3b8}
+.modal-side .bf:hover{background:#1e293b;color:#e0e6ed}
+.modal-side .bf.sel{background:#172554;color:#60a5fa}
+.modal-edit{flex:1;display:flex;flex-direction:column;padding:10px}
+.modal-edit textarea{flex:1;background:#0a0e17;color:#e0e6ed;border:1px solid #334155;border-radius:4px;font-family:'Courier New',monospace;font-size:0.82em;line-height:1.5;padding:10px;resize:none;tab-size:4}
+.modal-edit textarea:focus{border-color:#3b82f6;outline:none}
+.modal-foot{display:flex;gap:8px;align-items:center;padding:8px 0 0 0}
+.modal-foot input{width:180px}
+.ed-status{font-size:0.8em;color:#94a3b8;margin-left:auto}
 </style>
 </head>
 <body>
@@ -483,6 +675,10 @@ tr.unused td{color:#475569;font-style:italic}
     <button class="btn btn-s" onclick="doGenerate()">Download Excel + .bas</button>
     <button class="btn btn-s" style="background:#1e40af" onclick="doGeneratePan()">Download .pan</button>
     <button class="btn btn-s" style="background:#065f46" onclick="doGenerateFull()">Full Package</button>
+    <button class="btn btn-o" onclick="openEditor()">Edit .bas</button>
+    <button class="btn btn-o" style="background:#7c3aed" onclick="exportIOMap()">Export I/O Map</button>
+    <button class="btn btn-o" style="background:#5b21b6" onclick="document.getElementById('ioMapFile').click()">Import I/O Map</button>
+    <input type="file" id="ioMapFile" accept=".xlsx" style="display:none" onchange="importIOMap(this)">
     <a id="hiddenDownload" style="display:none"></a>
   </div>
 </div>
@@ -810,8 +1006,88 @@ async function doGenerateFull(){
   }catch(e){document.getElementById('status').textContent='Error: '+e;}
 }
 
+// --- I/O Map Export/Import ---
+async function exportIOMap(){
+  var a=document.createElement('a');
+  a.href='/api/io-map/export';a.download='SBS-Standard-IO-Map.xlsx';
+  document.body.appendChild(a);a.click();a.remove();
+  document.getElementById('status').textContent='I/O Map exported';
+}
+function importIOMap(input){
+  if(!input.files.length)return;
+  var fd=new FormData();
+  fd.append('file',input.files[0]);
+  document.getElementById('status').textContent='Importing I/O map...';
+  fetch('/api/io-map/import',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    if(d.ok)document.getElementById('status').textContent='I/O Map imported: '+d.inputs+' inputs, '+d.outputs+' outputs';
+    else document.getElementById('status').textContent='Import error: '+JSON.stringify(d);
+  }).catch(e=>{document.getElementById('status').textContent='Import error: '+e;});
+  input.value='';
+}
+
+// --- .bas Editor ---
+var editorUnlocked=false, editorDirty=false, editorFile='';
+
+function openEditor(){
+  document.getElementById('editorModal').classList.add('open');
+  loadBasList();
+}
+function closeEditor(){
+  if(editorDirty&&!confirm('Unsaved changes. Close anyway?'))return;
+  document.getElementById('editorModal').classList.remove('open');
+  editorDirty=false;
+}
+async function loadBasList(){
+  var res=await fetch('/api/bas/list');
+  var d=await res.json();
+  var el=document.getElementById('basFileList');
+  el.innerHTML=d.files.map(function(f){return '<div class="bf'+(f===editorFile?' sel':'')+'" onclick="loadBasFile(\\x27'+f+'\\x27)">'+f+'</div>';}).join('');
+}
+async function loadBasFile(fn){
+  if(editorDirty&&!confirm('Unsaved changes in '+editorFile+'. Discard?'))return;
+  var res=await fetch('/api/bas/read?filename='+encodeURIComponent(fn));
+  if(!res.ok){document.getElementById('edStatus').textContent='Error loading';return;}
+  var d=await res.json();
+  editorFile=fn;
+  document.getElementById('basEditor').value=d.code;
+  document.getElementById('edStatus').textContent='Loaded: '+fn+' ('+d.code.length+' chars)';
+  editorDirty=false;
+  loadBasList();
+}
+function onEditorChange(){editorDirty=true;document.getElementById('edStatus').textContent=editorFile+' (modified)';}
+async function saveBasFile(){
+  if(!editorFile){document.getElementById('edStatus').textContent='No file selected';return;}
+  var pw=document.getElementById('edPassword').value;
+  if(!pw){document.getElementById('edStatus').textContent='Enter password to save';return;}
+  var code=document.getElementById('basEditor').value;
+  var res=await fetch('/api/bas/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:editorFile,code:code,password:pw})});
+  if(!res.ok){var e=await res.json();document.getElementById('edStatus').textContent='Error: '+e.detail;return;}
+  editorDirty=false;
+  editorUnlocked=true;
+  document.getElementById('edStatus').textContent='Saved: '+editorFile;
+}
+
 init();
 </script>
+<div class="modal-bg" id="editorModal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3>.bas Template Editor</h3>
+      <button class="btn btn-o" style="padding:4px 12px;font-size:0.8em" onclick="closeEditor()">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-side" id="basFileList"></div>
+      <div class="modal-edit">
+        <textarea id="basEditor" placeholder="Select a .bas file to edit..." oninput="onEditorChange()"></textarea>
+        <div class="modal-foot">
+          <input type="password" id="edPassword" placeholder="Password to save">
+          <button class="btn btn-p" style="padding:5px 14px" onclick="saveBasFile()">Save</button>
+          <span class="ed-status" id="edStatus">Select a file</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>"""
 

@@ -5,7 +5,7 @@ REM ======================================================================
 
 REM ***** Set internal variables *****
 A = {device-name}-CHW-VLV
-B = {device-name}-CHW-VLV-LOOP8
+B = loop8
 
 REM ***** LTC override — valve full open *****
 IF {device-name}-LTC THEN {device-name}-CHW-VLV = 100 , END

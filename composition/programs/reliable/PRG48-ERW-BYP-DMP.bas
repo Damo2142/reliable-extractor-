@@ -7,7 +7,7 @@ REM ***** Close bypass dampers on safety or fan off *****
 IF {device-name}-SAFETY-SD-ALARM OR NOT {device-name}-SF-S THEN {device-name}-ERW-OA-BYP-DMP = 0 , {device-name}-ERW-EA-BYP-DMP = 0 , END
 
 REM ***** OA bypass — open in economizer or defrost mode *****
-IF NOT {device-name}-ECON-MODE AND NOT {device-name}-ERW-DEFROST-MODE THEN {device-name}-ERW-OA-BYP-DMP = 0 ELSE {device-name}-ERW-OA-BYP-DMP = {device-name}-OA-BYP-LOOP11
+IF NOT {device-name}-ECON-MODE AND NOT {device-name}-ERW-DEFROST-MODE THEN {device-name}-ERW-OA-BYP-DMP = 0 ELSE {device-name}-ERW-OA-BYP-DMP = loop11
 
 REM ***** EA bypass — open in economizer or defrost mode *****
-IF NOT {device-name}-ECON-MODE AND NOT {device-name}-ERW-DEFROST-MODE OR NOT {device-name}-EF-S THEN {device-name}-ERW-EA-BYP-DMP = 0 ELSE {device-name}-ERW-EA-BYP-DMP = {device-name}-EA-BYP-LOOP12
+IF NOT {device-name}-ECON-MODE AND NOT {device-name}-ERW-DEFROST-MODE OR NOT {device-name}-EF-S THEN {device-name}-ERW-EA-BYP-DMP = 0 ELSE {device-name}-ERW-EA-BYP-DMP = loop12

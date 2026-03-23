@@ -5,7 +5,7 @@ REM ======================================================================
 
 REM ***** Set internal variables *****
 A = {device-name}-HW-VLV
-B = {device-name}-HW-VLV-LOOP7
+B = loop7
 {device-name}-HWC-SAT-SP = {device-name}-ACT-SAT-SP - 5
 
 REM ***** LTC override — valve full open *****
@@ -15,7 +15,7 @@ REM ***** SA HPS override — valve closed *****
 IF {device-name}-SA-HPS THEN {device-name}-HW-VLV = 0 , END
 
 REM ***** Freeze protection — valve from freeze loop *****
-IF NOT {device-name}-SF-S AND {device-name}-FRZ-PRTC-MODE THEN {device-name}-HW-VLV = {device-name}-FRZ-LOOP9 , END
+IF NOT {device-name}-SF-S AND {device-name}-FRZ-PRTC-MODE THEN {device-name}-HW-VLV = loop9 , END
 
 REM ***** Heating lockout — valve closed *****
 IF {device-name}-HTG-LOCKOUT THEN {device-name}-HW-VLV = 0 , END
@@ -28,4 +28,4 @@ IF {device-name}-SF-S THEN {device-name}-HW-VLV = RAMP( ABS( A - B ) > 1 , A , B
 IF ABS( A - B ) < 1 THEN {device-name}-HW-VLV = B , END
 
 REM ***** Fan off — freeze protection or close *****
-IF NOT {device-name}-SF-S AND {device-name}-FRZ-PRTC-MODE THEN {device-name}-HW-VLV = {device-name}-FRZ-LOOP9 ELSE {device-name}-HW-VLV = 0
+IF NOT {device-name}-SF-S AND {device-name}-FRZ-PRTC-MODE THEN {device-name}-HW-VLV = loop9 ELSE {device-name}-HW-VLV = 0

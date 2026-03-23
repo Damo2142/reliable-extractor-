@@ -20,11 +20,11 @@ IF NOT {device-name}-EA-DMP-ES THEN STOP {device-name}-EF , {device-name}-EF-VFD
 
 REM ***** Start/stop logic *****
 IF {device-name}-SF-S AND {device-name}-EA-DMP-ES THEN START {device-name}-EF ELSE STOP {device-name}-EF
-IF TIME-ON( {device-name}-EF ) > 0:01:30 THEN {device-name}-EF-VFD-SPD = {device-name}-EA-FLOW-LOOP5 , GOTO 150 ELSE {device-name}-EF-VFD-SPD = {device-name}-EA-MIN-SPEED , GOTO 110
+IF TIME-ON( {device-name}-EF ) > 0:01:30 THEN {device-name}-EF-VFD-SPD = loop5 , GOTO 150 ELSE {device-name}-EF-VFD-SPD = {device-name}-EA-MIN-SPEED , GOTO 110
 
 REM ***** Speed ramp *****
 B = {device-name}-EF-VFD-SPD
-C = SLIDE( {device-name}-EA-FLOW-LOOP5 , 0 , 100 , {device-name}-EA-MIN-SPEED , {device-name}-EA-MAX-SPEED )
+C = SLIDE( loop5 , 0 , 100 , {device-name}-EA-MIN-SPEED , {device-name}-EA-MAX-SPEED )
 IF {device-name}-EF-S THEN D = RAMP( ABS( B - C ) > 1 , B , C , {device-name}-EF-SPEED-RAMP * 1.6667 ) ELSE D = 0 , GOTO 110
 IF ABS( B - C ) < 1 THEN D = C
 {device-name}-EF-VFD-SPD = D

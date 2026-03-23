@@ -5,7 +5,7 @@ REM ======================================================================
 
 REM ***** Set internal variables *****
 A = {device-name}-PH-VLV
-B = {device-name}-PH-VLV-LOOP13
+B = loop13
 
 REM ***** Close valve when fan off and not in freeze protection *****
 IF NOT {device-name}-SF-S AND NOT {device-name}-FRZ-PRTC-MODE THEN {device-name}-PH-VLV = 0 , GOTO 100

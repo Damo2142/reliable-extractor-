@@ -5,7 +5,7 @@ REM ======================================================================
 
 REM ***** Set internal variables *****
 A = {device-name}-SF-VFD-SPD
-B = SLIDE( {device-name}-ACT-DSP-LOOP1 , 0 , 100 , {device-name}-SF-MIN-SPEED , {device-name}-SF-MAX-SPEED )
+B = SLIDE( loop1 , 0 , 100 , {device-name}-SF-MIN-SPEED , {device-name}-SF-MAX-SPEED )
 
 REM ***** Stop fan on safety shutdown *****
 IF {device-name}-SAFETY-SD-ALARM THEN {device-name}-SF-VFD-SPD = 0 , STOP {device-name}-SF , C = 0 , END

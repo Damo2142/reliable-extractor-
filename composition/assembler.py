@@ -71,10 +71,13 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
         selected_modules=sorted(all_ids),
     )
 
-    # Track by row/instance to detect duplicates
+    # Track by row/instance AND by name to prevent duplicates
     input_rows = {}   # row -> InputPoint
+    input_names = set()  # mnemonic names already defined
     output_rows = {}  # row -> OutputPoint
+    output_names = set()
     value_instances = {}  # instance -> ValuePoint
+    value_names = set()
     loop_instances = {}
     table_instances = {}
     program_instances = {}
@@ -85,9 +88,12 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
         mod = modules[mid]
 
         for pt in mod.inputs:
+            if pt.name in input_names:
+                continue  # same mnemonic already exists — skip entirely
             if pt.row not in input_rows:
                 pt.module = mid
                 input_rows[pt.row] = pt
+                input_names.add(pt.name)
             else:
                 existing = input_rows[pt.row]
                 next_row = max(input_rows.keys()) + 1
@@ -98,11 +104,15 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                 pt.row = next_row
                 pt.module = mid
                 input_rows[next_row] = pt
+                input_names.add(pt.name)
 
         for pt in mod.outputs:
+            if pt.name in output_names:
+                continue  # same mnemonic already exists — skip entirely
             if pt.row not in output_rows:
                 pt.module = mid
                 output_rows[pt.row] = pt
+                output_names.add(pt.name)
             else:
                 existing = output_rows[pt.row]
                 next_row = max(output_rows.keys()) + 1
@@ -113,11 +123,15 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                 pt.row = next_row
                 pt.module = mid
                 output_rows[next_row] = pt
+                output_names.add(pt.name)
 
         for pt in mod.values:
+            if pt.name in value_names:
+                continue  # same mnemonic already exists — skip entirely
             if pt.instance not in value_instances:
                 pt.module = mid
                 value_instances[pt.instance] = pt
+                value_names.add(pt.name)
 
         for lp in mod.loops:
             if lp.instance not in loop_instances:
@@ -153,6 +167,13 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     config.programs = [program_instances[i] for i in sorted(program_instances.keys())]
     config.schedules = [schedule_instances[i] for i in sorted(schedule_instances.keys())]
     config.system_groups = list(system_group_names.values())
+
+    # Step 3a2: Flag programs that reference {parent}
+    for prg in config.programs:
+        if '{parent}' in prg.code:
+            note = 'Requires parent device ID at commissioning'
+            if note not in prg.description:
+                prg.description = (prg.description + ' — ' + note).lstrip(' — ') if prg.description else note
 
     # Step 3b: Check for orphan point references
     all_point_names = set()

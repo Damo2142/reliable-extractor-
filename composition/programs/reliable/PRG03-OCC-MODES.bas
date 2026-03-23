@@ -7,7 +7,7 @@ REM ======================================================================
 
 REM ***** Snow day override — force unoccupied *****
 IF {device-name}-SNOW-DAY THEN STOP {device-name}-OCC-CMD , {device-name}-OCC-MODE = 4 , GOTO 170
-IF {device-name}-USE-LOC-SCHD THEN {device-name}-OCC-CMD = {4194298}{device-name}-LOCAL-SCHEDULE ELSE {device-name}-OCC-CMD = {device-name}-NET-OCC-CMD
+IF {device-name}-USE-LOC-SCHD THEN {device-name}-OCC-CMD = sched1 ELSE {device-name}-OCC-CMD = {device-name}-NET-OCC-CMD
 
 REM ***** Determine occupied mode *****
 IF {device-name}-OCC-CMD THEN {device-name}-OCC-MODE = 1 , STOP {device-name}-BYPASS-MODE , STOP {device-name}-STNDBY-MODE , STOP {device-name}-NSB-MODE , STOP {device-name}-NSF-MODE , END

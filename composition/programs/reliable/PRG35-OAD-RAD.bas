@@ -9,9 +9,9 @@ REM ***** Calculate OA airflow *****
 REM ***** Set internal variables *****
 A = {device-name}-OAD
 B = {device-name}-ACT-OAD-MIN-POS
-IF {device-name}-ECON-MODE THEN C = {device-name}-MAT-LOOP3 ELSE C = 0
+IF {device-name}-ECON-MODE THEN C = loop3 ELSE C = 0
 IF {device-name}-SF-S THEN H = {device-name}-OAD-MIN-POS ELSE H = 0
-D = {device-name}-MAT-LL-LOOP2
+D = loop2
 E = MAX( B , C , H )
 F = MIN( D , E )
 
