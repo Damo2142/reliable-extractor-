@@ -410,28 +410,59 @@ async def api_download_full(modules: str = "", controller: str = "auto"):
                              headers={"Content-Disposition": "attachment; filename=sbs-full-package.zip"})
 
 
-# --- .bas Editor API (password-protected) ---
+# --- Admin Auth ---
 
-EDITOR_PASSWORD = "sbs2026"
-BAS_DIR = Path(__file__).parent / "programs" / "reliable"
+ADMIN_USER = "Admin"
+ADMIN_PASS = "D@mo2142"
+# Active sessions: set of token strings
+_admin_sessions = set()
+
+import hashlib, time
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class BasSaveRequest(BaseModel):
     filename: str
     code: str
-    password: str
+    token: str = ""
+
+
+def _check_admin(token: str):
+    if token not in _admin_sessions:
+        raise HTTPException(403, "Not authenticated — login required")
+
+
+@app.post("/api/admin/login")
+async def api_admin_login(req: LoginRequest):
+    if req.username != ADMIN_USER or req.password != ADMIN_PASS:
+        raise HTTPException(403, "Invalid credentials")
+    token = hashlib.sha256(f"{time.time()}-{req.username}".encode()).hexdigest()[:32]
+    _admin_sessions.add(token)
+    return {"ok": True, "token": token}
+
+
+# --- .bas Editor API (admin-protected) ---
+
+BAS_DIR = Path(__file__).parent / "programs" / "reliable"
 
 
 @app.get("/api/bas/list")
-async def api_bas_list():
+async def api_bas_list(token: str = ""):
     """List all .bas template files."""
-    files = sorted(f.name for f in BAS_DIR.glob("*.bas") if not f.name.endswith(".bak-20260323"))
+    _check_admin(token)
+    files = sorted(f.name for f in BAS_DIR.glob("*.bas")
+                   if not f.name.endswith(".bak-20260323") and not f.name.endswith(".editor-bak"))
     return {"files": files}
 
 
 @app.get("/api/bas/read")
-async def api_bas_read(filename: str):
+async def api_bas_read(filename: str, token: str = ""):
     """Read a .bas template file."""
+    _check_admin(token)
     path = BAS_DIR / filename
     if not path.exists() or not path.is_file() or ".." in filename:
         raise HTTPException(404, f"File not found: {filename}")
@@ -440,15 +471,13 @@ async def api_bas_read(filename: str):
 
 @app.post("/api/bas/save")
 async def api_bas_save(req: BasSaveRequest):
-    """Save a .bas template file (password-protected)."""
-    if req.password != EDITOR_PASSWORD:
-        raise HTTPException(403, "Wrong password")
+    """Save a .bas template file (admin-protected)."""
+    _check_admin(req.token)
     if ".." in req.filename or "/" in req.filename or "\\" in req.filename:
         raise HTTPException(400, "Invalid filename")
     path = BAS_DIR / req.filename
     if not path.exists():
         raise HTTPException(404, f"File not found: {req.filename}")
-    # Backup before overwrite
     import shutil
     bak = BAS_DIR / (req.filename + ".editor-bak")
     shutil.copy2(path, bak)
@@ -462,8 +491,9 @@ IO_MAP_PATH = Path(__file__).parent / "standard_io_map.json"
 
 
 @app.get("/api/io-map/export")
-async def api_io_map_export():
+async def api_io_map_export(token: str = ""):
     """Export standard I/O map as Excel."""
+    _check_admin(token)
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
@@ -523,8 +553,9 @@ async def api_io_map_export():
 
 
 @app.post("/api/io-map/import")
-async def api_io_map_import(file: UploadFile = File(...)):
+async def api_io_map_import(file: UploadFile = File(...), token: str = ""):
     """Import standard I/O map from Excel. Updates the JSON reference."""
+    _check_admin(token)
     import openpyxl
 
     content = await file.read()
@@ -579,8 +610,9 @@ async def api_io_map_import(file: UploadFile = File(...)):
 
 
 @app.get("/api/io-map/json")
-async def api_io_map_json():
+async def api_io_map_json(token: str = ""):
     """Return the standard I/O map as JSON (for UI display)."""
+    _check_admin(token)
     if not IO_MAP_PATH.exists():
         raise HTTPException(404, "Standard I/O map not found")
     return json.loads(IO_MAP_PATH.read_text())
@@ -675,9 +707,10 @@ tr.unused td{color:#475569;font-style:italic}
     <button class="btn btn-s" onclick="doGenerate()">Download Excel + .bas</button>
     <button class="btn btn-s" style="background:#1e40af" onclick="doGeneratePan()">Download .pan</button>
     <button class="btn btn-s" style="background:#065f46" onclick="doGenerateFull()">Full Package</button>
-    <button class="btn btn-o" onclick="openEditor()">Edit .bas</button>
-    <button class="btn btn-o" style="background:#7c3aed" onclick="exportIOMap()">Export I/O Map</button>
-    <button class="btn btn-o" style="background:#5b21b6" onclick="document.getElementById('ioMapFile').click()">Import I/O Map</button>
+    <button class="btn btn-o" id="btnAdmin" onclick="showAdminLogin()">Admin</button>
+    <button class="btn btn-o" id="btnEditor" style="display:none" onclick="openEditor()">Edit .bas</button>
+    <button class="btn btn-o" id="btnExportIO" style="display:none;background:#7c3aed" onclick="exportIOMap()">Export I/O Map</button>
+    <button class="btn btn-o" id="btnImportIO" style="display:none;background:#5b21b6" onclick="document.getElementById('ioMapFile').click()">Import I/O Map</button>
     <input type="file" id="ioMapFile" accept=".xlsx" style="display:none" onchange="importIOMap(this)">
     <a id="hiddenDownload" style="display:none"></a>
   </div>
@@ -1006,10 +1039,34 @@ async function doGenerateFull(){
   }catch(e){document.getElementById('status').textContent='Error: '+e;}
 }
 
+// --- Admin Auth ---
+var adminToken='';
+
+function showAdminLogin(){
+  document.getElementById('loginModal').classList.add('open');
+  document.getElementById('loginUser').focus();
+}
+async function doAdminLogin(){
+  var u=document.getElementById('loginUser').value;
+  var p=document.getElementById('loginPass').value;
+  try{
+    var res=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    if(!res.ok){document.getElementById('loginError').textContent='Invalid credentials';return;}
+    var d=await res.json();
+    adminToken=d.token;
+    document.getElementById('loginModal').classList.remove('open');
+    document.getElementById('btnAdmin').style.display='none';
+    document.getElementById('btnEditor').style.display='';
+    document.getElementById('btnExportIO').style.display='';
+    document.getElementById('btnImportIO').style.display='';
+    document.getElementById('status').textContent='Admin access granted';
+  }catch(e){document.getElementById('loginError').textContent='Error: '+e;}
+}
+
 // --- I/O Map Export/Import ---
 async function exportIOMap(){
   var a=document.createElement('a');
-  a.href='/api/io-map/export';a.download='SBS-Standard-IO-Map.xlsx';
+  a.href='/api/io-map/export?token='+adminToken;a.download='SBS-Standard-IO-Map.xlsx';
   document.body.appendChild(a);a.click();a.remove();
   document.getElementById('status').textContent='I/O Map exported';
 }
@@ -1018,7 +1075,7 @@ function importIOMap(input){
   var fd=new FormData();
   fd.append('file',input.files[0]);
   document.getElementById('status').textContent='Importing I/O map...';
-  fetch('/api/io-map/import',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+  fetch('/api/io-map/import?token='+adminToken,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
     if(d.ok)document.getElementById('status').textContent='I/O Map imported: '+d.inputs+' inputs, '+d.outputs+' outputs';
     else document.getElementById('status').textContent='Import error: '+JSON.stringify(d);
   }).catch(e=>{document.getElementById('status').textContent='Import error: '+e;});
@@ -1026,7 +1083,7 @@ function importIOMap(input){
 }
 
 // --- .bas Editor ---
-var editorUnlocked=false, editorDirty=false, editorFile='';
+var editorDirty=false, editorFile='';
 
 function openEditor(){
   document.getElementById('editorModal').classList.add('open');
@@ -1038,14 +1095,14 @@ function closeEditor(){
   editorDirty=false;
 }
 async function loadBasList(){
-  var res=await fetch('/api/bas/list');
+  var res=await fetch('/api/bas/list?token='+adminToken);
   var d=await res.json();
   var el=document.getElementById('basFileList');
   el.innerHTML=d.files.map(function(f){return '<div class="bf'+(f===editorFile?' sel':'')+'" onclick="loadBasFile(\\x27'+f+'\\x27)">'+f+'</div>';}).join('');
 }
 async function loadBasFile(fn){
   if(editorDirty&&!confirm('Unsaved changes in '+editorFile+'. Discard?'))return;
-  var res=await fetch('/api/bas/read?filename='+encodeURIComponent(fn));
+  var res=await fetch('/api/bas/read?filename='+encodeURIComponent(fn)+'&token='+adminToken);
   if(!res.ok){document.getElementById('edStatus').textContent='Error loading';return;}
   var d=await res.json();
   editorFile=fn;
@@ -1057,18 +1114,27 @@ async function loadBasFile(fn){
 function onEditorChange(){editorDirty=true;document.getElementById('edStatus').textContent=editorFile+' (modified)';}
 async function saveBasFile(){
   if(!editorFile){document.getElementById('edStatus').textContent='No file selected';return;}
-  var pw=document.getElementById('edPassword').value;
-  if(!pw){document.getElementById('edStatus').textContent='Enter password to save';return;}
   var code=document.getElementById('basEditor').value;
-  var res=await fetch('/api/bas/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:editorFile,code:code,password:pw})});
+  var res=await fetch('/api/bas/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:editorFile,code:code,token:adminToken})});
   if(!res.ok){var e=await res.json();document.getElementById('edStatus').textContent='Error: '+e.detail;return;}
   editorDirty=false;
-  editorUnlocked=true;
   document.getElementById('edStatus').textContent='Saved: '+editorFile;
 }
 
 init();
 </script>
+<div class="modal-bg" id="loginModal">
+  <div style="background:#111827;border:1px solid #334155;border-radius:8px;padding:24px;width:340px">
+    <h3 style="color:#60a5fa;margin-bottom:16px">Admin Login</h3>
+    <input type="text" id="loginUser" placeholder="Username" style="margin-bottom:8px" onkeydown="if(event.key==='Enter')document.getElementById('loginPass').focus()">
+    <input type="password" id="loginPass" placeholder="Password" style="margin-bottom:12px" onkeydown="if(event.key==='Enter')doAdminLogin()">
+    <div id="loginError" style="color:#f87171;font-size:0.8em;margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-p" onclick="doAdminLogin()">Login</button>
+      <button class="btn btn-o" onclick="document.getElementById('loginModal').classList.remove('open')">Cancel</button>
+    </div>
+  </div>
+</div>
 <div class="modal-bg" id="editorModal">
   <div class="modal">
     <div class="modal-hdr">
@@ -1080,7 +1146,6 @@ init();
       <div class="modal-edit">
         <textarea id="basEditor" placeholder="Select a .bas file to edit..." oninput="onEditorChange()"></textarea>
         <div class="modal-foot">
-          <input type="password" id="edPassword" placeholder="Password to save">
           <button class="btn btn-p" style="padding:5px 14px" onclick="saveBasFile()">Save</button>
           <span class="ed-status" id="edStatus">Select a file</span>
         </div>
