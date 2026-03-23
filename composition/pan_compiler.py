@@ -538,18 +538,18 @@ def write_loop_seed(instance: int, name: str, action: str,
                     derivative: float = 0.0,
                     input_type: int = 0x3FF, input_inst: int = 0x3FFFFF,
                     sp_type: int = 0x3FF, sp_inst: int = 0x3FFFFF,
-                    out_type: int = 0x3FF, out_inst: int = 0x3FFFFF) -> bytes:
-    """LOOP seed with input/setpoint/output ObjID references.
-    0x13 = input ref, 0x3C = output ref, 0x6D = setpoint ref (constructed).
-    """
+                    out_type: int = 0x3FF, out_inst: int = 0x3FFFFF,
+                    desc: str = '') -> bytes:
+    """LOOP seed with input/setpoint/output ObjID references."""
     action_val = 0x00 if action == "-" else 0x01
-    # Setpoint ref: constructed format [0C ObjID_4B 19 55 0F]
     sp_objid = (sp_type << 22) | (sp_inst & 0x3FFFFF)
     sp_ref_data = bytes([0x0C]) + struct.pack('>I', sp_objid) + bytes([0x19, 0x55, 0x0F])
+    desc_rec = _rec_desc(desc) if desc else _rec_enum(0x0000, 0x1C, 0x00)
     return _build_block(12, instance, _seed_payload([
         _rec_uint8(0x0000, 0x02, 0x91, action_val),
         _rec_float(0x0000, 0x0E, derivative),
         _rec_objref(0x0000, 0x13, input_type, input_inst),   # input ref
+        desc_rec,                                              # description
         _rec_float(0x0000, 0x1A, 0.0),                       # bias
         _rec_float(0x0000, 0x31, 0.0),                       # output
         _rec_uint8(0x0000, 0x32, 0x91, 0x48),                # output-units
@@ -564,6 +564,7 @@ def write_loop_seed(instance: int, name: str, action: str,
 def write_loop_block(instance: int, name: str, action: int,
                      input_type: int, input_inst: int,
                      sp_type: int = 0x3FF, sp_inst: int = 0x3FFFFF,
+                     out_type: int = 0x3FF, out_inst: int = 0x3FFFFF,
                      setpoint: float = 0.0, output: float = 0.0,
                      p_band: float = 2.0, integral: float = 0.0,
                      derivative: float = 0.0, bias: float = 0.0,
@@ -593,7 +594,7 @@ def write_loop_block(instance: int, name: str, action: int,
         _rec_complex(0x0000, 0x23, bytes([0x05, 0x00])),
         _rec_float(0x0000, 0x31, output),                    # output
         _rec_uint8(0x0000, 0x32, 0x91, output_units),        # output-units
-        _rec_objref(0x0000, 0x3C, 0x3FF, 0x3FFFFF),         # manipulated-var-ref (null)
+        _rec_objref(0x0000, 0x3C, out_type, out_inst),        # manipulated-var-ref (output)
         _rec_uint8(0x0000, 0x48, 0x91, 0x00),
         _rec_mu(name),
         _rec_bool_false(0x0000, 0x51),
@@ -623,25 +624,23 @@ def write_prg_seed(instance: int, name: str, desc: str) -> bytes:
 
 
 def write_prg_block(instance: int, name: str, bytecode: bytes,
-                    enabled: int = 1) -> bytes:
-    """Fully populated PRG block with compiled bytecode.
-    Properties: desc(enum 0) + name + enabled + bytecode record + 2 vendor tail props.
-    bytecode: raw output from cbas_compiler.compile_bas().
-    enabled: 1=yes, 0=no.
-    """
+                    enabled: int = 1, desc: str = '') -> bytes:
+    """Fully populated PRG block with compiled bytecode."""
+    # Append FF end-of-program marker if not already present
+    if bytecode and bytecode[-1] == 0xFF:
+        full_bc = bytecode
+    else:
+        full_bc = bytecode + b'\xFF'
+
     # Build 5-byte FE header: [FE] [size_hi] [size_lo] [checksum] [size_hi]
-    bc_size = len(bytecode)
+    bc_size = len(full_bc)
     size_hi = (bc_size >> 8) & 0xFF
     size_lo = bc_size & 0xFF
-    # Checksum byte — formula not fully reverse-engineered.
-    # Production files use a value here but RC Studio may not validate it.
-    chk = sum(bytecode) & 0xFF
+    chk = 0x00
     fe_header = bytes([0xFE, size_hi, size_lo, chk, size_hi])
 
     # Bytecode record: ctx=0x0004, prop=0x29, tag=0x65
-    # This is a large record — rec_len byte wraps for big programs.
-    # RC Studio reads bytecode to end of payload (last record convention).
-    bc_blob = fe_header + bytecode
+    bc_blob = fe_header + full_bc
     bc_rec = _rec(0x0004, 0x29, 0x65, bc_blob)
 
     # Two vendor tail properties (consistent across all production PRG blocks):
@@ -651,7 +650,7 @@ def write_prg_block(instance: int, name: str, bytecode: bytes,
     tail_0540 = _rec_uint16(0x0005, 0x40, 20000)
 
     return _build_block(16, instance, _seed_payload([
-        _rec_enum(0x0000, 0x1C, 0x00),              # description = enum 0
+        _rec_desc(desc) if desc else _rec_enum(0x0000, 0x1C, 0x00),
         _rec_mu(name),                                # object-name
         _rec_uint8(0x0004, 0x0A, 0x91, enabled),     # program-enabled
         bc_rec,                                        # bytecode
@@ -741,16 +740,14 @@ def _build_table_xy(xy_pairs: list, max_slots: int = 14) -> bytes:
 
 def write_table_block(instance: int, name: str, xy_pairs: list,
                       units: int = 95, max_slots: int = 14, desc: str = '') -> bytes:
-    """Fully populated TABLE block — 5 properties matching A201.pan."""
-    if desc:
-        desc_rec = _rec_desc(desc)
-    else:
-        desc_rec = _rec_enum(0x0000, 0x1C, 0x00)
+    """Fully populated TABLE block — 5 properties matching A201.pan.
+    Always uses enum(0) for description — matches A201 format.
+    """
     xy_data = _build_table_xy(xy_pairs, max_slots)
     num_points = 5
 
     return _build_block(141, instance, _seed_payload([
-        desc_rec,
+        _rec_enum(0x0000, 0x1C, 0x00),
         _rec_mu(name),
         _rec_uint8(0x0000, 0x75, 0x91, units),              # output units
         _rec(0x0004, 0x28, 0x09, xy_data),                   # XY data
@@ -945,14 +942,25 @@ def read_blank_header(blank_path: str) -> tuple:
 # ============================================================
 
 def _write_index_entry(val0: int, type_id: int, offset: int, count: int) -> bytes:
-    """16-byte index entry: 4 x 32-bit as (LE16_hi, LE16_lo) pairs."""
+    """16-byte index entry matching A201.pan format.
+    bytes 0-1: LE16 padding (0 for all except slot 0 which has num_types)
+    bytes 2-3: LE16 val0 (num_types for slot 0, else 0)
+    bytes 4-5: LE16 padding (always 0)
+    bytes 6-7: LE16 type_id
+    bytes 8-9: LE16 always 0
+    bytes 10-11: LE16 offset low word
+    byte 12: offset high byte (page selector)
+    byte 13: always 0
+    bytes 14-15: LE16 count
+    """
     entry = bytearray(16)
     struct.pack_into('<H', entry, 0, (val0 >> 16) & 0xFFFF)
     struct.pack_into('<H', entry, 2, val0 & 0xFFFF)
     struct.pack_into('<H', entry, 4, (type_id >> 16) & 0xFFFF)
     struct.pack_into('<H', entry, 6, type_id & 0xFFFF)
-    struct.pack_into('<H', entry, 8, (offset >> 16) & 0xFFFF)
-    struct.pack_into('<H', entry, 10, offset & 0xFFFF)
-    struct.pack_into('<H', entry, 12, (count >> 16) & 0xFFFF)
-    struct.pack_into('<H', entry, 14, count & 0xFFFF)
+    struct.pack_into('<H', entry, 8, 0)                        # always zero
+    struct.pack_into('<H', entry, 10, offset & 0xFFFF)         # offset low word
+    entry[12] = (offset >> 16) & 0xFF                           # offset high byte
+    entry[13] = 0                                               # always zero
+    struct.pack_into('<H', entry, 14, count & 0xFFFF)          # count
     return bytes(entry)

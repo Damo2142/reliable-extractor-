@@ -196,8 +196,8 @@ def _compile_line(line_num: int, statement: str) -> bytes:
 
     # REM line — PFU format: 1a [length] [text] (length-prefixed, no 02 end marker)
     if statement.upper().startswith('REM'):
-        rem_text = statement[3:].lstrip()
-        rem_bytes = rem_text.encode('ascii', errors='replace')
+        rem_text = statement[4:] if len(statement) > 3 and statement[3] == ' ' else statement[3:]
+        rem_bytes = rem_text.encode('cp1252', errors='replace')
         result.append(0x1a)  # REM opcode
         result.append(len(rem_bytes) & 0xFF)  # length prefix
         result.extend(rem_bytes)
