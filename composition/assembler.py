@@ -13,7 +13,7 @@ Takes a list of module IDs and assembles a complete ControllerConfig:
 
 import json
 from pathlib import Path
-from composition.models import ControllerConfig, TrendDef
+from composition.models import ControllerConfig, TrendDef, ProgramDef
 from composition.module_registry import get_module, get_core_modules
 
 
@@ -54,6 +54,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
 
     # Step 2: Check for conflicts
     errors = []
+    warnings = []
     modules = {mid: get_module(mid) for mid in all_ids}
     for mid, mod in modules.items():
         for conflict in mod.conflicts:
@@ -87,11 +88,31 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
             if pt.row not in input_rows:
                 pt.module = mid
                 input_rows[pt.row] = pt
+            else:
+                existing = input_rows[pt.row]
+                next_row = max(input_rows.keys()) + 1
+                warnings.append(
+                    f"I/O CONFLICT: Input row {pt.row} — '{existing.name}' ({existing.module}) "
+                    f"and '{pt.name}' ({mid}). Moved '{pt.name}' to row {next_row}."
+                )
+                pt.row = next_row
+                pt.module = mid
+                input_rows[next_row] = pt
 
         for pt in mod.outputs:
             if pt.row not in output_rows:
                 pt.module = mid
                 output_rows[pt.row] = pt
+            else:
+                existing = output_rows[pt.row]
+                next_row = max(output_rows.keys()) + 1
+                warnings.append(
+                    f"I/O CONFLICT: Output row {pt.row} — '{existing.name}' ({existing.module}) "
+                    f"and '{pt.name}' ({mid}). Moved '{pt.name}' to row {next_row}."
+                )
+                pt.row = next_row
+                pt.module = mid
+                output_rows[next_row] = pt
 
         for pt in mod.values:
             if pt.instance not in value_instances:
@@ -133,6 +154,47 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     config.schedules = [schedule_instances[i] for i in sorted(schedule_instances.keys())]
     config.system_groups = list(system_group_names.values())
 
+    # Step 3b: Check for orphan point references
+    all_point_names = set()
+    for pt in config.inputs:
+        all_point_names.add(pt.name)
+    for pt in config.outputs:
+        all_point_names.add(pt.name)
+    for pt in config.values:
+        all_point_names.add(pt.name)
+
+    for lp in config.loops:
+        if lp.input_ref and lp.input_ref not in all_point_names:
+            warnings.append(
+                f"ORPHAN REF: Loop {lp.instance} ({lp.name}) input '{lp.input_ref}' "
+                f"has no matching point in Inputs or Values."
+            )
+        if lp.setpoint_ref and lp.setpoint_ref not in all_point_names:
+            warnings.append(
+                f"ORPHAN REF: Loop {lp.instance} ({lp.name}) setpoint '{lp.setpoint_ref}' "
+                f"has no matching point in Values."
+            )
+        if lp.output_ref and lp.output_ref not in all_point_names:
+            warnings.append(
+                f"ORPHAN REF: Loop {lp.instance} ({lp.name}) output '{lp.output_ref}' "
+                f"has no matching point in Outputs."
+            )
+
+    # Step 3c: Generate alarm program and add to programs list
+    from composition.alarm_gen import generate_alarm_bas
+    alarm_code = generate_alarm_bas(config)
+    if alarm_code:
+        # Use instance after all other programs
+        alarm_inst = max((p.instance for p in config.programs), default=0) + 1
+        alarm_prg = ProgramDef(
+            alarm_inst, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
+            "Auto-generated alarm definitions",
+            exec_order=alarm_inst,
+        )
+        alarm_prg.module = "core"
+        config.programs.append(alarm_prg)
+        program_instances[alarm_inst] = alarm_prg
+
     # Step 4: Generate trend logs for all points
     config.trends = _generate_trends(config)
 
@@ -144,20 +206,61 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     # Step 6: Assemble SOO document
     config.soo_document = _assemble_soo(modules, all_ids)
 
+    # Attach warnings
+    config.warnings = warnings
+
     return config
 
 
 def _generate_trends(config: ControllerConfig) -> list:
-    """Generate STL trend logs for all points — standard SBS practice."""
+    """Generate STL trend logs for all points — standard SBS practice.
+    Names truncated to 28 chars (30 max minus '-STL' suffix handled separately).
+    Duplicates get a numeric suffix.
+    """
     trends = []
     stl_num = 1
+    used_names = set()
+
+    # Abbreviations to shorten trend names
+    _abbrev = [
+        ('INITIAL', 'INIT'), ('LOCKOUT', 'LKO'), ('PRESTART', 'PRST'),
+        ('RUNTIME', 'RT'), ('DEFROST', 'DFST'), ('SAFETIES', 'SFTY'),
+        ('SAFETY', 'SFTY'), ('FREEZE', 'FRZ'), ('SETPOINT', 'SP'),
+        ('INTERVAL', 'INTV'), ('INTRVL', 'INTV'), ('COMMAND', 'CMD'),
+        ('STATUS', 'STS'), ('POSITION', 'POS'), ('TEMPERATURE', 'TMP'),
+        ('DISCHARGE', 'DSCH'), ('OCCUPIED', 'OCC'), ('UNOCCUPIED', 'UNOCC'),
+        ('ECONOMIZER', 'ECON'), ('VENTILATION', 'VENT'), ('BYPASS', 'BYP'),
+        ('-MODE-FIRST-ON', '-1ST-ON'), ('-FIRST-START', '-1ST-ST'),
+        ('-FIRST-ON', '-1ST-ON'),
+    ]
+
+    def _make_stl_name(base_name):
+        """Create unique short trend name. Use -T suffix instead of -STL."""
+        name = base_name
+        # Apply abbreviations to shorten
+        for long, short in _abbrev:
+            name = name.replace(long, short)
+        stl_name = f"{name}-T"
+        # Hard cap at 16 chars (leaves room for {device-name}- prefix in 30-char limit)
+        if len(stl_name) > 16:
+            short = name[:14].rstrip('-')  # don't end on a dash
+            stl_name = f"{short}-T"
+        # Deduplicate
+        if stl_name in used_names:
+            for suffix in range(2, 100):
+                candidate = f"{stl_name}{suffix}"
+                if candidate not in used_names:
+                    stl_name = candidate
+                    break
+        used_names.add(stl_name)
+        return stl_name
 
     # Polled trends for physical AI sensors (15-minute interval)
     for inp in config.inputs:
         if inp.point_type == "AI":
             trends.append(TrendDef(
                 instance=stl_num,
-                name=f"{inp.name}-STL",
+                name=_make_stl_name(inp.name),
                 monitored_point=inp.name,
                 trend_type="polled",
                 interval="00:15:00",
@@ -169,7 +272,7 @@ def _generate_trends(config: ControllerConfig) -> list:
         if inp.point_type == "BI":
             trends.append(TrendDef(
                 instance=stl_num,
-                name=f"{inp.name}-STL",
+                name=_make_stl_name(inp.name),
                 monitored_point=inp.name,
                 trend_type="cov",
                 cov_delta=0.2,
@@ -180,7 +283,7 @@ def _generate_trends(config: ControllerConfig) -> list:
     for out in config.outputs:
         trends.append(TrendDef(
             instance=stl_num,
-            name=f"{out.name}-STL",
+            name=_make_stl_name(out.name),
             monitored_point=out.name,
             trend_type="cov",
             cov_delta=0.2,
@@ -191,7 +294,7 @@ def _generate_trends(config: ControllerConfig) -> list:
     for val in config.values:
         trends.append(TrendDef(
             instance=stl_num,
-            name=f"{val.name}-STL",
+            name=_make_stl_name(val.name),
             monitored_point=val.name,
             trend_type="cov",
             cov_delta=0.2,

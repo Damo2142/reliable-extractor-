@@ -80,6 +80,8 @@ _register("safe-filter-ea", safety.build_safe_filter_ea)
 _register("safe-fire-sd", safety.build_safe_fire_sd)
 _register("safe-cond-ovf", safety.build_safe_cond_ovf)
 _register("safe-freeze-dp", safety.build_safe_freeze_dp)
+_register("safe-ea-static", safety.build_safe_ea_static)
+_register("safe-ra-static", safety.build_safe_ra_static)
 
 # Preheat
 _register("ph-hw", preheat.build_ph_hw)

@@ -1,0 +1,586 @@
+#!/usr/bin/env python3
+"""
+SBS .pan Compiler — reads RC-Studio-Output.xlsx, writes fully populated .pan file.
+All block writers are in composition/pan_compiler.py (verified against A201.pan).
+"""
+import struct, zipfile, re, sys
+from io import BytesIO
+from openpyxl import load_workbook
+
+sys.path.insert(0, '/srv/reliable-generator-dev')
+from composition.pan_compiler import (
+    crc16_kermit,
+    write_ai_block, write_ao_block, write_av_block,
+    write_bi_block, write_bo_block, write_bv_block,
+    write_mv_block, write_loop_block, write_prg_block,
+    write_sched_block, write_table_block,
+    write_stl_block, write_notif_cls_seed,
+    extract_nc_groups_from_blank, extract_device_block_from_blank,
+    read_blank_header, _write_index_entry, _build_weekly_schedule,
+)
+from composition.cbas_compiler import compile_bas
+
+# ── Paths ──
+PKG = sys.argv[1] if len(sys.argv) > 1 else "/srv/dfa/drops/sbs-full-package (5).zip"
+BLANK = "/srv/dfa/shared/files/vendors/reliable/blanks/MACH-ProSys-88/MACH-ProSys-88.panx"
+
+# Auto-increment revision: SBS-AHU-FULL-r01.pan, r02, r03...
+import glob
+_base = "/srv/dfa/drops/SBS-AHU-FULL"
+_existing = sorted(glob.glob(f"{_base}-r*.pan"))
+if _existing:
+    _last = _existing[-1]
+    _rev = int(_last.split("-r")[-1].replace(".pan", "")) + 1
+else:
+    _rev = 1
+OUT = f"{_base}-r{_rev:02d}.pan"
+
+# Allow --output override
+for i, arg in enumerate(sys.argv):
+    if arg == '--output' and i + 1 < len(sys.argv):
+        OUT = sys.argv[i + 1]
+
+# ── Unit code lookup (BACnet engineering units) ──
+UNIT_CODES = {
+    '°F': 64, 'degF': 64, 'Deg F': 64,
+    '%': 98, '%RH': 29,
+    'ppm': 96, 'CFM': 84, 'WC': 58, '"WC': 58,
+    'BTU/lb': 117, 'BTUlb': 117,
+    'Volts': 5, 'V': 5,
+    'kW': 42, 'GPM': 85,
+    'minutes': 72, 'min': 72, 'seconds': 73, 'sec': 73,
+    'hours': 71,
+    '': 95, 'no-units': 95, 'None': 95,
+}
+
+
+def unit_code(unit_str):
+    """Convert unit string to BACnet unit enum. Default=95 (no-units)."""
+    return UNIT_CODES.get(str(unit_str or '').strip(), 95)
+
+
+# ── Reliable vendor range code from BACnet unit ──
+UNIT_TO_RANGE = {
+    64: 2,    # °F
+    98: 22,   # %
+    95: 0,    # no-units
+    96: 43,   # ppm
+    84: 15,   # CFM
+    58: 7,    # WC
+    117: 58,  # BTU/lb
+    72: 17,   # minutes
+    29: 22,   # %RH → same as %
+    5: 0,     # Volts
+    42: 0,    # kW
+    85: 0,    # GPM
+    73: 0,    # seconds
+    71: 0,    # hours
+}
+
+
+def range_for_unit(unit_enum):
+    """Get Reliable vendor range code from BACnet unit enum."""
+    return UNIT_TO_RANGE.get(unit_enum, 0)
+
+
+# ── Read Excel from zip ──
+with zipfile.ZipFile(PKG) as z:
+    wb = load_workbook(BytesIO(z.read("RC-Studio-Output.xlsx")), read_only=True)
+    bas_files = {n.split("/")[-1]: z.read(n).decode('utf-8', errors='replace')
+                 for n in z.namelist() if n.endswith(".bas")}
+
+print(f"Read {len(bas_files)} .bas files from package")
+
+
+def read_sheet(name):
+    rows = list(wb[name].iter_rows(values_only=True))
+    for i, row in enumerate(rows):
+        if sum(1 for c in row if c is not None) >= 2:
+            hdr = [str(c).strip() if c else "" for c in row]
+            if any(k in hdr for k in ("Name", "Terminal", "Instance", "Loop",
+                                       "Table", "Schedule", "STL", "PRG#", "Group Name")):
+                return [dict(zip(hdr, r)) for r in rows[i + 1:]
+                        if any(v is not None for v in r)]
+    return []
+
+
+def s(val, default=""):
+    return str(val).strip() if val is not None else default
+
+
+def parse_instance(text):
+    return int(re.sub(r'[^0-9]', '', str(text or "0")))
+
+
+def parse_float(val, default=0.0):
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
+# ── Build name→(type, instance) lookup for point resolution ──
+name_to_obj = {}
+
+for r in read_sheet("Inputs"):
+    if not r.get("Name"):
+        continue
+    pt = s(r.get("Type", "AI"))
+    tid = 0 if pt == "AI" else 3
+    name_to_obj[s(r["Name"])] = (tid, int(r["Terminal"]))
+
+for r in read_sheet("Outputs"):
+    if not r.get("Name"):
+        continue
+    pt = s(r.get("Type", "AO"))
+    tid = 1 if pt == "AO" else 4
+    name_to_obj[s(r["Name"])] = (tid, int(r["Terminal"]))
+
+for r in read_sheet("Values"):
+    if not r.get("Name"):
+        continue
+    pt = s(r.get("Type", "AV"))
+    tid = {"AV": 2, "BV": 5, "MV": 19}.get(pt, 2)
+    name_to_obj[s(r["Name"])] = (tid, parse_instance(r.get("Instance")))
+
+
+def resolve(point_name):
+    if point_name in name_to_obj:
+        return name_to_obj[point_name]
+    return (0x3FF, 0)
+
+
+# ── Build blocks by type ──
+blocks = {}
+errors = []
+
+
+def fill_gaps(by_inst, filler_fn):
+    """Given dict {instance: block_bytes}, fill gaps from 1..max with filler_fn(inst)."""
+    if not by_inst:
+        return []
+    max_inst = max(by_inst.keys())
+    result = []
+    for i in range(1, max_inst + 1):
+        if i in by_inst:
+            result.append(by_inst[i])
+        else:
+            result.append(filler_fn(i))
+    return result
+
+
+# ── NC_GROUP: copy from blank ──
+blocks[15] = extract_nc_groups_from_blank(BLANK)
+print(f"  NC_GROUP: {len(blocks[15])} from blank")
+
+# ── Inputs → AI, BI (shared terminal numbering) ──
+input_by_terminal = {}  # terminal -> block_bytes
+for r in read_sheet("Inputs"):
+    if not r.get("Name"):
+        continue
+    inst = int(r["Terminal"])
+    name = s(r["Name"])
+    pt = s(r.get("Type", "AI"))
+    u = unit_code(r.get("Units"))
+    rc = range_for_unit(u)
+    if pt == "AI":
+        input_by_terminal[inst] = (0, write_ai_block(inst, name, units=u, range_code=rc))
+    elif pt == "BI":
+        input_by_terminal[inst] = (3, write_bi_block(inst, name, range_code=0))
+
+# Inputs share terminal numbers — AI and BI on same row numbering
+# Fill gaps with AI filler blocks (type doesn't matter for empty slots)
+if input_by_terminal:
+    max_term = max(input_by_terminal.keys())
+    ai_by_inst = {}
+    bi_by_inst = {}
+    for inst in range(1, max_term + 1):
+        if inst in input_by_terminal:
+            tid, blk = input_by_terminal[inst]
+            if tid == 0:
+                ai_by_inst[inst] = blk
+            else:
+                bi_by_inst[inst] = blk
+        else:
+            # Filler — use AI since it's the default input type
+            ai_by_inst[inst] = write_ai_block(inst, '', units=95, range_code=0)
+    if ai_by_inst:
+        blocks[0] = [ai_by_inst[i] for i in sorted(ai_by_inst.keys())]
+        print(f"  AI: {len(blocks[0])} blocks ({sum(1 for i in ai_by_inst if i in {t for t,_ in input_by_terminal.values() if t==0})} real)")
+    if bi_by_inst:
+        blocks[3] = [bi_by_inst[i] for i in sorted(bi_by_inst.keys())]
+        print(f"  BI: {len(blocks[3])} blocks")
+
+# ── Outputs → AO, BO (shared terminal numbering) ──
+output_by_terminal = {}
+for r in read_sheet("Outputs"):
+    if not r.get("Name"):
+        continue
+    inst = int(r["Terminal"])
+    name = s(r["Name"])
+    pt = s(r.get("Type", "AO"))
+    u = unit_code(r.get("Units"))
+    min_v = parse_float(r.get("Min V"), 2.0)
+    max_v = parse_float(r.get("Max V"), 10.0)
+    if pt == "AO":
+        output_by_terminal[inst] = (1, write_ao_block(inst, name, units=u, range_code=range_for_unit(u), min_v=min_v, max_v=max_v))
+    elif pt == "BO":
+        output_by_terminal[inst] = (4, write_bo_block(inst, name, range_code=2))
+
+if output_by_terminal:
+    max_term = max(output_by_terminal.keys())
+    ao_by_inst = {}
+    bo_by_inst = {}
+    for inst in range(1, max_term + 1):
+        if inst in output_by_terminal:
+            tid, blk = output_by_terminal[inst]
+            if tid == 1:
+                ao_by_inst[inst] = blk
+            else:
+                bo_by_inst[inst] = blk
+        else:
+            ao_by_inst[inst] = write_ao_block(inst, '', units=95, range_code=0)
+    if ao_by_inst:
+        blocks[1] = [ao_by_inst[i] for i in sorted(ao_by_inst.keys())]
+        print(f"  AO: {len(blocks[1])} blocks")
+    if bo_by_inst:
+        blocks[4] = [bo_by_inst[i] for i in sorted(bo_by_inst.keys())]
+        print(f"  BO: {len(blocks[4])} blocks")
+
+# ── Values → AV, BV, MV (separate instance numbering per type) ──
+av_by_inst = {}
+bv_by_inst = {}
+mv_by_inst = {}
+for r in read_sheet("Values"):
+    if not r.get("Name"):
+        continue
+    inst = parse_instance(r.get("Instance"))
+    name = s(r["Name"])
+    pt = s(r.get("Type", "AV"))
+    u = unit_code(r.get("Units"))
+    states = s(r.get("Range / States"))
+    dv = r.get("Default Value")
+
+    if pt == "AV":
+        pv = parse_float(dv, 0.0)
+        rc = range_for_unit(u)
+        av_by_inst[inst] = write_av_block(inst, name, present_value=pv, units=u, range_code=rc)
+    elif pt == "BV":
+        pv = 1 if str(dv).strip().lower() in ('1', 'true', 'on', 'active') else 0
+        bv_by_inst[inst] = write_bv_block(inst, name, present_value=pv)
+    elif pt == "MV":
+        pv = 1
+        if dv is not None:
+            dv_str = str(dv).strip()
+            try:
+                pv = int(float(dv_str))
+            except ValueError:
+                if states:
+                    for part in states.split('/'):
+                        part = part.strip()
+                        if '-' in part:
+                            num_s, name_s = part.split('-', 1)
+                            if name_s.strip().lower() == dv_str.lower():
+                                try:
+                                    pv = int(num_s.strip())
+                                except ValueError:
+                                    pass
+                                break
+        mv_by_inst[inst] = write_mv_block(inst, name, states_desc=states if states else '',
+                                          present_value=pv)
+
+av_list = fill_gaps(av_by_inst, lambda i: write_av_block(i, '', units=95, range_code=0))
+bv_list = fill_gaps(bv_by_inst, lambda i: write_bv_block(i, ''))
+mv_list = fill_gaps(mv_by_inst, lambda i: write_mv_block(i, '', states_desc=''))
+
+if av_list:
+    blocks[2] = av_list
+    print(f"  AV: {len(av_list)} blocks ({len(av_by_inst)} real, {len(av_list)-len(av_by_inst)} filler)")
+if bv_list:
+    blocks[5] = bv_list
+    print(f"  BV: {len(bv_list)} blocks ({len(bv_by_inst)} real, {len(bv_list)-len(bv_by_inst)} filler)")
+if mv_list:
+    blocks[19] = mv_list
+    print(f"  MV: {len(mv_list)} blocks ({len(mv_by_inst)} real, {len(mv_list)-len(mv_by_inst)} filler)")
+
+# ── Loops ──
+loop_by_inst = {}
+for r in read_sheet("Loops"):
+    if not r.get("Name"):
+        continue
+    inst = parse_instance(r.get("Loop"))
+    name = "{device-name}-" + s(r["Name"])
+    action_str = s(r.get("Action", "+"))
+    action = 0 if action_str == "-" else 1
+    p_band = parse_float(r.get("P Band"), 2.0)
+    integral = parse_float(r.get("Integral"), 0.0)
+    derivative = parse_float(r.get("D"), 0.0)
+    setpoint_name = s(r.get("Setpoint"))
+    input_name = s(r.get("Input"))
+    in_type, in_inst = resolve(input_name)
+    sp_type, sp_inst = resolve(setpoint_name)
+    loop_by_inst[inst] = write_loop_block(
+        inst, name, action,
+        input_type=in_type, input_inst=in_inst,
+        sp_type=sp_type, sp_inst=sp_inst,
+        p_band=p_band, integral=integral, derivative=derivative,
+    )
+
+loop_list = fill_gaps(loop_by_inst, lambda i: write_loop_block(
+    i, '', action=1, input_type=0x3FF, input_inst=0x3FFFFF))
+if loop_list:
+    blocks[12] = loop_list
+    print(f"  LOOP: {len(loop_list)} blocks ({len(loop_by_inst)} real, {len(loop_list)-len(loop_by_inst)} filler)")
+
+# ── DEVICE: copy from blank ──
+blocks[8] = [extract_device_block_from_blank(BLANK)]
+print(f"  DEVICE: 1 from blank")
+
+# ── Schedules ──
+sched_by_inst = {}
+for r in read_sheet("Schedules"):
+    if not r.get("Name"):
+        continue
+    inst = parse_instance(r.get("Schedule"))
+    name = s(r["Name"])
+    sched_by_inst[inst] = write_sched_block(inst, name, default_state=0)
+
+sched_list = fill_gaps(sched_by_inst, lambda i: write_sched_block(i, ''))
+if sched_list:
+    blocks[17] = sched_list
+    print(f"  SCHED: {len(sched_list)} blocks ({len(sched_by_inst)} real, {len(sched_list)-len(sched_by_inst)} filler)")
+
+# ── Programs (with bytecode) ──
+prg_by_inst = {}
+for r in read_sheet("Programs"):
+    if not r.get("Name"):
+        continue
+    inst = parse_instance(r.get("PRG#"))
+    name = s(r["Name"])
+    filename = s(r.get("Filename"))
+    enabled = 1 if s(r.get("Enabled", "Yes")).lower() in ('yes', '1', 'true') else 0
+
+    if filename and filename in bas_files:
+        try:
+            bc = compile_bas(bas_files[filename])
+            prg_by_inst[inst] = write_prg_block(inst, name, bc, enabled=enabled)
+        except Exception as e:
+            errors.append(f"PRG{inst} compile error ({filename}): {e}")
+            prg_by_inst[inst] = write_prg_block(inst, name, b'\x09', enabled=enabled)
+    else:
+        prg_by_inst[inst] = write_prg_block(inst, name, b'\x09', enabled=enabled)
+
+prg_list = fill_gaps(prg_by_inst, lambda i: write_prg_block(i, '', b'\x09', enabled=0))
+if prg_list:
+    blocks[16] = prg_list
+    print(f"  PRG: {len(prg_list)} blocks ({len(prg_by_inst)} real, {len(prg_list)-len(prg_by_inst)} filler)")
+
+# ── Tables → type 141 ──
+tbl_blocks = []
+for r in read_sheet("Tables"):
+    if not r.get("Name"):
+        continue
+    inst = parse_instance(r.get("Table"))
+    name = "{device-name}-" + s(r["Name"])
+    u = unit_code(r.get("Output Units"))
+    # Parse XY data points — try X1/Y1 columns first, fall back to Data Points string
+    xy_pairs = []
+    for pi in range(1, 20):
+        xk, yk = f"X{pi}", f"Y{pi}"
+        xv, yv = r.get(xk), r.get(yk)
+        if xv is not None and yv is not None:
+            try:
+                xy_pairs.append((float(xv), float(yv)))
+            except (ValueError, TypeError):
+                pass
+    if not xy_pairs:
+        dp = s(r.get("Data Points"))
+        if dp:
+            for line in dp.split("\n"):
+                line = line.strip()
+                if "→" in line or "->" in line:
+                    sep = "→" if "→" in line else "->"
+                    parts = line.split(sep)
+                    try:
+                        xy_pairs.append((float(parts[0].strip()), float(parts[1].strip())))
+                    except (ValueError, IndexError):
+                        pass
+    tbl_blocks.append(write_table_block(inst, name, xy_pairs=xy_pairs, units=u))
+
+if tbl_blocks:
+    blocks[141] = tbl_blocks
+    print(f"  TABLE: {len(tbl_blocks)} blocks")
+
+# ── NOTIF_CLS — one per system group ──
+notif_blocks = []
+notif_inst = 1
+for r in read_sheet("System Groups"):
+    if not r.get("Group Name"):
+        continue
+    name = s(r["Group Name"])
+    notif_blocks.append(write_notif_cls_seed(notif_inst, name))
+    notif_inst += 1
+
+if notif_blocks:
+    blocks[26] = notif_blocks
+    print(f"  NOTIF_CLS: {len(notif_blocks)} blocks")
+
+# ── Trends → STL ──
+stl_blocks = []
+for r in read_sheet("Trends"):
+    if not r.get("Name"):
+        continue
+    inst = parse_instance(r.get("STL"))
+    name = s(r["Name"])
+    mon_point = s(r.get("Monitored Point"))
+    trend_type = s(r.get("Type", "Polled"))
+    interval_raw = r.get("Interval/COV Delta", "00:15:00")
+    buffer_size = int(r.get("Buffer", 512) or 512)
+
+    mon_tid, mon_inst = resolve(mon_point)
+
+    if trend_type.lower() == "polled":
+        logging_type = 1
+        cov_increment = 0.2
+        iv = str(interval_raw or "00:15:00")
+        parts = iv.split(":")
+        try:
+            log_interval = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        except (ValueError, IndexError):
+            log_interval = 900
+    else:
+        logging_type = 2
+        log_interval = 0
+        try:
+            cov_increment = float(interval_raw)
+        except (ValueError, TypeError):
+            cov_increment = 0.2
+
+    stl_blocks.append(write_stl_block(
+        inst, name, logging_type,
+        mon_tid, mon_inst,
+        buffer_size, log_interval, cov_increment,
+    ))
+
+if stl_blocks:
+    blocks[20] = stl_blocks
+    print(f"  STL: {len(stl_blocks)} blocks")
+
+
+# ══════════════════════════════════════════════════════════════
+# Assemble .pan file
+# ══════════════════════════════════════════════════════════════
+
+TYPE_ORDER = [15, 0, 1, 2, 3, 4, 5, 19, 12, 8, 17, 16, 20, 141, 26]
+present = [t for t in TYPE_ORDER if t in blocks]
+num_types = len(present)
+blocks_start = 0x0400 + num_types * 0x40 + 6
+
+type_offsets = {}
+cursor = blocks_start
+for tid in present:
+    type_offsets[tid] = cursor
+    for blk in blocks[tid]:
+        cursor += len(blk)
+
+dev_block = blocks[8][0]
+dev_objid = struct.unpack_from('>I', dev_block, 6)[0] & 0x3FFFFF
+blank_hdr = read_blank_header(BLANK)
+
+fd = bytearray()
+hdr = bytearray(12)
+struct.pack_into('<I', hdr, 0, 0x0023BAC0)
+struct.pack_into('<I', hdr, 4, dev_objid)
+struct.pack_into('<I', hdr, 8, blank_hdr[2])
+fd += hdr
+fd += bytes(0x0400 - 12)
+
+for idx, tid in enumerate(present):
+    val0 = num_types if idx == 0 else 0
+    fd += _write_index_entry(val0, tid, type_offsets[tid], len(blocks[tid]))
+    fd += bytes(0x40 - 16)
+
+fd += bytes(6)
+
+for tid in present:
+    for blk in blocks[tid]:
+        fd += blk
+
+pan_data = bytes(fd)
+with open(OUT, "wb") as f:
+    f.write(pan_data)
+
+
+# ══════════════════════════════════════════════════════════════
+# Verify
+# ══════════════════════════════════════════════════════════════
+
+TYPE_NAMES = {
+    0: "AI", 1: "AO", 2: "AV", 3: "BI", 4: "BO", 5: "BV",
+    8: "DEV", 12: "LOOP", 15: "NC", 16: "PRG", 17: "SCH",
+    19: "MV", 20: "STL", 26: "NOTIF", 141: "TBL",
+}
+
+
+def read_index(d, o):
+    v = []
+    for i in range(4):
+        hi = struct.unpack_from('<H', d, o + i * 4)[0]
+        lo = struct.unpack_from('<H', d, o + i * 4 + 2)[0]
+        v.append((hi << 16) | lo)
+    return v
+
+
+print(f"\n{'=' * 60}")
+print(f"Output: {OUT}")
+print(f"Size: {len(pan_data):,} bytes")
+
+first = read_index(pan_data, 0x0400)
+crc_ok = 0
+crc_total = 0
+
+pos = first[2]
+for j in range(first[3]):
+    if pos + 12 > len(pan_data):
+        break
+    sz = struct.unpack_from('<H', pan_data, pos)[0]
+    tot = sz + 2
+    if pos + tot > len(pan_data):
+        break
+    if crc16_kermit(pan_data[pos + 12:pos + tot]) == struct.unpack_from('>H', pan_data, pos + 10)[0]:
+        crc_ok += 1
+    crc_total += 1
+    pos += tot
+
+print(f"  {TYPE_NAMES.get(first[1], '?'):5s}  count={first[3]:3d}")
+
+for i in range(1, first[0]):
+    e = read_index(pan_data, 0x0440 + (i - 1) * 0x40)
+    pos = e[2]
+    for j in range(e[3]):
+        if pos + 12 > len(pan_data):
+            break
+        sz = struct.unpack_from('<H', pan_data, pos)[0]
+        tot = sz + 2
+        if pos + tot > len(pan_data):
+            break
+        if crc16_kermit(pan_data[pos + 12:pos + tot]) == struct.unpack_from('>H', pan_data, pos + 10)[0]:
+            crc_ok += 1
+        crc_total += 1
+        pos += tot
+    print(f"  {TYPE_NAMES.get(e[1], '?'):5s}  count={e[3]:3d}")
+
+total_blocks = crc_total
+print(f"\nCRC: {crc_ok}/{crc_total} blocks valid")
+
+if errors:
+    print(f"\nErrors ({len(errors)}):")
+    for e in errors:
+        print(f"  {e}")
+
+if crc_ok == crc_total:
+    print("\nALL CRC CHECKS PASSED")
+
+print(f"\nTotal blocks: {total_blocks}")
+print(f"File size: {len(pan_data):,} bytes")
+print(f"\nReady: {OUT}")

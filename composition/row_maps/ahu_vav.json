@@ -57,7 +57,10 @@
     "41": { "name": "FREEZE-DP",    "type": "BI", "range": "Normal/Alarm",        "desc": "Freeze Stat DP (coil face)",            "module": "safe-freeze-dp" },
     "42": { "name": "DX-HP",        "type": "BI", "range": "Normal/Alarm",        "desc": "DX High Pressure Switch",               "module": "clg-dx" },
     "43": { "name": "DX-LP",        "type": "BI", "range": "Normal/Alarm",        "desc": "DX Low Pressure Switch",                "module": "clg-dx" },
-    "44": { "name": "GAS-PRSR",     "type": "BI", "range": "Normal/Alarm",        "desc": "Gas Pressure Switch",                   "module": "htg-gas" }
+    "44": { "name": "GAS-PRSR",     "type": "BI", "range": "Normal/Alarm",        "desc": "Gas Pressure Switch",                   "module": "htg-gas" },
+    "45": { "name": "PH-PMP-S",     "type": "BI", "range": "Off/On",              "desc": "Preheat Pump Status",                   "module": "ph-hw" },
+    "46": { "name": "PH-LAT",       "type": "AI", "range": "10K -40 ->250",        "desc": "Preheat Leaving Air Temp (when both htg+ph active)", "module": "ph-hw", "units": "°F", "_note": "Auto-assigned when row 8 conflict" },
+    "47": { "name": "RA-HPS",       "type": "BI", "range": "Normal/Alarm",        "desc": "Return Air High Static Switch",         "module": "safe-ra-static" }
   },
 
   "outputs": {

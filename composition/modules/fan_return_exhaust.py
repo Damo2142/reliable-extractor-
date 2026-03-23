@@ -110,7 +110,6 @@ def build_ef_vfd():
 
         inputs=[
             InputPoint(2,  "EF-S",      "BI", "Off/On",         "Exhaust Fan Status"),
-            InputPoint(15, "EA-HPS",    "BI", "Normal/Alarm",   "Exhaust Air High Static Switch"),
             InputPoint(22, "EA-CFM",    "AI", "Table5",   "Exhaust Airflow", "CFM", "EA-VEL-TBL"),
             InputPoint(23, "EA-DMP-ES", "BI", "Close/Open",     "Exhaust Damper End Switch"),
         ],
@@ -147,9 +146,6 @@ def build_ef_vfd():
             ProgramDef(37, "EF-PRG", "PRG37-EF.bas", "", True,
                        "Exhaust fan VFD with airflow tracking",
                        exec_order=37),
-            ProgramDef(30, "EA-HPS-PRG", "PRG30-EA-HPS.bas", "", True,
-                       "Exhaust air high static pressure cutout",
-                       exec_order=30),
         ],
 
         soo_paragraph="""An exhaust fan shall track outside airflow to maintain building pressure
@@ -176,7 +172,6 @@ def build_ef_cs():
 
         inputs=[
             InputPoint(2,  "EF-S",      "BI", "Off/On",       "Exhaust Fan Status"),
-            InputPoint(15, "EA-HPS",    "BI", "Normal/Alarm", "Exhaust Air High Static Switch"),
             InputPoint(23, "EA-DMP-ES", "BI", "Close/Open",   "Exhaust Damper End Switch"),
         ],
 
@@ -193,9 +188,6 @@ def build_ef_cs():
             ProgramDef(37, "EF-PRG", "PRG37-EF-CS.bas", "", True,
                        "Exhaust fan constant speed",
                        exec_order=37),
-            ProgramDef(30, "EA-HPS-PRG", "PRG30-EA-HPS.bas", "", True,
-                       "Exhaust air high static pressure cutout",
-                       exec_order=30),
         ],
 
         soo_paragraph="""An exhaust fan shall operate at constant speed. The exhaust air damper

@@ -1,0 +1,74 @@
+================================================================================
+PAN vs EXCEL VERIFICATION REPORT
+PAN file: /srv/dfa/drops/SBS-AHU-FINAL-r02.pan
+Excel:    /tmp/pan_verify/RC-Studio-Output.xlsx
+================================================================================
+
+Total blocks in .pan: 599
+  AI: 23
+  AO: 14
+  AV: 227
+  BI: 15
+  BO: 5
+  BV: 38
+  DEV: 1
+  LOOP: 12
+  MV: 2
+  NC_GROUP: 3
+  NOTIF_CLS: 9
+  PRG: 51
+  SCHED: 1
+  STL: 193
+  TABLE: 5
+
+Items checked:
+  Inputs: 33
+  Outputs: 15
+  Values: 145
+  Loops: 9
+  Programs: 29
+  Tables: 4
+  Trends: 193
+  Schedules: 1
+  SystemGroups: 9
+
+Block counts — .pan vs Excel:
+  AI: 23 pan vs 18 excel (5 reserved terminals with no type in Excel)
+  AO: 14 pan vs 10 excel (4 reserved terminals with no type in Excel)
+  AV: 227 pan vs 105 named excel (122 unnamed/reserved AV slots)
+  BI: 15 pan vs 15 excel (match)
+  BO: 5 pan vs 5 excel (match)
+  BV: 38 pan vs 38 excel (match)
+  MV: 2 pan vs 2 excel (match)
+  LOOP: 12 pan vs 9 excel + 3 empty (match)
+  PRG: 51 pan vs 29 named + 22 empty (match)
+  STL: 193 pan vs 193 excel (match)
+  TABLE: 5 pan vs 4 named + 1 empty (match)
+  SCHED: 1 pan vs 1 excel (match)
+  NOTIF_CLS: 9 pan vs 9 excel (match)
+  NC_GROUP: 3 pan (internal, not in Excel)
+  DEV: 1 pan (device block, not in Excel)
+
+TOTAL MISMATCHES: 1 real + 13 naming convention notes
+
+=== REAL MISMATCHES ===
+
+--- Tables (1 issues) ---
+  [TBL3 (OA-VEL-TBL)] output_units: expected=FPM(77)  actual=no-units(95)
+
+=== NAMING CONVENTION NOTES (not errors) ===
+Excel uses short names for Loops/Tables; .pan prepends {device-name}- prefix.
+This is expected behavior — the compiler adds the device prefix.
+  [LOOP1 (ACT-DSP-LOOP)] ACT-DSP-LOOP (Excel short) → {device-name}-ACT-DSP-LOOP (pan has device prefix)
+  [LOOP2 (MAT-LL-LOOP)] MAT-LL-LOOP (Excel short) → {device-name}-MAT-LL-LOOP (pan has device prefix)
+  [LOOP3 (MAT-LOOP)] MAT-LOOP (Excel short) → {device-name}-MAT-LOOP (pan has device prefix)
+  [LOOP5 (EA-FLOW-LOOP)] EA-FLOW-LOOP (Excel short) → {device-name}-EA-FLOW-LOOP (pan has device prefix)
+  [LOOP7 (HW-VLV-LOOP)] HW-VLV-LOOP (Excel short) → {device-name}-HW-VLV-LOOP (pan has device prefix)
+  [LOOP8 (CHW-VLV-LOOP)] CHW-VLV-LOOP (Excel short) → {device-name}-CHW-VLV-LOOP (pan has device prefix)
+  [LOOP9 (FRZ-LOOP)] FRZ-LOOP (Excel short) → {device-name}-FRZ-LOOP (pan has device prefix)
+  [LOOP11 (OA-BYP-LOOP)] OA-BYP-LOOP (Excel short) → {device-name}-OA-BYP-LOOP (pan has device prefix)
+  [LOOP12 (EA-BYP-LOOP)] EA-BYP-LOOP (Excel short) → {device-name}-EA-BYP-LOOP (pan has device prefix)
+  [TBL1 (CO2-TBL)] CO2-TBL (Excel short) → {device-name}-CO2-TBL (pan has device prefix)
+  [TBL2 (SA-DSP-TBL)] SA-DSP-TBL (Excel short) → {device-name}-SA-DSP-TBL (pan has device prefix)
+  [TBL3 (OA-VEL-TBL)] OA-VEL-TBL (Excel short) → {device-name}-OA-VEL-TBL (pan has device prefix)
+  [TBL5 (EA-VEL-TBL)] EA-VEL-TBL (Excel short) → {device-name}-EA-VEL-TBL (pan has device prefix)

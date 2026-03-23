@@ -4,7 +4,7 @@ REM  {device-name} — Safety Shutdown Aggregation
 REM ======================================================================
 
 REM ***** Trigger safety alarm if any safety is active *****
-IF MAX( NOT {device-name}-LTC-SD-CMD , NOT {device-name}-SA-HPS-SD-CMD , NOT {device-name}-EA-HPS-SD-CMD ) OR {device-name}-SMOKE THEN START {device-name}-SAFETY-SD-ALARM
+IF MAX( NOT {device-name}-LTC-SD-CMD , NOT {device-name}-SA-HPS-SD-CMD , NOT {device-name}-EA-HPS-SD-CMD , NOT {device-name}-RA-HPS-SD-CMD ) OR {device-name}-SMOKE THEN START {device-name}-SAFETY-SD-ALARM
 
 REM ***** Reset safeties on command *****
 IF+ {device-name}-RESET-SAFETIES OR {parent}BV20 THEN STOP {device-name}-SAFETY-SD-ALARM

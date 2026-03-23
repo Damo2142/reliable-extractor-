@@ -126,6 +126,7 @@ def build():
             ValuePoint(114,"EA-HPS-SD-CMD",   "BV", True,   "EA HPS Shutdown Command"),
             ValuePoint(125,"LTC-SD-CMD",      "BV", True,   "LTC Shutdown Command"),
             ValuePoint(132,"SA-HPS-SD-CMD",   "BV", True,   "SA HPS Shutdown Command"),
+            ValuePoint(133,"RA-HPS-SD-CMD",   "BV", True,   "RA HPS Shutdown Command"),
             ValuePoint(135,"SAFETY-SD-ALARM", "BV", False,  "Safety Shutdown Alarm Active"),
 
             # AHU status

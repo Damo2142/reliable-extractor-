@@ -1,0 +1,500 @@
+================================================================================
+PRODUCTION BLOCK REFERENCE — A201.pan (Xenia AHU201)
+Source: /srv/dfa/shared/files/reference/xenia/A201.pan
+File size: 1065283 bytes (0x104143)
+Total blocks: 354
+
+Block counts:
+  AI           (type   0):    21 blocks
+  AO           (type   1):     9 blocks
+  AV           (type   2):    99 blocks
+  BI           (type   3):    13 blocks
+  BO           (type   4):     3 blocks
+  BV           (type   5):    30 blocks
+  DEVICE       (type   8):     1 blocks
+  LOOP         (type  12):     9 blocks
+  NC_GROUP     (type  15):     3 blocks
+  SCHED        (type  17):     1 blocks
+  MV           (type  19):     2 blocks
+  STL          (type  20):   131 blocks
+  BLOCK_128    (type 128):     1 blocks
+  BLOCK_134    (type 134):     6 blocks
+  TABLE        (type 141):     5 blocks
+  BLOCK_143    (type 143):    20 blocks
+
+NOTE: No PRG or NOTIF_CLS blocks in BACnet block section.
+      PRG bytecode stored in RC Studio project data section
+      (972KB JSON+binary after offset 0x016B38).
+================================================================================
+
+================================================================================
+AV (type 2) — instance 2
+Total block size: 243 bytes
+Payload size: 231 bytes
+Properties: 21
+Size LE=241  CRC=0x90DB
+
+Raw hex (first 48 bytes):
+  0000: F1 00 00 00 00 F1 00 80 00 02 90 DB 00 00 00 08   ................
+  0010: 00 00 00 11 21 01 00 0B 00 00 00 16 44 3D CC CC   ....!.......D=..
+  0020: CD 00 0B 00 00 00 19 44 00 00 00 00 00 08 00 00   .......D........
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x11    uint8v    buffer-size             1 (0x01)
+0x0000  0x16    float     increment               0.100000
+0x0000  0x19    float     prop_0x19               0.000000
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x2D    float     max-value               1000.000000
+0x0000  0x34    complex   prop_0x34               complex[06 C0]
+0x0000  0x3B    float     min-value               -1000.000000
+0x0000  0x48    uint8     logging-type            0 (0x00)
+0x0000  0x4D    string    object-name             "{device-name}-NET-OAH"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x55    float     present-value           73.000000
+0x0000  0x57    0x00      prop_0x57               raw[00 00 00 00 00 00 00 00 44 42 92 00 00 00 00 00 00 00 00]
+0x0000  0x68    float     relinquish-default      0.000000
+0x0000  0x71    uint8v    status-flags            0 (0x00)
+0x0000  0x75    uint8     units                   98 (0x62)
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0001  0x62    bool_F    [0001]prop_0x62         FALSE
+0x0001  0x64    uint8v    [0001]prop_0x64         0 (0x00)
+0x0004  0x1D    uint8     [0004]range             22 (0x16)
+
+
+================================================================================
+BV (type 5) — instance 22
+Total block size: 251 bytes
+Payload size: 239 bytes
+Properties: 23
+Size LE=249  CRC=0x25BA
+
+Raw hex (first 48 bytes):
+  0000: F9 00 00 00 00 F9 01 40 00 16 25 BA 00 00 00 08   .......@..%.....
+  0010: 00 00 00 06 91 01 00 08 00 00 00 0F 21 AB 00 08   ............!...
+  0020: 00 00 00 11 21 01 00 08 00 00 00 1C 71 00 00 0B   ....!.......q...
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x06    uint8     prop_0x06               1 (0x01)
+0x0000  0x0F    uint8v    prop_0x0F               171 (0xAB)
+0x0000  0x11    uint8v    buffer-size             1 (0x01)
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x21    0x24      prop_0x21               raw[01 98 75 5B]
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x42    uint8v    prop_0x42               0 (0x00)
+0x0000  0x43    uint8v    prop_0x43               0 (0x00)
+0x0000  0x48    uint8     logging-type            0 (0x00)
+0x0000  0x4D    string    object-name             "{device-name}-NET-OCC-CMD"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x55    uint8     present-value           1 (0x01)
+0x0000  0x57    0x00      prop_0x57               raw[00 00 00 00 00 00 00 00 91 01 00 00 00 00 00 00]
+0x0000  0x68    uint8     relinquish-default      0 (0x00)
+0x0000  0x71    uint8v    status-flags            0 (0x00)
+0x0000  0x73    datetime  prop_0x73               datetime[7B 04 07 05 B4 0C 26 39 2A]
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0001  0x62    bool_F    [0001]prop_0x62         FALSE
+0x0001  0x64    uint8v    [0001]prop_0x64         0 (0x00)
+0x0004  0x1D    uint8     [0004]range             17 (0x11)
+0x0004  0x3B    bool_T    [0004]min-value         TRUE
+0x0004  0x58    uint8v    [0004]prop_0x58         100 (0x64)
+
+
+================================================================================
+MV (type 19) — instance 20
+Total block size: 296 bytes
+Payload size: 284 bytes
+Properties: 17
+Size LE=294  CRC=0x2475
+
+Raw hex (first 48 bytes):
+  0000: 26 01 00 00 01 26 04 C0 00 14 24 75 00 00 00 08   &....&....$u....
+  0010: 00 00 00 11 21 01 00 3A 00 00 00 1C 75 32 00 31   ....!..:....u2.1
+  0020: 2D 56 65 6E 74 69 6C 61 74 69 6F 6E 2F 32 2D 43   -Ventilation/2-C
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x11    uint8v    buffer-size             1 (0x01)
+0x0000  0x1C    string    description             "1-Ventilation/2-Cool/3-Reheat/4-Heat/5-Initialize"
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x48    uint8     logging-type            0 (0x00)
+0x0000  0x4D    string    object-name             "{device-name}-HVAC-MODE"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x55    uint8v    present-value           2 (0x02)
+0x0000  0x57    0x00      prop_0x57               raw[00 00 00 00 00 00 00 00 21 02 00 00 00 00 00 00]
+0x0000  0x68    uint8v    relinquish-default      1 (0x01)
+0x0000  0x6E    string    prop_0x6E               "Ventilation"
+0x0000  0x71    uint8v    status-flags            0 (0x00)
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0001  0x62    bool_F    [0001]prop_0x62         FALSE
+0x0001  0x64    uint8v    [0001]prop_0x64         0 (0x00)
+0x0004  0x19    ObjID     [0004]prop_0x19         type1023:4194303 + [1B 3F FF FF]
+0x0004  0x1D    uint8     [0004]range             17 (0x11)
+
+
+================================================================================
+AI (type 0) — instance 6
+Total block size: 236 bytes
+Payload size: 224 bytes
+Properties: 23
+Size LE=234  CRC=0x9B1F
+
+Raw hex (first 48 bytes):
+  0000: EA 00 00 00 00 EA 00 00 00 06 9B 1F 00 00 00 08   ................
+  0010: 00 00 00 11 21 01 00 0B 00 00 00 16 44 3D CC CC   ....!.......D=..
+  0020: CD 00 0B 00 00 00 19 44 00 00 00 00 00 08 00 00   .......D........
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x11    uint8v    buffer-size             1 (0x01)
+0x0000  0x16    float     increment               0.100000
+0x0000  0x19    float     prop_0x19               0.000000
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x2D    float     max-value               1000.000000
+0x0000  0x34    complex   prop_0x34               complex[06 C0]
+0x0000  0x3B    float     min-value               -1000.000000
+0x0000  0x48    uint8     logging-type            0 (0x00)
+0x0000  0x4D    string    object-name             "{device-name}-SAT"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x55    float     present-value           75.664062
+0x0000  0x71    uint8v    status-flags            0 (0x00)
+0x0000  0x75    uint8     units                   64 (0x40)
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0001  0x62    bool_F    [0001]prop_0x62         FALSE
+0x0001  0x64    uint8v    [0001]prop_0x64         0 (0x00)
+0x0004  0x1D    uint8     [0004]range             3 (0x03)
+0x0004  0x1E    bool_F    [0004]prop_0x1E         FALSE
+0x0004  0x1F    float     [0004]prop_0x1F         0.000000
+0x0004  0x20    uint8v    [0004]prop_0x20         0 (0x00)
+0x0005  0x3B    uint8v    [0005]min-value         30 (0x1E)
+
+
+================================================================================
+BI (type 3) — instance 2
+Total block size: 212 bytes
+Payload size: 200 bytes
+Properties: 21
+Size LE=210  CRC=0xBAB9
+
+Raw hex (first 48 bytes):
+  0000: D2 00 00 00 00 D2 00 C0 00 02 BA B9 00 00 00 08   ................
+  0010: 00 00 00 06 91 01 00 09 00 00 00 0F 22 0B 40 00   ............".@.
+  0020: 08 00 00 00 11 21 01 00 08 00 00 00 1C 71 00 00   .....!.......q..
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x06    uint8     prop_0x06               1 (0x01)
+0x0000  0x0F    uint16    prop_0x0F               2880
+0x0000  0x11    uint8v    buffer-size             1 (0x01)
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x21    0x23      prop_0x21               raw[D4 00 CE]
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x48    uint8     logging-type            0 (0x00)
+0x0000  0x4D    string    object-name             "{device-name}-EF-S"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x54    uint8     prop_0x54               0 (0x00)
+0x0000  0x55    uint8     present-value           0 (0x00)
+0x0000  0x71    uint8v    status-flags            0 (0x00)
+0x0000  0x73    datetime  prop_0x73               datetime[7B 04 07 05 B4 0C 26 35 4B]
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0001  0x62    bool_F    [0001]prop_0x62         FALSE
+0x0001  0x64    uint8v    [0001]prop_0x64         0 (0x00)
+0x0004  0x1D    uint8     [0004]range             0 (0x00)
+0x0004  0x1E    bool_F    [0004]prop_0x1E         FALSE
+0x0004  0x3B    bool_T    [0004]min-value         TRUE
+0x0004  0x58    uint8v    [0004]prop_0x58         100 (0x64)
+
+
+================================================================================
+AO (type 1) — instance 2
+Total block size: 268 bytes
+Payload size: 256 bytes
+Properties: 24
+Size LE=266  CRC=0x9062
+
+Raw hex (first 48 bytes):
+  0000: 0A 01 00 00 01 0A 00 40 00 02 90 62 00 00 00 08   .......@...b....
+  0010: 00 00 00 11 21 01 00 0B 00 00 00 16 44 3D CC CC   ....!.......D=..
+  0020: CD 00 0B 00 00 00 19 44 00 00 00 00 00 08 00 00   .......D........
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x11    uint8v    buffer-size             1 (0x01)
+0x0000  0x16    float     increment               0.100000
+0x0000  0x19    float     prop_0x19               0.000000
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x2D    float     max-value               1000.000000
+0x0000  0x34    complex   prop_0x34               complex[06 C0]
+0x0000  0x3B    float     min-value               -1000.000000
+0x0000  0x48    uint8     logging-type            0 (0x00)
+0x0000  0x4D    string    object-name             "{device-name}-RAD"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x55    float     present-value           100.000000
+0x0000  0x57    0x00      prop_0x57               raw[00 00 00 00 00 00 00 00 44 42 C8 00 00 00 00 00 00 00 00]
+0x0000  0x68    float     relinquish-default      0.000000
+0x0000  0x71    uint8v    status-flags            0 (0x00)
+0x0000  0x75    uint8     units                   98 (0x62)
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0001  0x62    bool_F    [0001]prop_0x62         FALSE
+0x0001  0x64    uint8v    [0001]prop_0x64         0 (0x00)
+0x0004  0x1D    uint8     [0004]range             3 (0x03)
+0x0004  0x1E    bool_F    [0004]prop_0x1E         FALSE
+0x0004  0x22    float     [0004]prop_0x22         10.000000
+0x0004  0x23    float     [0004]event-state       400000
+
+
+================================================================================
+BO (type 4) — instance 11
+Total block size: 260 bytes
+Payload size: 248 bytes
+Properties: 25
+Size LE=258  CRC=0x8423
+
+Raw hex (first 48 bytes):
+  0000: 02 01 00 00 01 02 01 00 00 0B 84 23 00 00 00 09   ...........#....
+  0010: 00 00 00 0F 22 0E 14 00 08 00 00 00 11 21 01 00   ...."........!..
+  0020: 08 00 00 00 1C 71 00 00 0A 00 00 00 21 23 D3 A8   .....q......!#..
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x0F    uint16    prop_0x0F               3604
+0x0000  0x11    uint8v    buffer-size             1 (0x01)
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x21    0x23      prop_0x21               raw[D3 A8 8A]
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x42    uint8v    prop_0x42               0 (0x00)
+0x0000  0x43    uint8v    prop_0x43               0 (0x00)
+0x0000  0x48    uint8     logging-type            0 (0x00)
+0x0000  0x4D    string    object-name             "{device-name}-EF"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x54    uint8     prop_0x54               0 (0x00)
+0x0000  0x55    uint8     present-value           0 (0x00)
+0x0000  0x57    0x00      prop_0x57               raw[00 00 00 00 00 00 00 00 91 00 00 00 00 00 00 00]
+0x0000  0x68    uint8     relinquish-default      0 (0x00)
+0x0000  0x71    uint8v    status-flags            0 (0x00)
+0x0000  0x73    datetime  prop_0x73               datetime[7B 04 07 05 B4 0C 26 34 57]
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0001  0x62    bool_F    [0001]prop_0x62         FALSE
+0x0001  0x64    uint8v    [0001]prop_0x64         0 (0x00)
+0x0004  0x13    0xC4      [0004]prop_0x13         raw[FF FF FF FF]
+0x0004  0x1D    uint8     [0004]range             2 (0x02)
+0x0004  0x1E    bool_F    [0004]prop_0x1E         FALSE
+0x0004  0x3B    bool_T    [0004]min-value         TRUE
+0x0004  0x58    uint8v    [0004]prop_0x58         100 (0x64)
+
+
+================================================================================
+LOOP (type 12) — instance 2
+Total block size: 330 bytes
+Payload size: 318 bytes
+Properties: 30
+Size LE=328  CRC=0x06F0
+
+Raw hex (first 48 bytes):
+  0000: 48 01 00 00 01 48 03 00 00 02 06 F0 00 00 00 08   H....H..........
+  0010: 00 00 00 02 91 00 00 0B 00 00 00 0E 44 00 00 00   ............D...
+  0020: 00 00 08 00 00 00 11 21 01 00 0D 00 00 00 13 0C   .......!........
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x02    uint8     action                  0 (0x00)
+0x0000  0x0E    float     derivative              0.000000
+0x0000  0x11    uint8v    buffer-size             1 (0x01)
+0x0000  0x13    ObjID     prop_0x13               AI:5 + [19 55]
+0x0000  0x16    float     increment               0.000000
+0x0000  0x19    float     prop_0x19               0.000000
+0x0000  0x1A    float     bias                    0.000000
+0x0000  0x1B    uint8     prop_0x1B               95 (0x5F)
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x22    float     prop_0x22               1000.000000
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x31    float     output                  40.000000
+0x0000  0x32    uint8     output-units            71 (0x47)
+0x0000  0x3C    ObjID     prop_0x3C               type1023:4194303 + [19 55]
+0x0000  0x48    uint8     logging-type            0 (0x00)
+0x0000  0x4D    string    object-name             "{device-name}-MAT-LL-LOOP2"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x52    uint8     prop_0x52               98 (0x62)
+0x0000  0x55    float     present-value           100.000000
+0x0000  0x58    uint8v    prop_0x58               10 (0x0A)
+0x0000  0x5D    float     setpoint                12.000000
+0x0000  0x5E    uint8     prop_0x5E               95 (0x5F)
+0x0000  0x6C    float     prop_0x6C               45.000000
+0x0000  0x6D    0x0E      prop_0x6D               raw[0C 00 80 00 90 19 55 0F]
+0x0000  0x71    uint8v    status-flags            0 (0x00)
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0001  0x62    bool_F    [0001]prop_0x62         FALSE
+0x0001  0x64    uint8v    [0001]prop_0x64         0 (0x00)
+0x0004  0x4D    float     [0004]object-name       000000
+
+
+================================================================================
+TABLE (type 141) — instance 2
+Total block size: 156 bytes
+Payload size: 144 bytes
+Properties: 5
+Size LE=154  CRC=0xE57E
+
+Raw hex (first 48 bytes):
+  0000: 9A 00 00 00 00 9A 23 40 00 02 E5 7E 00 00 00 08   ......#@...~....
+  0010: 00 00 00 1C 71 00 00 22 00 00 00 4D 75 1A 00 7B   ....q.."...Mu..{
+  0020: 64 65 76 69 63 65 2D 6E 61 6D 65 7D 2D 53 41 2D   device-name}-SA-
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x4D    string    object-name             "{device-name}-SA-DSP-TBL2"
+0x0000  0x75    uint8     units                   58 (0x3A)
+0x0004  0x28    0x09      [0004]prop_0x28         raw[00 19 00 0C 40 A0 00 00 1C 40 20 00 00 0C 41 20 00 00 1C 40 A0 00 00 0C 41 70 00 00 1C 40 A0 00 00 09 00 19 00 09 00 19 00 09 00 19 00 09 00 19 00 09 00 19 00 09 00 19 00 09 00 19 00 09 00 19 00 09 00 19 00 09 00 19 00 09 00 19 00]
+0x0004  0x4A    uint8     [0004]prop_0x4A         5 (0x05)
+
+
+================================================================================
+SCHED (type 17) — instance 1
+Total block size: 253 bytes
+Payload size: 241 bytes
+Properties: 9
+Size LE=251  CRC=0xAE22
+
+Raw hex (first 48 bytes):
+  0000: FB 00 00 00 00 FB 04 40 00 01 AE 22 00 00 00 08   .......@..."....
+  0010: 00 00 00 1C 71 00 00 10 00 00 00 20 A4 FF FF FF   ....q...... ....
+  0020: FF A4 FF FF FF FF 00 25 00 00 00 4D 75 1D 00 7B   .......%...Mu..{
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x20    datetime  prop_0x20               datetime[FF FF FF FF A4 FF FF FF FF]
+0x0000  0x4D    string    object-name             "{device-name}-LOCAL�SCHEDULE"
+0x0000  0x51    bool_F    out-of-service          FALSE
+0x0000  0x55    uint8     present-value           0 (0x00)
+0x0000  0x58    uint8v    prop_0x58               10 (0x0A)
+0x0000  0x7B    0x0E      weekly-schedule         raw[B4 00 00 00 00 91 00 B4 06 05 00 00 91 01 B4 12 00 00 00 91 00 0F 0E B4 00 00 00 00 91 00 B4 06 05 00 00 91 01 B4 12 00 00 00 91 00 0F 0E B4 00 00 00 00 91 00 B4 06 05 00 00 91 01 B4 12 00 00 00 91 00 0F 0E B4 00 00 00 00 91 00 B4 06 05 00 00 91 01 B4 12 00 00 00 91 00 0F 0E B4 00 00 00 00 91 00 B4 06 05 00 00 91 01 B4 12 00 00 00 91 00 0F 0E B4 00 00 00 00 91 00 0F 0E B4 00 00 00 00 91 00 0F]
+0x0000  0xAE    uint8     schedule-default        0 (0x00)
+0x0004  0x1D    uint8     [0004]range             17 (0x11)
+
+
+================================================================================
+STL (type 20) — instance 2
+Total block size: 251 bytes
+Payload size: 239 bytes
+Properties: 22
+Size LE=249  CRC=0x1EB6
+
+Raw hex (first 48 bytes):
+  0000: F9 00 00 00 00 F9 05 00 00 02 1E B6 00 00 00 08   ................
+  0010: 00 00 00 11 21 41 00 08 00 00 00 1C 71 00 00 09   ....!A......q...
+  0020: 00 00 00 23 82 05 00 00 08 00 00 00 48 91 01 00   ...#........H...
+
+   ctx    prop       tag  prop_name               value
+--------------------------------------------------------------------------------
+0x0000  0x11    uint8v    buffer-size             65 (0x41)
+0x0000  0x1C    enum      description             enum(0)
+0x0000  0x23    complex   event-state             complex[05 00]
+0x0000  0x48    uint8     logging-type            1 (0x01)
+0x0000  0x4D    string    object-name             "{device-name}-BLDG-PRESS-Z6-STL"
+0x0000  0x7E    uint16    record-count            512
+0x0000  0x7F    float     cov-increment           0.200000
+0x0000  0x80    uint16    log-interval            1800
+0x0000  0x84    ObjID     log-device-obj          AI:20 + [19 55]
+0x0000  0x85    bool_T    enable                  TRUE
+0x0000  0x86    0x23      notif-threshold         raw[01 5F 90]
+0x0000  0x89    uint8v    notif-class             0 (0x00)
+0x0000  0x8E    datetime  start-time              datetime[FF FF FF FF B4 FF FF FF FF]
+0x0000  0x8F    datetime  stop-time               datetime[FF FF FF FF B4 FF FF FF FF]
+0x0000  0x90    bool_F    stop-when-full          FALSE
+0x0000  0xC1    bool_T    align-intervals         TRUE
+0x0000  0xC3    uint8v    interval-offset         0 (0x00)
+0x0000  0xC5    uint8     trigger                 0 (0x00)
+0x0001  0x60    enum      [0001]prop_0x60         enum(0)
+0x0001  0x61    bool_T    [0001]prop_0x61         TRUE
+0x0005  0x38    uint8v    [0005]prop_0x38         166 (0xA6)
+0x0100  0x09    uint8v    [0100]prop_0x09         10 (0x0A)
+
+
+================================================================================
+PRG (type 16) — PROGRAM BLOCKS
+================================================================================
+
+Found: 24 PRG blocks in A201.pan at offsets 0x0FF73A - 0x10413F
+(After AV and AI blocks — the earlier block scan stopped at AI because
+PRG blocks are at higher offsets, not because they're missing)
+
+PRG BLOCK STRUCTURE:
+  Header: standard 12-byte block header (size_LE, 00 00, size_BE, ObjID, CRC)
+  Payload prefix: 00 00 00 (standard)
+  
+  Property 1: ctx=0x0000 prop=0x1C tag=0x71 — description (enum 0)
+  Property 2: ctx=0x0000 prop=0x4D tag=0x75 — object-name (string)
+  Property 3: ctx=0x0004 prop=0x0A tag=0x91 — program-enabled (1=yes, 0=no)
+  
+  BYTECODE RECORD:
+    TLV header: [rec_len] [00] [00 04] [29] [65] = ctx=0x0004, prop=0x29, tag=0x65
+    NOTE: rec_len byte only covers ~100 bytes but actual data continues
+          to end of block. The bytecode record is the LAST record and
+          extends to the end of the payload.
+    
+    BYTECODE FORMAT:
+      [FE] [size_hi] [size_lo] [checksum] [size_hi_repeat]  — 5-byte header
+      [compiled CBAS bytecode stream]                        — rest of data
+      
+      Size bytes 1-2 = big-endian uint16 = bytecode stream length
+      Byte 3 = checksum/validation byte (varies per program)
+      Byte 4 = repeat of byte 1 (high byte of size)
+    
+    BYTECODE STREAM FORMAT:
+      Same as our cbas_compiler.py output:
+      01 [line_num LE16] — line marker
+      1A [len] [ASCII text] — REM comment
+      [other opcodes for IF, THEN, GOTO, assignments, etc.]
+      
+      REM comments are preserved inline in bytecode as:
+        0x1A [length_byte] [ASCII_text]
+      This matches our cbas_compiler exactly.
+
+PRG BLOCKS FOUND IN A201.pan:
+  PRG1:  1466B  "{device-name}-CONFIG-PRG1"
+  PRG2:  1480B  "{device-name}-OSH_OSC-MODE-PRG2"
+  PRG3:   968B  "{device-name}-OCC-MODES-PRG3"
+  PRG4:   992B  "{device-name}-NP-MODE-PRG4"
+  PRG5:   416B  "{device-name}-FRZ-PRTN-MODE-PRG5"
+  PRG6:   726B  "{device-name}-HTG_CLG-LO-PRG6"
+  PRG8:   599B  "{device-name}-DEFROST-MODE-PRG8"
+  PRG9:   501B  "{device-name}-HVAC-MODE-PRG9"
+  PRG10: 1148B  "{device-name}-ECON-MODE-PRG10"
+  PRG12: 1732B  "{device-name}-SAT-SP-PRG12"
+  PRG13:  837B  "{device-name}-DSP-SP-PRG13"
+  PRG14:  513B  "{device-name}-OAD-MIN-POS-PRG14"
+  PRG20:  345B  "{device-name}-LTC-PRG20"
+  PRG23:  369B  "{device-name}-SA-HPS-PRG23"
+  PRG26:  402B  "{device-name}-SAFETY-SD-PRG26"
+  PRG30:  352B  "{device-name}-EA-HPS-PRG30"
+  PRG33: 1062B  "{device-name}-SF-PRG33"
+  PRG35: 1004B  "{device-name}-OAD-RAD-PRG35"
+  PRG37: 1022B  "{device-name}-EF-PRG37"
+  PRG39:  860B  "{device-name}-HW-VLV-PRG39"
+  PRG42:  673B  "{device-name}-CHW-VLV-PRG42"
+  PRG44:  594B  "{device-name}-ERW-PRG44"
+  PRG48:  608B  "{device-name}-ERW-BYP-DMP-PRG48"
+  PRG50:  284B  "{device-name}-AHU-OK-PRG50"
+
+CONCLUSION:
+  Programs ARE in the BACnet block section (not in the JSON project data).
+  Our cbas_compiler.py already produces the correct bytecode stream format.
+  We need to add:
+    1. The 5-byte FE header: [FE] [size_hi] [size_lo] [checksum] [size_hi]
+    2. Wrap bytecode in TLV record: ctx=0x0004, prop=0x29, tag=0x65
+    3. Three standard properties before bytecode: desc, name, enabled
+  
+  The JSON section at 0x016B38+ is RC Studio GUI/graphics data, NOT programs.

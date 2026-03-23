@@ -186,35 +186,44 @@ def _build_values_tab(wb, config: ControllerConfig):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    for i, val in enumerate(config.values):
-        r = start + 1 + i
-        prefix = {"AV": "AV", "BV": "BV", "MV": "MV"}.get(val.point_type, "AV")
-        ws.cell(row=r, column=1, value=f"{prefix}{val.instance}")
-        ws.cell(row=r, column=2, value=f"{config.device_name}-{val.name}")
-        ws.cell(row=r, column=3, value=val.point_type)
-        # Default value — MV shows state text, BV shows Off/On
-        if val.point_type == "MV" and val.states:
-            state_str = "/".join([f"{k}-{v}" for k, v in sorted(val.states.items())])
-            default_text = val.states.get(val.default, str(val.default)) if val.default else ""
-            ws.cell(row=r, column=4, value=default_text)
-            ws.cell(row=r, column=5, value=state_str)
-            ws.cell(row=r, column=6, value=state_str)
-        elif val.point_type == "BV":
-            ws.cell(row=r, column=4, value="Off" if not val.default else "On")
-            ws.cell(row=r, column=5, value="Off/On")
-            ws.cell(row=r, column=6, value="Off/On")
+    # Build single lookup by instance across ALL value types (AV/BV/MV share instance space)
+    val_by_inst = {v.instance: v for v in config.values}
+    max_inst = max(val_by_inst.keys()) if val_by_inst else 0
+
+    for inst in range(1, max_inst + 1):
+        r = start + inst
+        if inst in val_by_inst:
+            val = val_by_inst[inst]
+            prefix = {"AV": "AV", "BV": "BV", "MV": "MV"}.get(val.point_type, "AV")
+            ws.cell(row=r, column=1, value=f"{prefix}{inst}")
+            ws.cell(row=r, column=2, value=f"{config.device_name}-{val.name}")
+            ws.cell(row=r, column=3, value=val.point_type)
+            if val.point_type == "MV" and val.states:
+                state_str = "/".join([f"{k}-{v}" for k, v in sorted(val.states.items())])
+                default_text = val.states.get(val.default, str(val.default)) if val.default else ""
+                ws.cell(row=r, column=4, value=default_text)
+                ws.cell(row=r, column=5, value=state_str)
+                ws.cell(row=r, column=6, value=state_str)
+            elif val.point_type == "BV":
+                ws.cell(row=r, column=4, value="Off" if not val.default else "On")
+                ws.cell(row=r, column=5, value="Off/On")
+                ws.cell(row=r, column=6, value="Off/On")
+            else:
+                ws.cell(row=r, column=4, value=str(val.default))
+                ws.cell(row=r, column=5, value=val.units or "")
+                ws.cell(row=r, column=6, value="")
+            ws.cell(row=r, column=7, value=val.min_val if val.min_val is not None else "")
+            ws.cell(row=r, column=8, value=val.max_val if val.max_val is not None else "")
+            if val.point_type == "MV" and val.states:
+                ws.cell(row=r, column=9, value=state_str)
+            else:
+                ws.cell(row=r, column=9, value=val.description)
+            ws.cell(row=r, column=10, value=val.module)
         else:
-            ws.cell(row=r, column=4, value=str(val.default))
-            ws.cell(row=r, column=5, value=val.units or "")
-            ws.cell(row=r, column=6, value="")
-        ws.cell(row=r, column=7, value=val.min_val if val.min_val is not None else "")
-        ws.cell(row=r, column=8, value=val.max_val if val.max_val is not None else "")
-        # Description — MV gets state text, others get description
-        if val.point_type == "MV" and val.states:
-            ws.cell(row=r, column=9, value=state_str)
-        else:
-            ws.cell(row=r, column=9, value=val.description)
-        ws.cell(row=r, column=10, value=val.module)
+            # Empty filler row — use AV as default type label
+            ws.cell(row=r, column=1, value=f"AV{inst}")
+            for c in range(1, len(headers) + 1):
+                ws.cell(row=r, column=c).fill = UNUSED_FILL
         _style_data(ws, r, len(headers))
 
     ws.column_dimensions["A"].width = 10
@@ -233,28 +242,37 @@ def _build_loops_tab(wb, config: ControllerConfig):
     ws = wb.create_sheet("Loops")
     start = _add_title(ws, "PID LOOPS", f"{config.device_name}")
 
-    headers = ["Loop", "Name", "Input", "Setpoint", "Action", "P Band", "Integral", "D", "Bias", "Description", "Module"]
+    headers = ["Loop", "Name", "Input", "Setpoint", "Output", "Action", "P Band", "Integral", "D", "Bias", "Description", "Module"]
     for c, h in enumerate(headers, 1):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    for i, lp in enumerate(config.loops):
-        r = start + 1 + i
-        action_sym = "+" if lp.action == "direct" else "-"
-        ws.cell(row=r, column=1, value=f"LOOP{lp.instance}")
-        ws.cell(row=r, column=2, value=lp.name)
-        ws.cell(row=r, column=3, value=f"{config.device_name}-{lp.input_ref}")
-        ws.cell(row=r, column=4, value=f"{config.device_name}-{lp.setpoint_ref}")
-        ws.cell(row=r, column=5, value=action_sym)
-        ws.cell(row=r, column=6, value=lp.p_band)
-        ws.cell(row=r, column=7, value=lp.integral)
-        ws.cell(row=r, column=8, value=lp.derivative)
-        ws.cell(row=r, column=9, value=lp.bias)
-        ws.cell(row=r, column=10, value=lp.description)
-        ws.cell(row=r, column=11, value=lp.module)
+    loop_by_inst = {lp.instance: lp for lp in config.loops}
+    max_loop = max(loop_by_inst.keys()) if loop_by_inst else 0
+    for inst in range(1, max_loop + 1):
+        r = start + inst
+        if inst in loop_by_inst:
+            lp = loop_by_inst[inst]
+            action_sym = "+" if lp.action == "direct" else "-"
+            ws.cell(row=r, column=1, value=f"LOOP{inst}")
+            ws.cell(row=r, column=2, value=lp.name)
+            ws.cell(row=r, column=3, value=f"{config.device_name}-{lp.input_ref}")
+            ws.cell(row=r, column=4, value=f"{config.device_name}-{lp.setpoint_ref}")
+            ws.cell(row=r, column=5, value=f"{config.device_name}-{lp.output_ref}" if lp.output_ref else "")
+            ws.cell(row=r, column=6, value=action_sym)
+            ws.cell(row=r, column=7, value=lp.p_band)
+            ws.cell(row=r, column=8, value=lp.integral)
+            ws.cell(row=r, column=9, value=lp.derivative)
+            ws.cell(row=r, column=10, value=lp.bias)
+            ws.cell(row=r, column=11, value=lp.description)
+            ws.cell(row=r, column=12, value=lp.module)
+        else:
+            ws.cell(row=r, column=1, value=f"LOOP{inst}")
+            for c in range(1, len(headers) + 1):
+                ws.cell(row=r, column=c).fill = UNUSED_FILL
         _style_data(ws, r, len(headers))
 
-    for c, w in enumerate([10, 20, 30, 30, 8, 10, 10, 6, 6, 30, 16], 1):
+    for c, w in enumerate([10, 20, 30, 30, 30, 8, 10, 10, 6, 6, 30, 16], 1):
         ws.column_dimensions[get_column_letter(c)].width = w
 
 
@@ -262,26 +280,45 @@ def _build_tables_tab(wb, config: ControllerConfig):
     ws = wb.create_sheet("Tables")
     start = _add_title(ws, "TABLES", f"{config.device_name}")
 
-    headers = ["Table", "Name", "Input Units", "Output Units", "Data Points", "Description", "Module"]
+    # Determine max data points across all tables for column count
+    max_pts = max((len(tbl.data_points) for tbl in config.tables), default=0) if config.tables else 0
+    headers = ["Table", "Name", "Input Units", "Output Units", "Description", "Module"]
+    # Add X/Y column pairs for each data point
+    for p in range(max_pts):
+        headers.append(f"X{p+1}")
+        headers.append(f"Y{p+1}")
+
     for c, h in enumerate(headers, 1):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    for i, tbl in enumerate(config.tables):
-        r = start + 1 + i
-        ws.cell(row=r, column=1, value=f"TBL{tbl.instance}")
-        ws.cell(row=r, column=2, value=tbl.name)
-        ws.cell(row=r, column=3, value=tbl.input_units)
-        ws.cell(row=r, column=4, value=tbl.output_units)
-        dp_str = "\n".join([f"{p[0]} → {p[1]}" for p in tbl.data_points])
-        cell = ws.cell(row=r, column=5, value=dp_str)
-        cell.alignment = Alignment(wrap_text=True, vertical="top")
-        ws.cell(row=r, column=6, value=tbl.description)
-        ws.cell(row=r, column=7, value=tbl.module)
+    tbl_by_inst = {tbl.instance: tbl for tbl in config.tables}
+    max_tbl = max(tbl_by_inst.keys()) if tbl_by_inst else 0
+    for inst in range(1, max_tbl + 1):
+        r = start + inst
+        if inst in tbl_by_inst:
+            tbl = tbl_by_inst[inst]
+            ws.cell(row=r, column=1, value=f"TBL{inst}")
+            ws.cell(row=r, column=2, value=tbl.name)
+            ws.cell(row=r, column=3, value=tbl.input_units)
+            ws.cell(row=r, column=4, value=tbl.output_units)
+            ws.cell(row=r, column=5, value=tbl.description)
+            ws.cell(row=r, column=6, value=tbl.module)
+            for p, (x, y) in enumerate(tbl.data_points):
+                ws.cell(row=r, column=7 + p * 2, value=x)
+                ws.cell(row=r, column=8 + p * 2, value=y)
+        else:
+            ws.cell(row=r, column=1, value=f"TBL{inst}")
+            for c2 in range(1, len(headers) + 1):
+                ws.cell(row=r, column=c2).fill = UNUSED_FILL
         _style_data(ws, r, len(headers))
 
-    for c, w in enumerate([10, 20, 14, 14, 40, 40, 16], 1):
-        ws.column_dimensions[get_column_letter(c)].width = w
+    ws.column_dimensions["A"].width = 10
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 14
+    ws.column_dimensions["D"].width = 14
+    ws.column_dimensions["E"].width = 40
+    ws.column_dimensions["F"].width = 16
 
 
 def _build_arrays_tab(wb, config: ControllerConfig):
@@ -300,15 +337,23 @@ def _build_schedules_tab(wb, config: ControllerConfig):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    for i, sch in enumerate(config.schedules):
-        r = start + 1 + i
-        ws.cell(row=r, column=1, value=f"SCHED{sch.instance}")
-        ws.cell(row=r, column=2, value=f"{config.device_name}-{sch.name}")
-        ws.cell(row=r, column=3, value=sch.default_state)
-        ws.cell(row=r, column=4, value=" / ".join(sch.states))
-        ws.cell(row=r, column=5, value=sch.priority)
-        ws.cell(row=r, column=6, value=sch.description)
-        ws.cell(row=r, column=7, value=sch.module)
+    sched_by_inst = {sch.instance: sch for sch in config.schedules}
+    max_sched = max(sched_by_inst.keys()) if sched_by_inst else 0
+    for inst in range(1, max_sched + 1):
+        r = start + inst
+        if inst in sched_by_inst:
+            sch = sched_by_inst[inst]
+            ws.cell(row=r, column=1, value=f"SCHED{inst}")
+            ws.cell(row=r, column=2, value=f"{config.device_name}-{sch.name}")
+            ws.cell(row=r, column=3, value=sch.default_state)
+            ws.cell(row=r, column=4, value=" / ".join(sch.states))
+            ws.cell(row=r, column=5, value=sch.priority)
+            ws.cell(row=r, column=6, value=sch.description)
+            ws.cell(row=r, column=7, value=sch.module)
+        else:
+            ws.cell(row=r, column=1, value=f"SCHED{inst}")
+            for c in range(1, len(headers) + 1):
+                ws.cell(row=r, column=c).fill = UNUSED_FILL
         _style_data(ws, r, len(headers))
 
     for c, w in enumerate([10, 35, 14, 25, 10, 35, 16], 1):
@@ -324,17 +369,25 @@ def _build_trends_tab(wb, config: ControllerConfig):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    for i, tr in enumerate(config.trends):
-        r = start + 1 + i
-        ws.cell(row=r, column=1, value=f"STL{tr.instance}")
-        ws.cell(row=r, column=2, value=f"{config.device_name}-{tr.name}")
-        ws.cell(row=r, column=3, value=f"{config.device_name}-{tr.monitored_point}")
-        ws.cell(row=r, column=4, value=tr.trend_type.capitalize())
-        if tr.trend_type == "polled":
-            ws.cell(row=r, column=5, value=tr.interval)
+    stl_by_inst = {tr.instance: tr for tr in config.trends}
+    max_stl = max(stl_by_inst.keys()) if stl_by_inst else 0
+    for inst in range(1, max_stl + 1):
+        r = start + inst
+        if inst in stl_by_inst:
+            tr = stl_by_inst[inst]
+            ws.cell(row=r, column=1, value=f"STL{inst}")
+            ws.cell(row=r, column=2, value=f"{config.device_name}-{tr.name}")
+            ws.cell(row=r, column=3, value=f"{config.device_name}-{tr.monitored_point}")
+            ws.cell(row=r, column=4, value=tr.trend_type.capitalize())
+            if tr.trend_type == "polled":
+                ws.cell(row=r, column=5, value=tr.interval)
+            else:
+                ws.cell(row=r, column=5, value=tr.cov_delta)
+            ws.cell(row=r, column=6, value=tr.buffer_size)
         else:
-            ws.cell(row=r, column=5, value=tr.cov_delta)
-        ws.cell(row=r, column=6, value=tr.buffer_size)
+            ws.cell(row=r, column=1, value=f"STL{inst}")
+            for c2 in range(1, len(headers) + 1):
+                ws.cell(row=r, column=c2).fill = UNUSED_FILL
         _style_data(ws, r, len(headers))
 
     for c, w in enumerate([10, 35, 35, 10, 16, 10], 1):
@@ -371,17 +424,23 @@ def _build_programs_tab(wb, config: ControllerConfig):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    # Sort by exec_order
-    sorted_prgs = sorted(config.programs, key=lambda p: p.exec_order)
-    for i, prg in enumerate(sorted_prgs):
-        r = start + 1 + i
-        ws.cell(row=r, column=1, value=f"PRG{prg.instance}")
-        ws.cell(row=r, column=2, value=f"{config.device_name}-{prg.name}")
-        ws.cell(row=r, column=3, value=prg.filename)
-        ws.cell(row=r, column=4, value="Yes" if prg.enabled else "No")
-        ws.cell(row=r, column=5, value=prg.exec_order)
-        ws.cell(row=r, column=6, value=prg.description)
-        ws.cell(row=r, column=7, value=prg.module)
+    prg_by_inst = {prg.instance: prg for prg in config.programs}
+    max_prg = max(prg_by_inst.keys()) if prg_by_inst else 0
+    for inst in range(1, max_prg + 1):
+        r = start + inst
+        if inst in prg_by_inst:
+            prg = prg_by_inst[inst]
+            ws.cell(row=r, column=1, value=f"PRG{inst}")
+            ws.cell(row=r, column=2, value=f"{config.device_name}-{prg.name}")
+            ws.cell(row=r, column=3, value=prg.filename)
+            ws.cell(row=r, column=4, value="Yes" if prg.enabled else "No")
+            ws.cell(row=r, column=5, value=prg.exec_order)
+            ws.cell(row=r, column=6, value=prg.description)
+            ws.cell(row=r, column=7, value=prg.module)
+        else:
+            ws.cell(row=r, column=1, value=f"PRG{inst}")
+            for c in range(1, len(headers) + 1):
+                ws.cell(row=r, column=c).fill = UNUSED_FILL
         _style_data(ws, r, len(headers))
 
     for c, w in enumerate([8, 35, 28, 10, 12, 50, 16], 1):
@@ -400,32 +459,27 @@ def _build_custom_units_tab(wb, config: ControllerConfig):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    # SBS Standard custom units
+    # SBS Standard custom units — CUSTOM enumerations only
+    # Standard BACnet units (°F, %, ppm, etc.) are NOT listed here —
+    # they are built into the controller firmware.
+    # Only custom digital and multi-state enumerations go in this table.
     custom_units = [
-        (64,  "°F",     "",          "",          "", "", "", "", "", "", "", ""),
-        (128, "CFM",    "",          "",          "", "", "", "", "", "", "", ""),
-        (129, "WC",     "",          "",          "", "", "", "", "", "", "", ""),
-        (130, "ppm",    "",          "",          "", "", "", "", "", "", "", ""),
-        (131, "%RH",    "",          "",          "", "", "", "", "", "", "", ""),
-        (132, "BTU/lb", "",          "",          "", "", "", "", "", "", "", ""),
-        (133, "GPM",    "",          "",          "", "", "", "", "", "", "", ""),
-        (134, "PSI",    "",          "",          "", "", "", "", "", "", "", ""),
-        (135, "FPM",    "",          "",          "", "", "", "", "", "", "", ""),
-        (136, "Amps",   "",          "",          "", "", "", "", "", "", "", ""),
-        (137, "kW",     "",          "",          "", "", "", "", "", "", "", ""),
-        (138, "kWh",    "",          "",          "", "", "", "", "", "", "", ""),
-        (139, "Tons",   "",          "",          "", "", "", "", "", "", "", ""),
-        (140, "",       "Occupied",  "Unoccupied","", "", "", "", "", "", "", ""),
-        (141, "",       "Enabled",   "Disabled",  "", "", "", "", "", "", "", ""),
-        (142, "",       "On",        "Off",       "", "", "", "", "", "", "", ""),
-        (143, "",       "Open",      "Closed",    "", "", "", "", "", "", "", ""),
-        (144, "",       "Start",     "Stop",      "", "", "", "", "", "", "", ""),
-        (145, "",       "Run",       "Shutdown",  "", "", "", "", "", "", "", ""),
-        (146, "",       "Alarm",     "Normal",    "", "", "", "", "", "", "", ""),
-        (147, "",       "Dirty",     "Clean",     "", "", "", "", "", "", "", ""),
-        (148, "",       "Yes",       "No",        "", "", "", "", "", "", "", ""),
-        (149, "",       "",          "",          "Occupied", "Bypass", "Standby", "Unoccupied", "NSB", "NSF", "OSH", "OSC"),
-        (150, "",       "",          "",          "Vent", "Cool", "Reheat", "Heat", "Init", "", "", ""),
+        (64,  "",       "Occupied",  "Unoccupied","", "", "", "", "", "", "", ""),
+        (65,  "",       "Enabled",   "Disabled",  "", "", "", "", "", "", "", ""),
+        (66,  "",       "On",        "Off",       "", "", "", "", "", "", "", ""),
+        (67,  "",       "Open",      "Closed",    "", "", "", "", "", "", "", ""),
+        (68,  "",       "Start",     "Stop",      "", "", "", "", "", "", "", ""),
+        (69,  "",       "Run",       "Shutdown",  "", "", "", "", "", "", "", ""),
+        (70,  "",       "Alarm",     "Normal",    "", "", "", "", "", "", "", ""),
+        (71,  "",       "Dirty",     "Clean",     "", "", "", "", "", "", "", ""),
+        (72,  "",       "Yes",       "No",        "", "", "", "", "", "", "", ""),
+        (73,  "",       "Active",    "Inactive",  "", "", "", "", "", "", "", ""),
+        (74,  "",       "Reset",     "Normal",    "", "", "", "", "", "", "", ""),
+        (75,  "",       "Tripped",   "Normal",    "", "", "", "", "", "", "", ""),
+        (76,  "",       "High",      "Low",       "", "", "", "", "", "", "", ""),
+        (77,  "",       "",          "",          "Occupied", "Bypass", "Standby", "Unoccupied", "NSB", "NSF", "OSH", "OSC"),
+        (78,  "",       "",          "",          "Vent", "Cool", "Reheat", "Heat", "Init", "", "", ""),
+        (79,  "",       "",          "",          "Off", "Low", "Med", "High", "", "", "", ""),
     ]
 
     for i, cu in enumerate(custom_units):

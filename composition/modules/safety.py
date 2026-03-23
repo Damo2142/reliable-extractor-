@@ -84,6 +84,60 @@ nuisance trips.""",
     )
 
 
+def build_safe_ea_static():
+    """Exhaust air high static pressure switch"""
+    return Module(
+        id="safe-ea-static",
+        name="EA High Static Pressure",
+        category="safety",
+        description="Exhaust air high static pressure cutout — shuts down unit on trip",
+
+        inputs=[
+            InputPoint(15, "EA-HPS", "BI", "Normal/Alarm", "Exhaust Air High Static Switch"),
+        ],
+
+        programs=[
+            ProgramDef(30, "EA-HPS-PRG", "PRG30-EA-HPS.bas", "", False,
+                       "Exhaust air high static pressure cutout",
+                       exec_order=30),
+        ],
+
+        soo_paragraph="""A high static pressure switch shall be provided in the exhaust duct.
+Upon activation, the unit shall be shut down and a safety shutdown
+alarm generated. A 20-second time delay on return to normal shall prevent
+nuisance trips.""",
+
+        requires=["core"],
+    )
+
+
+def build_safe_ra_static():
+    """Return air high static pressure switch"""
+    return Module(
+        id="safe-ra-static",
+        name="RA High Static Pressure",
+        category="safety",
+        description="Return air high static pressure cutout — shuts down unit on trip",
+
+        inputs=[
+            InputPoint(47, "RA-HPS", "BI", "Normal/Alarm", "Return Air High Static Switch"),
+        ],
+
+        programs=[
+            ProgramDef(31, "RA-HPS-PRG", "PRG31-RA-HPS.bas", "", False,
+                       "Return air high static pressure cutout",
+                       exec_order=31),
+        ],
+
+        soo_paragraph="""A high static pressure switch shall be provided in the return duct.
+Upon activation, the unit shall be shut down and a safety shutdown
+alarm generated. A 20-second time delay on return to normal shall prevent
+nuisance trips.""",
+
+        requires=["core"],
+    )
+
+
 def build_safe_filter():
     """Main filter DP switch — always present"""
     return Module(
