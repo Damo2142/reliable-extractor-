@@ -275,10 +275,34 @@ def _build_readme(config, include_pan=False):
 _last_config = {"modules": [], "controller_model": "auto"}
 
 
+def _compile_pan_from_config(config):
+    """Write config to temp dir and compile via compile_from_excel.py."""
+    import tempfile, shutil
+    from compile_from_excel import compile_package
+
+    tmp = tempfile.mkdtemp(prefix="sbs-pan-")
+    try:
+        # Write Excel
+        excel_data = generate_excel(config)
+        with open(os.path.join(tmp, "RC-Studio-Output.xlsx"), "wb") as f:
+            f.write(excel_data)
+        # Write .bas files
+        prg_dir = os.path.join(tmp, "programs")
+        os.makedirs(prg_dir, exist_ok=True)
+        for prg in config.programs:
+            if prg.code:
+                with open(os.path.join(prg_dir, prg.filename), "w") as f:
+                    f.write(prg.code)
+        # Compile
+        pan_data = compile_package(tmp, verbose=False)
+        return pan_data
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 @app.post("/api/generate-pan")
 async def api_generate_pan(req: GenerateRequest):
-    """Generate a .pan binary file with compiled programs."""
-    from composition.pan_builder import build_pan_from_config, build_from_seed
+    """Generate a .pan binary file using compile_from_excel compiler."""
     _last_config["modules"] = req.modules
     _last_config["controller_model"] = req.controller_model
     try:
@@ -288,17 +312,7 @@ async def api_generate_pan(req: GenerateRequest):
         raise HTTPException(400, str(e))
 
     model = config.controller_model or "MPS"
-
-    # Try seed-based approach first (better quality)
-    seed_path = Path('/srv/dfa/shared/files/vendors/reliable/seeds/MACH-ProSys-88-AHU114.pan')
-    if seed_path.exists() and model in ("MPS", "MPWS", "auto"):
-        from composition.pan_filler import fill_pan
-        seed_data = seed_path.read_bytes()
-        filled = fill_pan(seed_data, config)
-        from composition.pan_builder import inject_programs_into_seed
-        pan_data = inject_programs_into_seed(filled, config, model)
-    else:
-        pan_data = build_pan_from_config(config, device_id=1000, controller_model=model)
+    pan_data = _compile_pan_from_config(config)
 
     buf = io.BytesIO(pan_data)
     filename = f"SBS-{config.equipment_family}-{model}.pan"
@@ -309,7 +323,6 @@ async def api_generate_pan(req: GenerateRequest):
 @app.post("/api/generate-full")
 async def api_generate_full(req: GenerateRequest):
     """Generate complete package: Excel + .bas + .pan + SOO."""
-    from composition.pan_builder import build_pan_from_config, build_from_seed
     try:
         config = assemble(req.modules, controller_model=req.controller_model)
         inject_program_code(config)
@@ -320,15 +333,7 @@ async def api_generate_full(req: GenerateRequest):
     model = config.controller_model or "MPS"
     excel_data = generate_excel(config)
     alarm_bas = generate_alarm_bas(config)
-
-    # Build .pan — use seed for data fill only
-    seed_path = Path('/srv/dfa/shared/files/vendors/reliable/seeds/MACH-ProSys-88-AHU114.pan')
-    if seed_path.exists() and model in ("MPS", "MPWS", "auto"):
-        from composition.pan_filler import fill_pan
-        seed_data = seed_path.read_bytes()
-        pan_data = fill_pan(seed_data, config)
-    else:
-        pan_data = build_pan_from_config(config, device_id=1000, controller_model=model)
+    pan_data = _compile_pan_from_config(config)
 
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -357,19 +362,13 @@ async def api_generate_full(req: GenerateRequest):
 @app.get("/api/download-pan")
 async def api_download_pan(modules: str = "", controller: str = "auto"):
     """GET-based .pan download (browser-friendly)."""
-    from composition.pan_filler import fill_pan
     mod_list = [m.strip() for m in modules.split(",") if m.strip()]
     if not mod_list:
         raise HTTPException(400, "No modules specified")
     config = assemble(mod_list, controller_model=controller)
     inject_program_code(config)
     model = config.controller_model or "MPS"
-    seed_path = Path('/srv/dfa/shared/files/vendors/reliable/seeds/MACH-ProSys-88-AHU114.pan')
-    if seed_path.exists() and model in ("MPS", "MPWS", "auto"):
-        pan_data = fill_pan(seed_path.read_bytes(), config)
-    else:
-        from composition.pan_builder import build_pan_from_config
-        pan_data = build_pan_from_config(config, device_id=1000, controller_model=model)
+    pan_data = _compile_pan_from_config(config)
     buf = io.BytesIO(pan_data)
     return StreamingResponse(buf, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename=SBS-{config.equipment_family}-{model}.pan"})
@@ -379,7 +378,6 @@ async def api_download_pan(modules: str = "", controller: str = "auto"):
 async def api_download_full(modules: str = "", controller: str = "auto"):
     """GET-based full package download (browser-friendly)."""
     from composition.alarm_gen import generate_alarm_bas
-    from composition.pan_filler import fill_pan
     mod_list = [m.strip() for m in modules.split(",") if m.strip()]
     if not mod_list:
         raise HTTPException(400, "No modules specified")
@@ -388,12 +386,7 @@ async def api_download_full(modules: str = "", controller: str = "auto"):
     model = config.controller_model or "MPS"
     excel_data = generate_excel(config)
     alarm_bas = generate_alarm_bas(config)
-    seed_path = Path('/srv/dfa/shared/files/vendors/reliable/seeds/MACH-ProSys-88-AHU114.pan')
-    if seed_path.exists() and model in ("MPS", "MPWS", "auto"):
-        pan_data = fill_pan(seed_path.read_bytes(), config)
-    else:
-        from composition.pan_builder import build_pan_from_config
-        pan_data = build_pan_from_config(config, device_id=1000, controller_model=model)
+    pan_data = _compile_pan_from_config(config)
     readme = _build_readme(config, include_pan=True)
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
