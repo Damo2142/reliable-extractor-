@@ -137,9 +137,11 @@ async def api_generate(req: GenerateRequest):
 
     excel_data = generate_excel(config)
     readme = _build_readme(config, include_pan=False)
+    report = _build_validation_report(config)
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("README.txt", readme)
+        zf.writestr("SBS-Validation-Report.md", report)
         zf.writestr("RC-Studio-Output.xlsx", excel_data)
         for prg in config.programs:
             zf.writestr(f"programs/{prg.filename}", prg.code or "")
@@ -155,6 +157,142 @@ async def api_generate(req: GenerateRequest):
     zip_buf.seek(0)
     return StreamingResponse(zip_buf, media_type="application/zip",
                              headers={"Content-Disposition": "attachment; filename=composition-package.zip"})
+
+
+def _build_validation_report(config) -> str:
+    """Build SBS-Validation-Report.md from assembled config."""
+    from datetime import datetime
+    model = config.controller_model or "MPS"
+    exp = f"{config.expansion_count}x {config.expansion_model}" if config.expansion_count else "none"
+    warnings = getattr(config, 'warnings', [])
+
+    # Count by type
+    ai = sum(1 for p in config.inputs if p.point_type == 'AI')
+    bi = sum(1 for p in config.inputs if p.point_type == 'BI')
+    ao = sum(1 for p in config.outputs if p.point_type == 'AO')
+    bo = sum(1 for p in config.outputs if p.point_type == 'BO')
+    av = sum(1 for v in config.values if v.point_type == 'AV')
+    bv = sum(1 for v in config.values if v.point_type == 'BV')
+    mv = sum(1 for v in config.values if v.point_type == 'MV')
+
+    lines = [
+        "# SBS Validation Report",
+        "",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Equipment Family: {config.equipment_family}",
+        "",
+        "---",
+        "",
+        "## System Summary",
+        "",
+        f"- **Controller:** {model}" + (f" + {exp}" if config.expansion_count else ""),
+        f"- **Inputs:** {len(config.inputs)} (AI: {ai}, BI: {bi}) — highest row: {config.highest_input_row}",
+        f"- **Outputs:** {len(config.outputs)} (AO: {ao}, BO: {bo}) — highest row: {config.highest_output_row}",
+        f"- **Values:** {len(config.values)} (AV: {av}, BV: {bv}, MV: {mv})",
+        f"- **Loops:** {len(config.loops)}",
+        f"- **Programs:** {len(config.programs)}",
+        f"- **Trends:** {len(config.trends)}",
+        f"- **Schedules:** {len(config.schedules)}",
+        f"- **Tables:** {len(config.tables)}",
+        f"- **System Groups:** {len(config.system_groups)}",
+        "",
+        "### Modules",
+        "",
+    ]
+    for m in config.selected_modules:
+        lines.append(f"- {m}")
+
+    # I/O Summary
+    lines += [
+        "",
+        "---",
+        "",
+        "## I/O Summary",
+        "",
+        "### Inputs",
+        "",
+        "| Row | Type | Name | Range | Units | Description |",
+        "|-----|------|------|-------|-------|-------------|",
+    ]
+    for row in range(1, config.highest_input_row + 1):
+        pt = next((p for p in config.inputs if p.row == row), None)
+        if pt:
+            lines.append(f"| {row} | {pt.point_type} | {{device-name}}-{pt.name} | {pt.range_code} | {getattr(pt, 'units', '')} | {pt.description} |")
+        else:
+            lines.append(f"| {row} | | *— unused —* | | | |")
+
+    lines += [
+        "",
+        "### Outputs",
+        "",
+        "| Row | Type | Name | Range | Description |",
+        "|-----|------|------|-------|-------------|",
+    ]
+    for row in range(1, config.highest_output_row + 1):
+        pt = next((p for p in config.outputs if p.row == row), None)
+        if pt:
+            rev = " (REV)" if getattr(pt, 'reverse', False) else ""
+            lines.append(f"| {row} | {pt.point_type} | {{device-name}}-{pt.name}{rev} | {pt.range_code} | {pt.description} |")
+        else:
+            lines.append(f"| {row} | | *— unused —* | | |")
+
+    # Warnings
+    lines += [
+        "",
+        "---",
+        "",
+        "## Warnings",
+        "",
+    ]
+    if warnings:
+        for w in warnings:
+            lines.append(f"- {w}")
+    else:
+        lines.append("No warnings.")
+
+    # Parent references
+    lines += [
+        "",
+        "---",
+        "",
+        "## Parent References",
+        "",
+        "Programs containing `{parent}` — **requires parent device ID at commissioning:**",
+        "",
+    ]
+    parent_prgs = [p for p in config.programs if p.code and '{parent}' in p.code]
+    if parent_prgs:
+        for p in parent_prgs:
+            lines.append(f"- **PRG{p.instance}:** {p.name} ({p.filename})")
+    else:
+        lines.append("No programs reference `{parent}`.")
+
+    # Commissioning notes
+    lines += [
+        "",
+        "---",
+        "",
+        "## Commissioning Notes",
+        "",
+        "- All point names use `{device-name}` — set the controller's BACnet device name at commissioning.",
+    ]
+    if parent_prgs:
+        lines.append("- Programs listed above reference `{parent}` — set the parent AHU device ID before downloading.")
+    if config.schedules:
+        lines.append(f"- {len(config.schedules)} schedule(s) defined — configure weekly schedule times in RC Studio after download.")
+    if config.loops:
+        lines.append(f"- {len(config.loops)} PID loop(s) — verify tuning parameters match field conditions.")
+    if config.trends:
+        lines.append(f"- {len(config.trends)} trend log(s) configured — verify buffer sizes are adequate for site requirements.")
+
+    lines += [
+        "",
+        "---",
+        "",
+        "*Generated by SBS Controls — Ameresco*",
+    ]
+
+    return "\n".join(lines)
 
 
 def _build_readme(config, include_pan=False):
@@ -335,8 +473,10 @@ async def api_generate_full(req: GenerateRequest):
     alarm_bas = generate_alarm_bas(config)
     pan_data = _compile_pan_from_config(config)
 
+    report = _build_validation_report(config)
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("SBS-Validation-Report.md", report)
         zf.writestr("RC-Studio-Output.xlsx", excel_data)
         zf.writestr(f"SBS-{config.equipment_family}-{model}.pan", pan_data)
         for prg in config.programs:
@@ -388,9 +528,11 @@ async def api_download_full(modules: str = "", controller: str = "auto"):
     alarm_bas = generate_alarm_bas(config)
     pan_data = _compile_pan_from_config(config)
     readme = _build_readme(config, include_pan=True)
+    report = _build_validation_report(config)
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("README.txt", readme)
+        zf.writestr("SBS-Validation-Report.md", report)
         zf.writestr("RC-Studio-Output.xlsx", excel_data)
         zf.writestr(f"SBS-{config.equipment_family}-{model}.pan", pan_data)
         for prg in config.programs:
