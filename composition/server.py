@@ -953,7 +953,7 @@ let selected=new Set(), activeCfg='', activeFamily='';
 async function init(){
   try{
     var resp=await Promise.all([
-      fetch('/api/families'),fetch('/api/standards'),fetch('/api/modules'),fetch('/api/controllers')
+      fetch('api/families'),fetch('api/standards'),fetch('api/modules'),fetch('api/controllers')
     ]);
     families=await resp[0].json();
     standards=await resp[1].json();
@@ -1061,7 +1061,7 @@ async function doAssemble(){
   var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
   document.getElementById('status').textContent='Assembling...';
   try{
-    var res=await fetch('/api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var res=await fetch('api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!res.ok){var e=await res.json();throw new Error(e.detail);}
     var r=await res.json();
     renderResults(r);
@@ -1188,7 +1188,7 @@ async function doGenerate(){
   var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
   document.getElementById('status').textContent='Generating package...';
   try{
-    var res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var res=await fetch('api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
     var blob=await res.blob();
     var url=URL.createObjectURL(blob);
@@ -1215,7 +1215,7 @@ async function doGeneratePan(){
   var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value});
   document.getElementById('status').textContent='Generating .pan...';
   try{
-    var res=await fetch('/api/generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
+    var res=await fetch('api/generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
     if(!res.ok){document.getElementById('status').textContent='Error';return;}
     var blob=await res.blob();
     var url=URL.createObjectURL(blob);
@@ -1231,7 +1231,7 @@ async function doGenerateFull(){
   var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value});
   document.getElementById('status').textContent='Generating full package...';
   try{
-    var res=await fetch('/api/generate-full',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
+    var res=await fetch('api/generate-full',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
     if(!res.ok){document.getElementById('status').textContent='Error';return;}
     var blob=await res.blob();
     var url=URL.createObjectURL(blob);
@@ -1252,7 +1252,7 @@ async function doAdminLogin(){
   var u=document.getElementById('loginUser').value;
   var p=document.getElementById('loginPass').value;
   try{
-    var res=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    var res=await fetch('api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
     if(!res.ok){document.getElementById('loginError').textContent='Invalid credentials';return;}
     var d=await res.json();
     adminToken=d.token;
@@ -1270,7 +1270,7 @@ async function doAdminLogin(){
 // --- I/O Map Export/Import ---
 async function exportIOMap(){
   var a=document.createElement('a');
-  a.href='/api/io-map/export?token='+adminToken;a.download='SBS-Standard-IO-Map.xlsx';
+  a.href='api/io-map/export?token='+adminToken;a.download='SBS-Standard-IO-Map.xlsx';
   document.body.appendChild(a);a.click();a.remove();
   document.getElementById('status').textContent='I/O Map exported';
 }
@@ -1279,7 +1279,7 @@ function importIOMap(input){
   var fd=new FormData();
   fd.append('file',input.files[0]);
   document.getElementById('status').textContent='Importing I/O map...';
-  fetch('/api/io-map/import?token='+adminToken,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+  fetch('api/io-map/import?token='+adminToken,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
     if(d.ok)document.getElementById('status').textContent='I/O Map imported: '+d.inputs+' inputs, '+d.outputs+' outputs';
     else document.getElementById('status').textContent='Import error: '+JSON.stringify(d);
   }).catch(e=>{document.getElementById('status').textContent='Import error: '+e;});
@@ -1296,7 +1296,7 @@ async function uploadPan(){
   var fd=new FormData();fd.append('file',f);
   document.getElementById('intakeStatus').textContent='Analyzing...';
   try{
-    var res=await fetch('/api/intake/upload?token='+adminToken,{method:'POST',body:fd});
+    var res=await fetch('api/intake/upload?token='+adminToken,{method:'POST',body:fd});
     if(!res.ok){var e=await res.json();document.getElementById('intakeStatus').textContent='Error: '+e.detail;return;}
     intakeData=await res.json();
     renderIntake(intakeData);
@@ -1364,7 +1364,7 @@ function openUsers(){
 }
 function closeUsers(){document.getElementById('usersModal').classList.remove('open');}
 async function loadUserList(){
-  var res=await fetch('/api/admin/list-users?token='+adminToken);
+  var res=await fetch('api/admin/list-users?token='+adminToken);
   var d=await res.json();
   var el=document.getElementById('userList');
   el.innerHTML=d.users.map(function(u){
@@ -1375,7 +1375,7 @@ async function addUser(){
   var u=document.getElementById('newUser').value.trim();
   var p=document.getElementById('newPass').value;
   if(!u||!p){document.getElementById('userStatus').textContent='Enter username and password';return;}
-  var res=await fetch('/api/admin/add-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,token:adminToken})});
+  var res=await fetch('api/admin/add-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,token:adminToken})});
   if(!res.ok){var e=await res.json();document.getElementById('userStatus').textContent='Error: '+e.detail;return;}
   document.getElementById('newUser').value='';document.getElementById('newPass').value='';
   document.getElementById('userStatus').textContent='User added: '+u;
@@ -1383,7 +1383,7 @@ async function addUser(){
 }
 async function removeUser(u){
   if(!confirm('Remove user: '+u+'?'))return;
-  var res=await fetch('/api/admin/remove-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:'',token:adminToken})});
+  var res=await fetch('api/admin/remove-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:'',token:adminToken})});
   if(!res.ok){var e=await res.json();document.getElementById('userStatus').textContent='Error: '+e.detail;return;}
   document.getElementById('userStatus').textContent='Removed: '+u;
   loadUserList();
@@ -1402,14 +1402,14 @@ function closeEditor(){
   editorDirty=false;
 }
 async function loadBasList(){
-  var res=await fetch('/api/bas/list?token='+adminToken);
+  var res=await fetch('api/bas/list?token='+adminToken);
   var d=await res.json();
   var el=document.getElementById('basFileList');
   el.innerHTML=d.files.map(function(f){return '<div class="bf'+(f===editorFile?' sel':'')+'" onclick="loadBasFile(\\x27'+f+'\\x27)">'+f+'</div>';}).join('');
 }
 async function loadBasFile(fn){
   if(editorDirty&&!confirm('Unsaved changes in '+editorFile+'. Discard?'))return;
-  var res=await fetch('/api/bas/read?filename='+encodeURIComponent(fn)+'&token='+adminToken);
+  var res=await fetch('api/bas/read?filename='+encodeURIComponent(fn)+'&token='+adminToken);
   if(!res.ok){document.getElementById('edStatus').textContent='Error loading';return;}
   var d=await res.json();
   editorFile=fn;
@@ -1422,7 +1422,7 @@ function onEditorChange(){editorDirty=true;document.getElementById('edStatus').t
 async function saveBasFile(){
   if(!editorFile){document.getElementById('edStatus').textContent='No file selected';return;}
   var code=document.getElementById('basEditor').value;
-  var res=await fetch('/api/bas/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:editorFile,code:code,token:adminToken})});
+  var res=await fetch('api/bas/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:editorFile,code:code,token:adminToken})});
   if(!res.ok){var e=await res.json();document.getElementById('edStatus').textContent='Error: '+e.detail;return;}
   editorDirty=false;
   document.getElementById('edStatus').textContent='Saved: '+editorFile;
