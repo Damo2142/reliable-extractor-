@@ -1,0 +1,58 @@
+SBS HW-PLANT I/O TERMINAL MAP — MPS (MACH-ProSys)
+==================================================
+
+INPUTS (AI/BI)
+─────────────────────────────────────────────────
+ Row  Point              Type  Module           Notes
+ ───  ─────              ────  ──────           ─────
+  1   HWS-T              AI    hw-core          HW Supply Temperature
+  2   HWR-T              AI    hw-core          HW Return Temperature
+  3   OAT                AI    hw-core          Outside Air Temperature
+  4   OAH                AI    hw-core          Outside Air Humidity
+  5   BLR1-ALARM         BI    hw-blr-*         Boiler 1 Alarm
+  6   BLR2-ALARM         BI    hw-blr-*         Boiler 2 Alarm
+  7   BLR1-HWST          AI    hw-blr-*         Boiler 1 Supply Temp (optional)
+  8   BLR3-ALARM         BI    hw-blr-*         Boiler 3 Alarm (if 3+)
+  9   BLR2-HWST          AI    hw-blr-*         Boiler 2 Supply Temp (optional)
+ 10   BLR4-ALARM         BI    hw-blr-*         Boiler 4 Alarm (if 4)
+ 11   HWP1-STS           BI    hw-pump-*        Pump 1 Status
+ 12   HWP2-STS           BI    hw-pump-*        Pump 2 Status
+ 13   HWP3-STS           BI    hw-pump-*        Pump 3 Status (if 3+)
+ 14   HWP4-STS           BI    hw-pump-*        Pump 4 Status (if 4)
+ 15   HW-PRESS1          AI    hw-pump-vfd/ps   DP Sensor 1
+ 16   HW-PRESS2          AI    hw-pump-vfd      DP Sensor 2
+ 17   ---                      (reserved)
+ 18   BLR1-ISO-VLV-ES    BI    hw-iso-valves    Boiler 1 Iso Valve End Switch
+ 19   BLR2-ISO-VLV-ES    BI    hw-iso-valves    Boiler 2 Iso Valve End Switch
+ 20   BLR3-ISO-VLV-ES    BI    hw-iso-valves    Boiler 3 Iso Valve End Switch
+ 21   ---                      (reserved)
+ 22   BLR1-COMB-DMPR-STS BI    hw-comb-damper   Boiler 1 Comb Damper Status
+ 23   BLR2-COMB-DMPR-STS BI    hw-comb-damper   Boiler 2 Comb Damper Status
+ 24   BLR3-COMB-DMPR-STS BI    hw-comb-damper   Boiler 3 Comb Damper Status
+ 25   HX-SUPW-T          AI    hw-hx            Heat Exchanger Supply Water
+ 26   HX-RETW-T          AI    hw-hx            Heat Exchanger Return Water
+ 27   MAKEUP-WTR-FLOW    AI    hw-makeup-water  Makeup Water Flow
+
+
+OUTPUTS (AO/BO)
+─────────────────────────────────────────────────
+ Row  Point              Type  Module           Notes
+ ───  ─────              ────  ──────           ─────
+  1   BLRS-ENABLE        BO    hw-blr-cascade   Boiler Enable Contact
+      BLR1-S/S           BO    hw-blr-full      Boiler 1 Start/Stop
+  2   BLRS-SPT-AO        AO    hw-blr-cascade   Boiler SPT (analog only)
+      BLR2-S/S           BO    hw-blr-full      Boiler 2 Start/Stop
+  3   BLR1-MOD           AO    hw-blr-full      Boiler 1 Fire Rate
+      BLR3-S/S           BO    hw-blr-full      Boiler 3 S/S (if 3+)
+  4   BLR4-S/S           BO    hw-blr-full      Boiler 4 S/S (if 4)
+  5   BLR2-MOD           AO    hw-blr-full      Boiler 2 Fire Rate
+  7   BLR3-MOD           AO    hw-blr-full      Boiler 3 Fire Rate (if 3+)
+  9   HWP1-S/S           BO    hw-pump-*        Pump 1 Start/Stop
+ 10   HWP2-S/S           BO    hw-pump-*        Pump 2 Start/Stop
+ 11   HWP1-SPEED         AO    hw-pump-vfd/ps   Pump 1 VFD Speed
+ 12   ---                      (reserved)
+ 13   HWP2-SPEED         AO    hw-pump-vfd/ps   Pump 2 VFD Speed
+ 17   HW-MIXING-VLV      AO    hw-mixing-valve  Mixing Valve
+ 18   BLR1-ISO-VLV       BO    hw-iso-valves    Boiler 1 Iso Valve
+ 19   HX-VLV / HX-VLV-1/3 AO  hw-hx            Heat Exchanger Valve
+ 20   HX-VLV-2/3         AO    hw-hx            HX 2/3 Valve (1/3+2/3 only)
