@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SBS Summary Table Generator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Barlow:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0f1117;
+    --bg2: #161b24;
+    --bg3: #1e2433;
+    --bg4: #252d40;
+    --border: #2a3347;
+    --border2: #364060;
+    --accent: #0065A3;
+    --accent2: #0080cc;
+    --accent3: #00a8ff;
+    --green: #00c48c;
+    --amber: #f5a623;
+    --red: #e84545;
+    --text: #e2e8f0;
+    --text2: #8899aa;
+    --text3: #566070;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Barlow', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .header-logo {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 13px;
+    color: #fff;
+    letter-spacing: -0.5px;
+  }
+  .header-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.3px;
+  }
+  .header-sub {
+    font-size: 12px;
+    color: var(--text2);
+    font-family: var(--mono);
+    margin-left: auto;
+  }
+
+  /* Layout */
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    min-height: calc(100vh - 65px);
+  }
+
+  /* Sidebar */
+  .sidebar {
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    overflow-y: auto;
+  }
+
+  .section-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin-bottom: 10px;
+  }
+
+  /* Drop zone */
+  .dropzone {
+    border: 2px dashed var(--border2);
+    border-radius: 10px;
+    padding: 24px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--bg3);
+    position: relative;
+  }
+  .dropzone:hover, .dropzone.drag-over {
+    border-color: var(--accent2);
+    background: rgba(0,101,163,0.08);
+  }
+  .dropzone.loaded {
+    border-color: var(--green);
+    border-style: solid;
+    background: rgba(0,196,140,0.06);
+  }
+  .dropzone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .dropzone-icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+    display: block;
+  }
+  .dropzone-text {
+    font-size: 13px;
+    color: var(--text2);
+    line-height: 1.5;
+  }
+  .dropzone-filename {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--green);
+    margin-top: 6px;
+    word-break: break-all;
+  }
+
+  /* Options */
+  .option-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--bg3);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .option-label {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .option-sub {
+    font-size: 11px;
+    color: var(--text2);
+    margin-top: 2px;
+  }
+
+  /* Toggle */
+  .toggle {
+    position: relative;
+    width: 40px; height: 22px;
+    flex-shrink: 0;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    position: absolute; inset: 0;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .toggle input:checked ~ .toggle-track { background: var(--accent); border-color: var(--accent2); }
+  .toggle-thumb {
+    position: absolute;
+    width: 16px; height: 16px;
+    top: 2px; left: 2px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s;
+    pointer-events: none;
+  }
+  .toggle input:checked ~ .toggle-track ~ .toggle-thumb { transform: translateX(18px); }
+
+  /* Inputs */
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .input-group label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text2);
+    letter-spacing: 0.3px;
+  }
+  .input-group input[type=text] {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 12px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+  .input-group input[type=text]:focus { border-color: var(--accent2); }
+  .input-group input[type=text]::placeholder { color: var(--text3); }
+
+  /* Generate button */
+  .btn-generate {
+    width: 100%;
+    padding: 13px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 9px;
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .btn-generate:hover { background: var(--accent2); transform: translateY(-1px); }
+  .btn-generate:active { transform: translateY(0); }
+  .btn-generate:disabled { background: var(--bg4); color: var(--text3); cursor: not-allowed; transform: none; }
+
+  /* Main content */
+  .main {
+    padding: 28px 32px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  /* How to use */
+  .how-to {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .how-to-header {
+    padding: 14px 20px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .how-to-header span { font-weight: 600; font-size: 13px; }
+  .how-to-header .chevron { margin-left: auto; color: var(--text2); transition: transform 0.2s; font-size: 12px; }
+  .how-to-header.open .chevron { transform: rotate(180deg); }
+  .how-to-body {
+    padding: 20px;
+    display: none;
+  }
+  .how-to-body.open { display: block; }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .step {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .step-num {
+    width: 24px; height: 24px;
+    background: var(--accent);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .step-text {
+    font-size: 13px;
+    color: var(--text2);
+    line-height: 1.6;
+  }
+  .step-text code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--bg4);
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--accent3);
+  }
+  .step-text strong { color: var(--text); }
+
+  /* Excel format example */
+  .excel-example {
+    margin-top: 16px;
+    overflow-x: auto;
+  }
+  .excel-table {
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 11px;
+    width: 100%;
+  }
+  .excel-table th {
+    background: var(--accent);
+    color: #fff;
+    padding: 7px 12px;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .excel-table td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text2);
+    white-space: nowrap;
+  }
+  .excel-table tr:nth-child(even) td { background: var(--bg3); }
+  .excel-table tr:last-child td { border-bottom: none; }
+  .excel-table td:first-child, .excel-table td:nth-child(2) { color: var(--text); }
+  .col-required { color: var(--amber) !important; }
+
+  /* Preview panel */
+  .preview-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .preview-header {
+    padding: 12px 20px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .preview-header span { font-weight: 600; font-size: 13px; }
+  .preview-badge {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--bg4);
+    color: var(--text3);
+  }
+  .preview-badge.active {
+    background: rgba(0,196,140,0.15);
+    color: var(--green);
+  }
+  .preview-body {
+    padding: 20px;
+    min-height: 120px;
+  }
+  .preview-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100px;
+    color: var(--text3);
+    font-size: 13px;
+    gap: 8px;
+  }
+
+  /* Preview table */
+  .preview-scroll { overflow-x: auto; }
+  .preview-table {
+    border-collapse: collapse;
+    font-size: 12px;
+    min-width: 100%;
+  }
+  .preview-table th {
+    background: #0065A3;
+    color: #B2B2B2;
+    padding: 8px 14px;
+    text-align: center;
+    font-weight: 600;
+    font-family: var(--sans);
+    white-space: nowrap;
+    font-size: 11px;
+  }
+  .preview-table th:first-child { text-align: left; min-width: 180px; }
+  .preview-table td {
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text2);
+    white-space: nowrap;
+  }
+  .preview-table td:first-child {
+    text-align: left;
+    color: var(--accent3);
+    font-weight: 500;
+  }
+  .preview-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+  .comms-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .comms-ok { background: rgba(0,196,140,0.15); color: var(--green); }
+  .comms-fail { background: rgba(232,69,69,0.15); color: var(--red); }
+
+  /* Point code cell styles */
+  .pt-code {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: var(--mono);
+    font-weight: 600;
+    background: rgba(0,168,255,0.1);
+    color: var(--accent3);
+    border: 1px solid rgba(0,168,255,0.2);
+  }
+  .pt-blank {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: var(--mono);
+    background: rgba(232,69,69,0.08);
+    color: var(--text3);
+    border: 1px dashed rgba(232,69,69,0.25);
+  }
+  .pt-diff {
+    background: rgba(245,166,35,0.12);
+    color: var(--amber);
+    border-color: rgba(245,166,35,0.3);
+  }
+
+  /* View toggle */
+  .view-toggle {
+    display: flex;
+    gap: 4px;
+    background: var(--bg4);
+    border-radius: 7px;
+    padding: 3px;
+  }
+  .view-btn {
+    padding: 5px 12px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text2);
+    font-family: var(--sans);
+    transition: all 0.15s;
+  }
+  .view-btn.active {
+    background: var(--bg2);
+    color: var(--text);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text3);
+  }
+
+  /* Stats row */
+  .stats-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .stat-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 16px;
+    min-width: 100px;
+  }
+  .stat-val {
+    font-size: 22px;
+    font-weight: 700;
+    font-family: var(--mono);
+    color: var(--accent3);
+    line-height: 1;
+  }
+  .stat-lbl {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 3px;
+  }
+
+  /* Status message */
+  .status-msg {
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: var(--mono);
+    display: none;
+  }
+  .status-msg.success {
+    background: rgba(0,196,140,0.12);
+    border: 1px solid rgba(0,196,140,0.3);
+    color: var(--green);
+    display: block;
+  }
+  .status-msg.error {
+    background: rgba(232,69,69,0.12);
+    border: 1px solid rgba(232,69,69,0.3);
+    color: var(--red);
+    display: block;
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+
+  /* RC Studio color swatch note */
+  .color-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text3);
+    font-family: var(--mono);
+    padding: 8px 12px;
+    background: var(--bg3);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .swatch {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-logo">SBS</div>
+  <div class="header-title">Summary Table Generator</div>
+  <div class="header-sub">RC Studio / Reliable Controls</div>
+</div>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div>
+      <div class="section-label">Excel File</div>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".xlsx,.xls" onchange="handleFile(event)">
+        <span class="dropzone-icon">📊</span>
+        <div class="dropzone-text">Drop Excel file here<br>or click to browse</div>
+        <div class="dropzone-filename" id="dropzone-name"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Options</div>
+      <div class="option-row">
+        <div>
+          <div class="option-label">Communication Status</div>
+          <div class="option-sub">Add Communicating / Not Communicating column</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="opt-comms" checked onchange="updatePreview()">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Output Filenames</div>
+      <div class="input-group">
+        <label>Table Config JSON</label>
+        <input type="text" id="configFilename" placeholder="table-config.json">
+      </div>
+      <div class="input-group">
+        <label>Table Settings JSON</label>
+        <input type="text" id="settingsFilename" placeholder="table-settings.json">
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">RC Studio Colours</div>
+      <div class="color-note"><div class="swatch" style="background:#0065A3"></div> Header Background #0065A3</div>
+      <div style="height:6px"></div>
+      <div class="color-note"><div class="swatch" style="background:#B2B2B2"></div> Header Font #B2B2B2</div>
+      <div style="height:6px"></div>
+      <div class="color-note">Font: Calibri · Heading align: Center/Middle</div>
+    </div>
+
+    <div style="margin-top: auto;">
+      <div id="status-msg" class="status-msg"></div>
+      <div style="height:10px"></div>
+      <button class="btn-generate" id="btn-generate" onclick="generate()" disabled>
+        ⬇ Generate JSON Files
+      </button>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- How to use -->
+    <div class="how-to">
+      <div class="how-to-header" onclick="toggleHowTo(this)">
+        <span>📋 How to Use</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="how-to-body">
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-text">In RC Studio, create a new animation and select <code>Table-External-01-V02.js</code> as the script file.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-text">Prepare your Excel file with <strong>Device</strong> (BACnet device ID) and <strong>Controller Name</strong> as the first two columns. Add one column per data point you want to display — use the BACnet object code as the cell value (e.g. <code>AV9</code>, <code>AI2</code>, <code>BO1</code>, <code>MV16</code>). Column headers become the table column headings.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-text">Upload the Excel file here, set options, and click <strong>Generate JSON Files</strong>. Two files will download: <code>table-config.json</code> and <code>table-settings.json</code>.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-text">In RC Studio animation, click <strong>Import</strong> and select <code>table-settings.json</code>.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">5</div>
+            <div class="step-text">Click <strong>Attributes</strong>. On row 2 (<em>Table Config File</em>), select <code>table-config.json</code>. Set Font to <strong>Calibri</strong>, Heading alignment <strong>Center/Middle</strong>.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">6</div>
+            <div class="step-text">If using Communication Status: link the <em>Vendor ID Value of 0= Not Communicating</em> state colors to <code>{'{device}'}DEV{'{device}'}:120</code> — value &gt;0 = Communicating, 0 = Not Communicating. Hit OK and send to system.</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 20px;">
+          <div class="section-label">Excel Format</div>
+          <div class="excel-example">
+            <table class="excel-table">
+              <tr>
+                <th class="col-required">Device ★</th>
+                <th class="col-required">Controller Name ★</th>
+                <th>RMT</th>
+                <th>ACT CLG SPT</th>
+                <th>DA-T</th>
+                <th>DAMPER</th>
+                <th>OCC MODE</th>
+              </tr>
+              <tr><td>10132</td><td>VAV-1-7</td><td>AV9</td><td>AV10</td><td>AI1</td><td>AI5</td><td>MV16</td></tr>
+              <tr><td>10102</td><td>VAV-1-5</td><td>AV9</td><td>AV10</td><td>AI1</td><td>AI5</td><td>MV16</td></tr>
+              <tr><td>10111</td><td>VAV-1-1</td><td>AV9</td><td>AV10</td><td>AI1</td><td>AI5</td><td>MV16</td></tr>
+            </table>
+          </div>
+          <div style="margin-top:8px; font-size:11px; color:var(--text3)">★ Required columns. All other columns define BACnet data points.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row" id="stats-row" style="display:none">
+      <div class="stat-card"><div class="stat-val" id="stat-controllers">0</div><div class="stat-lbl">Controllers</div></div>
+      <div class="stat-card"><div class="stat-val" id="stat-columns">0</div><div class="stat-lbl">Data Columns</div></div>
+      <div class="stat-card"><div class="stat-val" id="stat-points">0</div><div class="stat-lbl">Total Points</div></div>
+    </div>
+
+    <!-- Preview -->
+    <div class="preview-panel">
+      <div class="preview-header">
+        <span>Table Preview</span>
+        <div class="view-toggle" id="view-toggle" style="display:none">
+          <button class="view-btn active" onclick="setView('live')" id="btn-live">Live view</button>
+          <button class="view-btn" onclick="setView('mapping')" id="btn-mapping">Point mapping</button>
+        </div>
+        <div class="preview-badge" id="preview-badge">No file loaded</div>
+      </div>
+      <div class="preview-body">
+        <div class="preview-empty" id="preview-empty">
+          📊 Upload an Excel file to see a preview
+        </div>
+        <div id="preview-content" style="display:none">
+          <div class="preview-scroll">
+            <table class="preview-table" id="preview-table"></table>
+          </div>
+          <div class="legend" id="preview-legend" style="display:none">
+            <div class="legend-item"><span class="pt-code">AV9</span> Point mapped</div>
+            <div class="legend-item"><span class="pt-code pt-diff">AV11</span> Different from first row</div>
+            <div class="legend-item"><span class="pt-blank">—</span> No point (blank)</div>
+          </div>
+          <div style="margin-top:10px; font-size:11px; color:var(--text3); font-family:var(--mono)" id="preview-note">
+            Preview shows actual RC Studio column layout.
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let parsedData = null;
+let currentView = 'live';
+
+// ── File handling ──────────────────────────────────────────────────────────
+
+function handleFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+      const headers = raw[0].map(h => (h || '').toString().trim());
+      const rows = raw.slice(1)
+        .filter(r => r[0] || r[1])
+        .map(row => {
+          const obj = {};
+          headers.forEach((h, i) => obj[h] = (row[i] !== undefined && row[i] !== null) ? row[i].toString().trim() : '');
+          return obj;
+        });
+
+      if (!headers.includes('Device') || !headers.includes('Controller Name')) {
+        showStatus('error', 'Excel must have "Device" and "Controller Name" columns.');
+        return;
+      }
+
+      parsedData = { headers, rows };
+
+      document.getElementById('dropzone').classList.add('loaded');
+      document.getElementById('dropzone-name').textContent = file.name;
+      document.getElementById('btn-generate').disabled = false;
+      document.getElementById('view-toggle').style.display = 'flex';
+
+      const base = file.name.replace(/\.(xlsx|xls)$/i, '').toLowerCase().replace(/\s+/g, '-');
+      document.getElementById('configFilename').placeholder = base + '-config.json';
+      document.getElementById('settingsFilename').placeholder = base + '-settings.json';
+
+      updatePreview();
+      showStatus('', '');
+    } catch(err) {
+      showStatus('error', 'Failed to read Excel: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Drag and drop
+const dz = document.getElementById('dropzone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile({ target: { files: [file] } });
+});
+
+// ── View toggle ────────────────────────────────────────────────────────────
+
+function setView(v) {
+  currentView = v;
+  document.getElementById('btn-live').classList.toggle('active', v === 'live');
+  document.getElementById('btn-mapping').classList.toggle('active', v === 'mapping');
+  document.getElementById('preview-legend').style.display = v === 'mapping' ? 'flex' : 'none';
+  document.getElementById('preview-note').textContent = v === 'live'
+    ? 'Preview shows actual RC Studio column layout.'
+    : 'Point mapping view — shows BACnet object per device. Amber = differs from first device. Red dashed = blank (no point).';
+  updatePreview();
+}
+
+// ── Preview ────────────────────────────────────────────────────────────────
+
+function updatePreview() {
+  if (!parsedData) return;
+  const { headers, rows } = parsedData;
+  const inclComms = document.getElementById('opt-comms').checked;
+  const dynCols = headers.filter(h => h !== 'Device' && h !== 'Controller Name');
+
+  // Compute "baseline" point per column (first non-blank row)
+  const baseline = {};
+  dynCols.forEach(col => {
+    const first = rows.find(r => r[col]);
+    baseline[col] = first ? first[col] : '';
+  });
+
+  // Check for any variation
+  const hasVariation = dynCols.some(col =>
+    rows.some(r => r[col] && r[col] !== baseline[col])
+  );
+  const hasBlanks = dynCols.some(col => rows.some(r => !r[col]));
+
+  // Stats
+  const totalPoints = rows.length * (dynCols.length + (inclComms ? 1 : 0));
+  document.getElementById('stat-controllers').textContent = rows.length;
+  document.getElementById('stat-columns').textContent = dynCols.length + (inclComms ? 1 : 0);
+  document.getElementById('stat-points').textContent = totalPoints;
+  document.getElementById('stats-row').style.display = 'flex';
+
+  const colHeaders = ['Name', ...(inclComms ? ['Comms'] : []), ...dynCols];
+  let html = '<thead><tr>';
+  colHeaders.forEach(h => html += `<th>${h}</th>`);
+  html += '</tr></thead><tbody>';
+
+  const previewRows = rows.slice(0, 10);
+  previewRows.forEach(row => {
+    html += '<tr>';
+    html += `<td>${row['Controller Name'] || '—'}</td>`;
+    if (inclComms) html += `<td><span class="comms-badge comms-ok">Communicating</span></td>`;
+
+    dynCols.forEach(col => {
+      const code = row[col] || '';
+      if (currentView === 'mapping') {
+        if (!code) {
+          html += `<td><span class="pt-blank">—</span></td>`;
+        } else if (code !== baseline[col]) {
+          html += `<td><span class="pt-code pt-diff">${code}</span></td>`;
+        } else {
+          html += `<td><span class="pt-code">${code}</span></td>`;
+        }
+      } else {
+        // Live view — show device+code like RC Studio would resolve it
+        const deviceId = row['Device'] || '';
+        html += `<td style="color:var(--text2)">${code ? deviceId + code : '<span style="color:var(--text3)">—</span>'}</td>`;
+      }
+    });
+    html += '</tr>';
+  });
+
+  if (rows.length > 10) {
+    html += `<tr><td colspan="${colHeaders.length}" style="text-align:center;color:var(--text3);padding:10px;font-family:var(--mono);font-size:11px">… and ${rows.length - 10} more rows</td></tr>`;
+  }
+  html += '</tbody>';
+
+  document.getElementById('preview-table').innerHTML = html;
+  document.getElementById('preview-empty').style.display = 'none';
+  document.getElementById('preview-content').style.display = 'block';
+
+  const badge = document.getElementById('preview-badge');
+  const warnings = [];
+  if (hasVariation) warnings.push('mixed point locations');
+  if (hasBlanks) warnings.push('some blanks');
+  badge.textContent = warnings.length
+    ? `${rows.length} controllers · ⚠ ${warnings.join(', ')}`
+    : `${rows.length} controllers · ${colHeaders.length} columns`;
+  badge.classList.add('active');
+  if (warnings.length) badge.style.background = 'rgba(245,166,35,0.15)';
+  else badge.style.background = '';
+  if (warnings.length) badge.style.color = 'var(--amber)';
+  else badge.style.color = '';
+}
+
+// ── Generate ───────────────────────────────────────────────────────────────
+
+function generate() {
+  if (!parsedData) return;
+  try {
+    const { headers, rows } = parsedData;
+    const inclComms = document.getElementById('opt-comms').checked;
+    const dynCols = headers.filter(h => h !== 'Device' && h !== 'Controller Name');
+    const tableHeaders = ['Name', ...(inclComms ? ['Vendor ID Value of 0= Not Communicating'] : []), ...dynCols];
+
+    // ── table-config.json ──────────────────────────────────────
+    const tableConfig = { Table: [] };
+
+    const headerContent = tableHeaders.map(h =>
+      `[span:1' style='position:sticky; top:0; z-index:1;]${h}`
+    );
+    tableConfig.Table.push({ Type: 'Header', Content: headerContent });
+
+    let placeholderIndex = 1;
+    const pointsList = [];
+    const numCols = tableHeaders.length;
+
+    rows.forEach(row => {
+      const deviceId = row['Device'];
+      const controllerName = row['Controller Name'];
+      const rowContent = [];
+
+      // Name — click destination
+      rowContent.push(`[span:1' style=']{{${placeholderIndex}^${controllerName}}}`);
+
+      let colIdx = placeholderIndex + 1;
+
+      // Comms column
+      if (inclComms) {
+        rowContent.push(`[span:1' style='text-align:center;]{R${colIdx}}`);
+        colIdx++;
+      }
+
+      // Data columns — each uses THIS ROW's point code (per-device mapping)
+      dynCols.forEach((col, i) => {
+        const prefix = (i % 2 === 0) ? 'R' : '';
+        rowContent.push(`[span:1' style='width:110px;text-align:center;]{${prefix}${colIdx}}`);
+        colIdx++;
+      });
+
+      tableConfig.Table.push({ Type: 'Row', 'Row State': '', Content: rowContent });
+
+      // Points list — read from each row individually
+      const nameLinked = `${deviceId}GRP1`;
+      pointsList.push({ 'Click Destination': nameLinked, 'Linked Object': nameLinked });
+
+      if (inclComms) {
+        pointsList.push({ 'Click Destination': '', 'Linked Object': `${deviceId}DEV${deviceId}:120` });
+      }
+
+      dynCols.forEach(col => {
+        // Each device uses its OWN point code from its row — this is the fix
+        const code = row[col] || '';
+        const linked = code ? `${deviceId}${code}` : '';
+        pointsList.push({ 'Click Destination': '', 'Linked Object': linked });
+      });
+
+      placeholderIndex += numCols;
+    });
+
+    // ── table-settings.json ────────────────────────────────────
+    const settings = {
+      'Custom Attributes': [
+        { title: 'Table - Background Color', type: 'color', value: '#3d3d3d', variable: 'gTableBGColor' },
+        { title: 'Table - Border Color', type: 'color', value: '#555555', variable: 'gTableBorderColor' },
+        { title: 'Table - Text Color', type: 'color', value: '#ffffff', variable: 'gTableTextColor' },
+        { title: 'Table - Alternate Row Color', type: 'color', value: '#474747', variable: 'gTableAltRowColor' },
+        { title: 'Table - Header Background Color', type: 'color', value: '#0065A3', variable: 'gTableHeaderBGColor' },
+        { title: 'Table - Header Text Color', type: 'color', value: '#B2B2B2', variable: 'gTableHeaderTextColor' },
+        { title: 'Table - Font Family', type: 'text', value: 'Calibri', variable: 'gTableFontFamily' },
+        { title: 'Table - Font Size', type: 'number', value: '14', variable: 'gTableFontSize' },
+        { title: 'Table - Row Height', type: 'number', value: '30', variable: 'gTableRowHeight' },
+        { title: 'Table - Header Height', type: 'number', value: '35', variable: 'gTableHeaderHeight' },
+        { title: 'Table - Heading Horizontal Alignment', type: 'text', value: 'Center', variable: 'gTableHeadingHAlign' },
+        { title: 'Table - Heading Vertical Alignment', type: 'text', value: 'Middle', variable: 'gTableHeadingVAlign' },
+        { title: 'Table Config File', type: 'file', value: '', variable: 'gTableConfigFile' },
+        { title: 'Not Communicating Color', type: 'color', value: '#e84545', variable: 'gNotCommColor' },
+        { title: 'Communicating Color', type: 'color', value: '#00c48c', variable: 'gCommColor' }
+      ],
+      Width: 1250,
+      Points: pointsList
+    };
+
+    const configName = document.getElementById('configFilename').value.trim()
+      || document.getElementById('configFilename').placeholder
+      || 'table-config.json';
+    const settingsName = document.getElementById('settingsFilename').value.trim()
+      || document.getElementById('settingsFilename').placeholder
+      || 'table-settings.json';
+
+    downloadJSON(tableConfig, configName);
+    setTimeout(() => downloadJSON(settings, settingsName), 200);
+
+    // Count blanks and variations for status
+    const dynCols2 = headers.filter(h => h !== 'Device' && h !== 'Controller Name');
+    const blankCount = rows.reduce((acc, row) => acc + dynCols2.filter(c => !row[c]).length, 0);
+
+    let msg = `✓ Generated ${configName} and ${settingsName}\n`;
+    msg += `  ${rows.length} controllers · ${tableHeaders.length} columns · ${pointsList.length} points`;
+    if (blankCount > 0) msg += `\n  ⚠ ${blankCount} blank point(s) — those cells will show no data in RC Studio`;
+    showStatus('success', msg);
+  } catch(err) {
+    showStatus('error', 'Error generating files: ' + err.message);
+    console.error(err);
+  }
+}
+
+function downloadJSON(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function showStatus(type, msg) {
+  const el = document.getElementById('status-msg');
+  el.className = 'status-msg' + (type ? ' ' + type : '');
+  el.style.whiteSpace = 'pre-line';
+  el.textContent = msg;
+}
+
+function toggleHowTo(header) {
+  header.classList.toggle('open');
+  header.nextElementSibling.classList.toggle('open');
+}
+</script>
+</body>
+</html>

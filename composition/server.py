@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -1752,6 +1752,14 @@ init();
 </div>
 </body>
 </html>"""
+
+
+SUMMARY_TABLE_HTML = Path(__file__).parent / "SBS-Summary-Table-Generator.html"
+
+
+@app.get("/summary-table", response_class=HTMLResponse)
+async def summary_table():
+    return HTMLResponse(SUMMARY_TABLE_HTML.read_text())
 
 
 if __name__ == "__main__":
