@@ -1,0 +1,701 @@
+{
+  "inputs": [
+    {
+      "row": 1,
+      "name": "SF-S",
+      "type": "BI",
+      "range": "Off/On",
+      "units": "",
+      "description": "Supply Fan Status",
+      "module": "core"
+    },
+    {
+      "row": 2,
+      "name": "EF-S",
+      "type": "BI",
+      "range": "Off/On",
+      "units": "",
+      "description": "Exhaust Fan Status",
+      "module": "fan-ef-cs"
+    },
+    {
+      "row": 3,
+      "name": "LTC",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Low Temperature Cutout",
+      "module": "safe-freeze"
+    },
+    {
+      "row": 4,
+      "name": "SMOKE",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Duct Smoke Detector",
+      "module": "safe-smoke"
+    },
+    {
+      "row": 5,
+      "name": "MAT",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "Mixed Air Temperature",
+      "module": "core"
+    },
+    {
+      "row": 6,
+      "name": "SAT",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "Supply Air Temperature",
+      "module": "core"
+    },
+    {
+      "row": 7,
+      "name": "RAT",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "Return Air Temperature",
+      "module": "core"
+    },
+    {
+      "row": 8,
+      "name": "HOT-DECK-T",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "Hot Deck Temperature",
+      "module": "dd-hot-elec"
+    },
+    {
+      "row": 9,
+      "name": "RA-CO2",
+      "type": "AI",
+      "range": "Table1",
+      "units": "ppm",
+      "description": "Return Air CO2",
+      "module": "dcv-co2"
+    },
+    {
+      "row": 10,
+      "name": "RAH",
+      "type": "AI",
+      "range": "0 ->100% (0-5V)",
+      "units": "%",
+      "description": "Return Air Humidity",
+      "module": "dehum-sc"
+    },
+    {
+      "row": 11,
+      "name": "ERW-EA-EAT",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "ERW Exhaust Entering Air Temp",
+      "module": "erw"
+    },
+    {
+      "row": 12,
+      "name": "SA-DSP",
+      "type": "AI",
+      "range": "Table2",
+      "units": "WC",
+      "description": "Duct Static Pressure",
+      "module": "core"
+    },
+    {
+      "row": 13,
+      "name": "SA-HPS",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Supply Air High Static Switch",
+      "module": "safe-hi-static"
+    },
+    {
+      "row": 14,
+      "name": "BLDG-PRESS",
+      "type": "AI",
+      "range": "Table4",
+      "units": "WC",
+      "description": "Building Static Pressure",
+      "module": "fan-rf-vfd"
+    },
+    {
+      "row": 15,
+      "name": "EA-HPS",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Exhaust Air High Static Switch",
+      "module": "safe-ea-static"
+    },
+    {
+      "row": 18,
+      "name": "ZN-RH",
+      "type": "AI",
+      "range": "0 ->100% (0-5V)",
+      "units": "%",
+      "description": "Zone Humidity",
+      "module": "dehum-sc"
+    },
+    {
+      "row": 19,
+      "name": "MA-FILT",
+      "type": "BI",
+      "range": "Clean/Dirty",
+      "units": "",
+      "description": "Mixed Air Filter DP Switch",
+      "module": "safe-filter"
+    },
+    {
+      "row": 21,
+      "name": "OA-CFM",
+      "type": "AI",
+      "range": "Table3",
+      "units": "CFM",
+      "description": "Outside Airflow",
+      "module": "vent-ams"
+    },
+    {
+      "row": 22,
+      "name": "EA-CFM",
+      "type": "AI",
+      "range": "Table5",
+      "units": "CFM",
+      "description": "Exhaust Airflow",
+      "module": "fan-ef-vfd"
+    },
+    {
+      "row": 23,
+      "name": "EA-DMP-ES",
+      "type": "BI",
+      "range": "Close/Open",
+      "units": "",
+      "description": "Exhaust Damper End Switch",
+      "module": "fan-ef-cs"
+    },
+    {
+      "row": 24,
+      "name": "ERW-STATUS",
+      "type": "BI",
+      "range": "Off/On",
+      "units": "",
+      "description": "ERW Status Feedback",
+      "module": "erw"
+    },
+    {
+      "row": 25,
+      "name": "OA-FILT",
+      "type": "BI",
+      "range": "Clean/Dirty",
+      "units": "",
+      "description": "OA Pre-Filter DP Switch",
+      "module": "safe-filter-oa"
+    },
+    {
+      "row": 26,
+      "name": "FINAL-FILT",
+      "type": "BI",
+      "range": "Clean/Dirty",
+      "units": "",
+      "description": "Final Filter DP Switch",
+      "module": "safe-filter-final"
+    },
+    {
+      "row": 27,
+      "name": "EA-FILT",
+      "type": "BI",
+      "range": "Clean/Dirty",
+      "units": "",
+      "description": "Exhaust Filter DP Switch",
+      "module": "safe-filter-ea"
+    },
+    {
+      "row": 28,
+      "name": "RLF-S",
+      "type": "BI",
+      "range": "Off/On",
+      "units": "",
+      "description": "Relief Fan Status",
+      "module": "fan-rlf-cs"
+    },
+    {
+      "row": 29,
+      "name": "ERW-OA-DAT",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "ERW OA Leaving Air Temp",
+      "module": "erw"
+    },
+    {
+      "row": 30,
+      "name": "ERW-EA-DAT",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "ERW Exhaust Leaving Air Temp",
+      "module": "erw"
+    },
+    {
+      "row": 31,
+      "name": "HWC-SUPW-T",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "HW Coil Supply Water Temp",
+      "module": "dd-hot-hw"
+    },
+    {
+      "row": 32,
+      "name": "HWC-RETW-T",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "HW Coil Return Water Temp",
+      "module": "dd-hot-hw"
+    },
+    {
+      "row": 33,
+      "name": "CHWC-SUPW-T",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "CHW Coil Supply Water Temp",
+      "module": "clg-chw"
+    },
+    {
+      "row": 34,
+      "name": "CHWC-RETW-T",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "CHW Coil Return Water Temp",
+      "module": "clg-chw"
+    },
+    {
+      "row": 35,
+      "name": "PH-EAT",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "Preheat Entering Air Temp",
+      "module": "ph-glycol"
+    },
+    {
+      "row": 36,
+      "name": "COND-OVF",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Condensate Overflow Switch",
+      "module": "safe-cond-ovf"
+    },
+    {
+      "row": 37,
+      "name": "HUM-STS",
+      "type": "BI",
+      "range": "Off/On",
+      "units": "",
+      "description": "Humidifier Status",
+      "module": "hum-elec"
+    },
+    {
+      "row": 38,
+      "name": "FIRE-SD",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Fire Shutdown Contact",
+      "module": "safe-fire-sd"
+    },
+    {
+      "row": 39,
+      "name": "PH-SUPW-T",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "Preheat Coil Supply Water Temp",
+      "module": "ph-hw"
+    },
+    {
+      "row": 40,
+      "name": "PH-RETW-T",
+      "type": "AI",
+      "range": "10K -40 ->250",
+      "units": "\u00b0F",
+      "description": "Preheat Coil Return Water Temp",
+      "module": "ph-hw"
+    },
+    {
+      "row": 41,
+      "name": "FREEZE-DP",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Freeze Stat DP",
+      "module": "safe-freeze-dp"
+    },
+    {
+      "row": 42,
+      "name": "DX-HP",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "DX High Pressure Switch",
+      "module": "clg-dx"
+    },
+    {
+      "row": 43,
+      "name": "DX-LP",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "DX Low Pressure Switch",
+      "module": "clg-dx"
+    },
+    {
+      "row": 44,
+      "name": "GAS-PRSR",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Gas Pressure Switch",
+      "module": "htg-gas"
+    },
+    {
+      "row": 45,
+      "name": "PH-PMP-S",
+      "type": "BI",
+      "range": "Off/On",
+      "units": "",
+      "description": "Preheat Pump Status",
+      "module": "ph-glycol"
+    },
+    {
+      "row": 47,
+      "name": "RA-HPS",
+      "type": "BI",
+      "range": "Normal/Alarm",
+      "units": "",
+      "description": "Return Air High Static Switch",
+      "module": "safe-ra-static"
+    }
+  ],
+  "outputs": [
+    {
+      "row": 1,
+      "name": "OAD",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Outside Air Damper",
+      "module": "core",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 2,
+      "name": "RAD",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Return Air Damper (reverse)",
+      "module": "econ-db",
+      "min_v": 10.0,
+      "max_v": 2.0,
+      "reverse": true
+    },
+    {
+      "row": 3,
+      "name": "EAD",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Exhaust Air Damper",
+      "module": "fan-ef-cs",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 4,
+      "name": "HW-VLV",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Hot Deck HW Valve (reverse)",
+      "module": "dd-hot-hw",
+      "min_v": 10.0,
+      "max_v": 2.0,
+      "reverse": true
+    },
+    {
+      "row": 5,
+      "name": "CHW-VLV",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Chilled Water Valve",
+      "module": "clg-chw",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 6,
+      "name": "ERW-OA-BYP-DMP",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "ERW OA Bypass Damper",
+      "module": "erw",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 7,
+      "name": "ERW-EA-BYP-DMP",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "ERW EA Bypass Damper",
+      "module": "erw",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 8,
+      "name": "PH-HTR",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Preheat Electric Heater",
+      "module": "ph-elec",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 9,
+      "name": "SF",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Supply Fan Command",
+      "module": "fan-sf-cs",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 10,
+      "name": "SF-VFD-SPD",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Supply Fan ECM Speed",
+      "module": "fan-sf-ecm",
+      "min_v": 0.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 11,
+      "name": "EF",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Exhaust Fan Command",
+      "module": "fan-ef-cs",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 12,
+      "name": "EF-VFD-SPD",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Exhaust Fan VFD Speed",
+      "module": "fan-ef-vfd",
+      "min_v": 0.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 13,
+      "name": "ERW",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Energy Recovery Wheel Command",
+      "module": "erw",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 14,
+      "name": "RLF",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Relief Fan Command",
+      "module": "fan-rlf-cs",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 15,
+      "name": "RLF-VFD-SPD",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Relief Fan VFD Speed",
+      "module": "fan-rlf-vfd",
+      "min_v": 0.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 16,
+      "name": "HUM",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Humidifier Output",
+      "module": "hum-elec",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 17,
+      "name": "PH-PMP",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Preheat Glycol Pump Command",
+      "module": "ph-glycol",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 18,
+      "name": "HW-PMP",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "HW Coil Pump Command",
+      "module": "htg-hw-pump",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 19,
+      "name": "CHW-PMP",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "CHW Coil Pump Command",
+      "module": "clg-chw-pump",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 20,
+      "name": "DX-COMP-1",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "DX Compressor Stage 1",
+      "module": "clg-dx",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 21,
+      "name": "DX-COMP-2",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "DX Compressor Stage 2",
+      "module": "clg-dx-2",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 22,
+      "name": "ELEC-HTR-1",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Hot Deck Electric Stage 1",
+      "module": "dd-hot-elec",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 23,
+      "name": "ELEC-HTR-2",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Hot Deck Electric Stage 2",
+      "module": "dd-hot-elec",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 24,
+      "name": "ELEC-HTR-3",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Electric Heater Stage 3",
+      "module": "htg-elec-3",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 25,
+      "name": "GAS-VLV",
+      "type": "BO",
+      "range": "Stop/Start",
+      "description": "Gas Valve",
+      "module": "htg-gas",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 27,
+      "name": "DX-VFD-SPD",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "DX VFD Compressor Speed",
+      "module": "clg-dx-vfd",
+      "min_v": 0.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 28,
+      "name": "ELEC-SCR",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Electric Heat SCR Output",
+      "module": "htg-elec-scr",
+      "min_v": 0.0,
+      "max_v": 10.0,
+      "reverse": false
+    },
+    {
+      "row": 29,
+      "name": "GAS-MOD",
+      "type": "AO",
+      "range": "0.0 ->100%",
+      "description": "Gas Modulating Output",
+      "module": "htg-gas-mod",
+      "min_v": 2.0,
+      "max_v": 10.0,
+      "reverse": false
+    }
+  ]
+}

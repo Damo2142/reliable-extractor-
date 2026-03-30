@@ -55,10 +55,12 @@ def build_pump_cs(num_pumps=2):
         ])
 
     programs = [
-        ProgramDef(16, "HW-HWP-CTRL-PRG", "HW-PRG16-HWP-CTRL.bas", "", True,
-                   "HW pump start/stop control", "hw-pump-cs", exec_order=16),
+        ProgramDef(16, "HW-HWP1-CTRL-PRG", "HW-PRG16-HWP-CTRL.bas", "", True,
+                   "HW pump 1 start/stop control", "hw-pump-cs", exec_order=16),
     ]
     if num_pumps > 1:
+        programs.append(ProgramDef(19, "HW-HWP2-CTRL-PRG", "HW-PRG19-HWP2-CTRL.bas", "", True,
+                   "HW pump 2 start/stop control", "hw-pump-cs", exec_order=19))
         programs.append(ProgramDef(17, "HW-HWP-LEAD-LAG-PRG", "HW-PRG17-HWP-LEAD-LAG.bas", "", True,
                    "Pump lead/lag rotation and failover", "hw-pump-cs", exec_order=17))
 
@@ -145,12 +147,14 @@ def build_pump_vfd(num_pumps=2):
     ]
 
     programs = [
-        ProgramDef(16, "HW-HWP-CTRL-PRG", "HW-PRG16-HWP-CTRL.bas", "", True,
-                   "HW pump start/stop with VFD control", "hw-pump-vfd", exec_order=16),
-        ProgramDef(17, "HW-HWP-SPEED-PRG", "HW-PRG17-HWP-SPEED.bas", "", True,
-                   "Pump VFD speed from DP loop", "hw-pump-vfd", exec_order=17),
+        ProgramDef(16, "HW-HWP1-CTRL-PRG", "HW-PRG16-HWP-CTRL.bas", "", True,
+                   "HW pump 1 start/stop control", "hw-pump-vfd", exec_order=16),
+        ProgramDef(20, "HW-HWP-SPEED-PRG", "HW-PRG17-HWP-SPEED.bas", "", True,
+                   "Pump VFD speed from DP loop", "hw-pump-vfd", exec_order=20),
     ]
     if num_pumps > 1:
+        programs.append(ProgramDef(19, "HW-HWP2-CTRL-PRG", "HW-PRG19-HWP2-CTRL.bas", "", True,
+                   "HW pump 2 start/stop control", "hw-pump-vfd", exec_order=19))
         programs.append(ProgramDef(18, "HW-HWP-LEAD-LAG-PRG", "HW-PRG18-HWP-LEAD-LAG.bas", "", True,
                    "Pump lead/lag rotation and failover", "hw-pump-vfd", exec_order=18))
 
