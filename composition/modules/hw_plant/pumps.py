@@ -195,7 +195,19 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
     outputs = []
     values = []
 
-    # Primary pumps — constant speed
+    # Primary loop temps
+    inputs.append(InputPoint(28, "PRI-HWS-T", "AI", "10K -40 ->250",
+        "Primary Loop HW Supply Temperature", "°F"))
+    inputs.append(InputPoint(29, "PRI-HWR-T", "AI", "10K -40 ->250",
+        "Primary Loop HW Return Temperature", "°F"))
+
+    # Secondary loop temps
+    inputs.append(InputPoint(30, "SEC-HWS-T", "AI", "10K -40 ->250",
+        "Secondary Loop HW Supply Temperature", "°F"))
+    inputs.append(InputPoint(31, "SEC-HWR-T", "AI", "10K -40 ->250",
+        "Secondary Loop HW Return Temperature", "°F"))
+
+    # Primary pumps — constant speed, S/S outputs start at OUT9
     for n in range(1, num_primary + 1):
         outputs.append(OutputPoint(
             _PUMP_SS_BASE + n - 1, f"PHWP{n}", "BO", "Stop/Start",
@@ -211,9 +223,12 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
             f"Primary Pump {n} Out of Service"))
 
     # Secondary pumps — VFD
+    # S/S outputs continue after primary: OUT11, OUT12, ...
     sec_ss_base = _PUMP_SS_BASE + num_primary
+    # Status inputs continue after primary: IN13, IN14, ...
     sec_sts_base = _PUMP_STS_BASE + num_primary
-    sec_spd_base = _PUMP_SPD_BASE
+    # Speed AO outputs at separate rows: OUT15, OUT16, ...
+    sec_spd_base = 15
     for n in range(1, num_secondary + 1):
         outputs.append(OutputPoint(
             sec_ss_base + n - 1, f"SHWP{n}", "BO", "Stop/Start",
@@ -222,7 +237,7 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
             sec_sts_base + n - 1, f"SHWP{n}-STS", "BI", "Off/On",
             f"Secondary HW Pump {n} Status"))
         outputs.append(OutputPoint(
-            sec_spd_base + (n-1)*2, f"SHWP{n}-SPEED", "AO", "0.0 ->100%",
+            sec_spd_base + n - 1, f"SHWP{n}-SPEED", "AO", "0.0 ->100%",
             f"Secondary HW Pump {n} VFD Speed", 2.0, 10.0))
         values.append(ValuePoint(
             59 + (n-1)*2, f"SHWP{n}-FAIL", "BV", False,
@@ -240,6 +255,8 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
         ValuePoint(67, "HWS-DP-SP",       "AV", 12.0,  "Secondary DP Setpoint",  "PSI"),
         ValuePoint(68, "HWP-MIN-SPEED",   "AV", 30.0,  "Secondary Min Speed",    "%"),
         ValuePoint(69, "HWP-MAX-SPEED",   "AV", 100.0, "Secondary Max Speed",    "%"),
+        ValuePoint(73, "PRI-DELTA-T",     "AV", 0.0,   "Primary Loop Delta T",   "°F"),
+        ValuePoint(74, "SEC-DELTA-T",     "AV", 0.0,   "Secondary Loop Delta T", "°F"),
     ])
 
     loops = [

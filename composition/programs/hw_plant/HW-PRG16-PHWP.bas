@@ -4,6 +4,9 @@ REM  {device-name} — Primary Pump Control
 REM  Primary pumps run when system enabled. Lead/standby with failover.
 REM ======================================================================
 
+REM ***** Primary loop delta T *****
+{device-name}-PRI-DELTA-T = {device-name}-PRI-HWS-T - {device-name}-PRI-HWR-T
+
 REM ***** Start primary pump 1 when system enabled *****
 IF {device-name}-HW-SYS-ENAB AND NOT {device-name}-PHWP1-FAIL THEN START {device-name}-PHWP1 ELSE STOP {device-name}-PHWP1
 

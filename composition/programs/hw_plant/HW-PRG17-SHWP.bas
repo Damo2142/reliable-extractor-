@@ -4,6 +4,9 @@ REM  {device-name} — Secondary Pump Control
 REM  Lead secondary pump starts on system enable. Standby on failure.
 REM ======================================================================
 
+REM ***** Secondary loop delta T *****
+{device-name}-SEC-DELTA-T = {device-name}-SEC-HWS-T - {device-name}-SEC-HWR-T
+
 REM ***** Start lead secondary pump *****
 IF {device-name}-HW-SYS-ENAB AND NOT {device-name}-SHWP1-FAIL THEN START {device-name}-SHWP1 ELSE STOP {device-name}-SHWP1
 
