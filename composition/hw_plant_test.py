@@ -220,11 +220,12 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Loops")
     ws.cell(1, 1, value="PID LOOPS").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["Loop", "Name", "Input", "Setpoint", "Action", "P Band",
-                       "Integral", "Derivative", "Bias", "Description", "Module"])
+    add_header(ws, 3, ["Loop", "Name", "Input", "Setpoint", "Output", "Action", "P Band",
+                       "Integral", "D", "Bias", "Description", "Module"])
     for lp in merged['loops']:
         ws.append([f"LOOP{lp.instance}", f"{device_name}-{lp.name}",
                   f"{device_name}-{lp.input_ref}", f"{device_name}-{lp.setpoint_ref}",
+                  f"{device_name}-{lp.output_ref}" if lp.output_ref else "",
                   "+" if lp.action == "direct" else "-",
                   lp.p_band, lp.integral, lp.derivative, lp.bias, lp.description, lp.module])
 

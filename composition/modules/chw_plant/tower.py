@@ -89,8 +89,8 @@ def build_tower(num_towers=2):
     # Condenser water supply temp loop — fan speed controls leaving tower temp
     loops = [
         LoopDef(2, "CDWS-T-LOOP", "CDW-LVG-T", "CDWS-T-SP", "CT1-SPD",
-                4.0, 60.0, "direct",
-                "Condenser water supply temp — fan speed (higher speed = cooler water)"),
+                4.0, 60.0, action="direct",
+                description="Condenser water supply temp — fan speed (higher speed = cooler water)"),
     ]
 
     programs.append(ProgramDef(34, "CHW-CT-CTRL-PRG", "CHW-PRG34-CT-CTRL.bas", "", True,
@@ -158,8 +158,8 @@ def build_tower_bypass():
 
         loops=[
             LoopDef(3, "CT-BYP-LOOP", "CDW-ENT-T", "CT-BYPASS-SPT", "CT-BYP-VLV",
-                    10.0, 40.0, "reverse",
-                    "CW bypass — valve opens when entering CW temp drops below setpoint"),
+                    10.0, 40.0, action="reverse",
+                    description="CW bypass — valve opens when entering CW temp drops below setpoint"),
         ],
 
         tables=[],

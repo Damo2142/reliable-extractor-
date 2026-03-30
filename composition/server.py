@@ -410,6 +410,76 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
                              headers={"Content-Disposition": f"attachment; filename={config_name}.zip"})
 
 
+@app.post("/api/hwp-generate-pan")
+async def api_hwp_generate_pan(req: HWPAssembleRequest):
+    """Generate HW plant .pan file only."""
+    try:
+        modules = hwp_assemble(req.params)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    from composition.hw_plant_test import merge_modules, generate_trends, generate_alarm_bas, write_excel
+    merged = merge_modules(modules)
+    trends = generate_trends(merged)
+    alarm_code = generate_alarm_bas(merged)
+    config_name = req.params.get('config_name', 'HW-Plant')
+    wb = write_excel(merged, trends, alarm_code, config_name)
+    prg_dir = Path(__file__).parent / "programs" / "hw_plant"
+    import tempfile, shutil
+    tmp = tempfile.mkdtemp(prefix="sbs-hwp-pan-")
+    try:
+        excel_buf = io.BytesIO(); wb.save(excel_buf)
+        with open(os.path.join(tmp, "RC-Studio-Output.xlsx"), "wb") as f:
+            f.write(excel_buf.getvalue())
+        tmp_prg = os.path.join(tmp, "programs"); os.makedirs(tmp_prg, exist_ok=True)
+        for prg in merged['programs']:
+            bas_path = prg_dir / prg.filename
+            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            with open(os.path.join(tmp_prg, prg.filename), "w") as f: f.write(code)
+        with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f: f.write(alarm_code)
+        from compile_from_excel import compile_package
+        pan_data = compile_package(tmp, verbose=False)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    buf = io.BytesIO(pan_data)
+    return StreamingResponse(buf, media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={config_name}.pan"})
+
+
+@app.post("/api/chwp-generate-pan")
+async def api_chwp_generate_pan(req: CHWPAssembleRequest):
+    """Generate CHW plant .pan file only."""
+    try:
+        modules = chwp_assemble(req.params)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    from composition.hw_plant_test import merge_modules, generate_trends, generate_alarm_bas, write_excel
+    merged = merge_modules(modules)
+    trends = generate_trends(merged)
+    alarm_code = generate_alarm_bas(merged)
+    config_name = req.params.get('config_name', 'CHW-Plant')
+    wb = write_excel(merged, trends, alarm_code, config_name)
+    prg_dir = Path(__file__).parent / "programs" / "chw_plant"
+    import tempfile, shutil
+    tmp = tempfile.mkdtemp(prefix="sbs-chwp-pan-")
+    try:
+        excel_buf = io.BytesIO(); wb.save(excel_buf)
+        with open(os.path.join(tmp, "RC-Studio-Output.xlsx"), "wb") as f:
+            f.write(excel_buf.getvalue())
+        tmp_prg = os.path.join(tmp, "programs"); os.makedirs(tmp_prg, exist_ok=True)
+        for prg in merged['programs']:
+            bas_path = prg_dir / prg.filename
+            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            with open(os.path.join(tmp_prg, prg.filename), "w") as f: f.write(code)
+        with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f: f.write(alarm_code)
+        from compile_from_excel import compile_package
+        pan_data = compile_package(tmp, verbose=False)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    buf = io.BytesIO(pan_data)
+    return StreamingResponse(buf, media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={config_name}.pan"})
+
+
 @app.post("/api/generate")
 async def api_generate(req: GenerateRequest):
     try:
@@ -1840,9 +1910,29 @@ function getModList(){
 }
 
 async function doGeneratePan(){
-  if(activeFamily==='HW-PLANT'||activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER'){
-    document.getElementById('status').textContent='Generating plant .pan — use Full Package (includes .pan)...';
-    doGenerateFull();return;
+  if(activeFamily==='HW-PLANT'){
+    var params=hwpGetParams();params.config_name='SBS-HW-Plant';
+    document.getElementById('status').textContent='Compiling HW Plant .pan...';
+    try{
+      var res=await fetch('api/hwp-generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+      if(!res.ok){document.getElementById('status').textContent='Error compiling .pan';return;}
+      var blob=await res.blob();var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');a.href=url;a.download='SBS-HW-Plant.pan';a.click();
+      document.getElementById('status').textContent='.pan downloaded ('+Math.round(blob.size/1024)+'KB)';
+    }catch(e){document.getElementById('status').textContent='Error: '+e;}
+    return;
+  }
+  if(activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER'){
+    var params=chwpGetParams();params.config_name='SBS-CHW-Plant';
+    document.getElementById('status').textContent='Compiling CHW Plant .pan...';
+    try{
+      var res=await fetch('api/chwp-generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+      if(!res.ok){document.getElementById('status').textContent='Error compiling .pan';return;}
+      var blob=await res.blob();var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');a.href=url;a.download='SBS-CHW-Plant.pan';a.click();
+      document.getElementById('status').textContent='.pan downloaded ('+Math.round(blob.size/1024)+'KB)';
+    }catch(e){document.getElementById('status').textContent='Error: '+e;}
+    return;
   }
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}

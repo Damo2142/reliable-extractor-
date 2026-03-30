@@ -47,8 +47,8 @@ def build_bypass_valve():
 
         loops=[
             LoopDef(4, "CHW-BYP-LOOP", "CHW-BYP-T", "CHW-BYP-SP", "CHW-BYP-VLV",
-                    10.0, 40.0, "reverse",
-                    "CHW bypass valve PID — valve opens when bypass temp rises above setpoint"),
+                    10.0, 40.0, action="reverse",
+                    description="CHW bypass valve PID — valve opens when bypass temp rises above setpoint"),
         ],
 
         tables=[],

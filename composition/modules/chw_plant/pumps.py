@@ -160,7 +160,7 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
     # DP control loop
     loops = [
         LoopDef(1, "CHW-DP-LOOP", "AVG-DP", "CHWS-DP-SP", "SCHWP1-SPEED",
-                5.0, 60.0, "direct", "CHW Secondary DP Control"),
+                5.0, 60.0, action="direct", description="CHW Secondary DP Control"),
     ]
 
     # Programs
