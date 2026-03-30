@@ -45,13 +45,15 @@ def build_pump_cs(num_pumps=2):
             52 + (n-1)*2, f"HWP{n}-OOS", "BV", False,
             f"HW Pump {n} Out of Service"))
 
+    # ANY-HWP-ON always needed (cascade boiler interlock requires it)
+    values.append(ValuePoint(64, "ANY-HWP-ON", "BV", False, "Any Pump Running"))
+
     if num_pumps > 1:
         values.extend([
             ValuePoint(60, "LEAD-HWP",      "AV", 1.0,  "Lead Pump Number", "#"),
             ValuePoint(61, "LEAD-HWP-SS",   "BV", False, "Lead Pump Start/Stop"),
             ValuePoint(62, "LAG-HWP-SS",    "BV", False, "Lag Pump Start/Stop"),
             ValuePoint(63, "LEAD-HWP-FAIL", "BV", False, "Lead Pump Failure"),
-            ValuePoint(64, "ANY-HWP-ON",    "BV", False, "Any Pump Running"),
         ])
 
     programs = [
@@ -124,7 +126,7 @@ def build_pump_vfd(num_pumps=2):
 
     # Speed and DP setpoints
     values.extend([
-        ValuePoint(60, "LEAD-HWP",       "AV", 1.0,   "Lead Pump Number",      "#"),
+        ValuePoint(64, "ANY-HWP-ON",     "BV", False, "Any Pump Running"),
         ValuePoint(65, "HWP-MIN-SPEED",   "AV", 30.0,  "Pump Minimum Speed",    "%"),
         ValuePoint(66, "HWP-MAX-SPEED",   "AV", 100.0, "Pump Maximum Speed",    "%"),
         ValuePoint(67, "AVG-DP",          "AV", 0.0,   "Average Differential Pressure", "PSI"),
@@ -133,10 +135,10 @@ def build_pump_vfd(num_pumps=2):
 
     if num_pumps > 1:
         values.extend([
+            ValuePoint(60, "LEAD-HWP",      "AV", 1.0,  "Lead Pump Number",   "#"),
             ValuePoint(61, "LEAD-HWP-SS",   "BV", False, "Lead Pump Start/Stop"),
             ValuePoint(62, "LAG-HWP-SS",    "BV", False, "Lag Pump Start/Stop"),
             ValuePoint(63, "LEAD-HWP-FAIL", "BV", False, "Lead Pump Failure"),
-            ValuePoint(64, "ANY-HWP-ON",    "BV", False, "Any Pump Running"),
         ])
 
     # DP PID loop
@@ -265,20 +267,40 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
                 description="Secondary HW Pump DP Control"),
     ]
 
+    # Lead/lag values for secondary pumps (same pattern as CS/VFD pumps)
+    if num_secondary > 1:
+        values.extend([
+            ValuePoint(65, "LEAD-SHWP",       "AV", 1.0,  "Lead Secondary Pump Number", "#"),
+            ValuePoint(66, "LEAD-SHWP-SS",    "BV", False, "Lead Secondary Pump S/S"),
+            ValuePoint(70, "LAG-SHWP-SS",     "BV", False, "Lag Secondary Pump S/S"),
+            ValuePoint(71, "LEAD-SHWP-FAIL",  "BV", False, "Lead Secondary Pump Failure"),
+            ValuePoint(72, "ANY-SHWP-ON",     "BV", False, "Any Secondary Pump Running"),
+        ])
+
     programs = [
+        # Primary: one program handles all primary pumps (simple standby, not lead/lag)
         ProgramDef(16, "HW-PHWP-PRG", "HW-PRG16-PHWP.bas", "", True,
                    "Primary pump control", "hw-pump-pri-sec", exec_order=16),
-        ProgramDef(17, "HW-SHWP-PRG", "HW-PRG17-SHWP.bas", "", True,
-                   "Secondary pump control", "hw-pump-pri-sec", exec_order=17),
-        ProgramDef(18, "HW-SHWP-SPEED-PRG", "HW-PRG18-SHWP-SPEED.bas", "", True,
-                   "Secondary pump VFD speed from DP", "hw-pump-pri-sec", exec_order=18),
+        # Secondary: per-pump S/S program (same pattern as CS/VFD)
+        ProgramDef(21, "HW-SHWP1-PRG", "HW-PRG21-SHWP1.bas", "", True,
+                   "Secondary pump 1 start/stop", "hw-pump-pri-sec", exec_order=21),
+        # Secondary speed: per-pump VFD speed from DP
+        ProgramDef(23, "HW-SHWP1-SPEED-PRG", "HW-PRG23-SHWP1-SPEED.bas", "", True,
+                   "Secondary pump 1 VFD speed", "hw-pump-pri-sec", exec_order=23),
     ]
+    if num_secondary > 1:
+        programs.append(ProgramDef(22, "HW-SHWP2-PRG", "HW-PRG22-SHWP2.bas", "", True,
+                   "Secondary pump 2 start/stop", "hw-pump-pri-sec", exec_order=22))
+        programs.append(ProgramDef(24, "HW-SHWP2-SPEED-PRG", "HW-PRG24-SHWP2-SPEED.bas", "", True,
+                   "Secondary pump 2 VFD speed", "hw-pump-pri-sec", exec_order=24))
+        programs.append(ProgramDef(25, "HW-SHWP-LEAD-LAG-PRG", "HW-PRG25-SHWP-LEAD-LAG.bas", "", True,
+                   "Secondary pump lead/lag rotation", "hw-pump-pri-sec", exec_order=25))
 
-    schedules = [
-        ScheduleDef(3, "{device-name}-SHWP-LEAD-SCHED", "Pump 1",
+    schedules = []
+    if num_secondary > 1:
+        schedules.append(ScheduleDef(3, "{device-name}-SHWP-LEAD-SCHED", "Pump 1",
             [f"Pump {n}" for n in range(1, num_secondary + 1)], 10,
-            "Secondary pump lead rotation schedule"),
-    ]
+            "Secondary pump lead rotation schedule"))
 
     return Module(
         id="hw-pump-pri-sec",
