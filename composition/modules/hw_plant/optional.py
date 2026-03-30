@@ -54,7 +54,7 @@ def build_iso_valves(num_boilers=2):
             17 + n, f"BLR{n}-ISO-VLV", "BO", "Close/Open",
             f"Boiler {n} Isolation Valve"))
         inputs.append(InputPoint(
-            17 + n, f"BLR{n}-ISO-VLV-ES", "BI", "Close/Open",
+            20 + n, f"BLR{n}-ISO-VLV-ES", "BI", "Close/Open",
             f"Boiler {n} Isolation Valve End Switch"))
 
     return Module(
@@ -89,7 +89,7 @@ def build_comb_damper(num_boilers=2):
     inputs = []
     for n in range(1, num_boilers + 1):
         inputs.append(InputPoint(
-            21 + n, f"BLR{n}-COMB-DMPR-STS", "BI", "Close/Open",
+            24 + n, f"BLR{n}-COMB-DMPR-STS", "BI", "Close/Open",
             f"Boiler {n} Combustion Damper Status"))
 
     return Module(
@@ -121,9 +121,9 @@ def build_heat_exchanger(valve_type="single_mod"):
                     "third_twothird" = 1/3 + 2/3 floating sequence
     """
     inputs = [
-        InputPoint(25, "HX-SUPW-T", "AI", "10K -40 ->250",
+        InputPoint(28, "HX-SUPW-T", "AI", "10K -40 ->250",
             "Heat Exchanger Supply Water Temp", "°F"),
-        InputPoint(26, "HX-RETW-T", "AI", "10K -40 ->250",
+        InputPoint(29, "HX-RETW-T", "AI", "10K -40 ->250",
             "Heat Exchanger Return Water Temp", "°F"),
     ]
     outputs = []
@@ -251,7 +251,7 @@ def build_makeup_water():
         category="hw-optional",
         description="Makeup water flow monitoring and totalization",
         inputs=[
-            InputPoint(27, "MAKEUP-WTR-FLOW", "AI", "0 ->100% (0-5V)",
+            InputPoint(31, "MAKEUP-WTR-FLOW", "AI", "0 ->100% (0-5V)",
                 "Makeup Water Flow Rate", "GPM"),
         ],
         values=[

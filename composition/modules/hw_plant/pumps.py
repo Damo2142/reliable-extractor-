@@ -195,16 +195,16 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
     outputs = []
     values = []
 
-    # Primary loop temps
-    inputs.append(InputPoint(28, "PRI-HWS-T", "AI", "10K -40 ->250",
+    # Primary loop temps — right after pump status inputs
+    inputs.append(InputPoint(16, "PRI-HWS-T", "AI", "10K -40 ->250",
         "Primary Loop HW Supply Temperature", "°F"))
-    inputs.append(InputPoint(29, "PRI-HWR-T", "AI", "10K -40 ->250",
+    inputs.append(InputPoint(17, "PRI-HWR-T", "AI", "10K -40 ->250",
         "Primary Loop HW Return Temperature", "°F"))
 
     # Secondary loop temps
-    inputs.append(InputPoint(30, "SEC-HWS-T", "AI", "10K -40 ->250",
+    inputs.append(InputPoint(18, "SEC-HWS-T", "AI", "10K -40 ->250",
         "Secondary Loop HW Supply Temperature", "°F"))
-    inputs.append(InputPoint(31, "SEC-HWR-T", "AI", "10K -40 ->250",
+    inputs.append(InputPoint(19, "SEC-HWR-T", "AI", "10K -40 ->250",
         "Secondary Loop HW Return Temperature", "°F"))
 
     # Primary pumps — constant speed, S/S outputs start at OUT9
@@ -246,8 +246,8 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
             60 + (n-1)*2, f"SHWP{n}-OOS", "BV", False,
             f"Secondary Pump {n} Out of Service"))
 
-    # DP sensor
-    inputs.append(InputPoint(_DP_INPUT_1, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
+    # DP sensor — after loop temps
+    inputs.append(InputPoint(20, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
         "HW Differential Pressure", "PSI"))
 
     # System values
