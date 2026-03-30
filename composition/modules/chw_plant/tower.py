@@ -12,11 +12,12 @@ from composition.models import (
     ProgramDef, ScheduleDef, SystemGroupDef
 )
 
-_CT_SS_BASE = 21       # BO: CT1-S/S at OUT21, CT2 at OUT22
-_CT_STS_BASE = 28      # BI: CT1-STS at IN28, CT2 at IN29
-_CT_SPD_BASE = 23      # AO: CT1-SPD at OUT23, CT2 at OUT24
-_CDW_TEMP_BASE = 30    # AI: CDW-ENT-T at IN30, CDW-LVG-T at IN31
-_CT_BYP_ROW = 25       # AO: CT-BYP-VLV at OUT25
+# Packed I/O — follows CW pumps
+_CT_SS_BASE = 11       # BO: CT1-FAN-S/S at OUT11, CT2 at OUT12
+_CT_STS_BASE = 20      # BI: CT1-FAN-STS at IN20, CT2 at IN21
+_CT_SPD_BASE = 13      # AO: CT1-FAN-SPEED at OUT13, CT2 at OUT14
+_CDW_TEMP_BASE = 22    # AI: CDW-ENT-T at IN22, CDW-LVG-T at IN23
+_CT_BYP_ROW = 15       # AO: CT-BYP-VLV at OUT15
 
 
 def build_tower(num_towers=2):

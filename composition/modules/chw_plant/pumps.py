@@ -11,15 +11,15 @@ from composition.models import (
     ProgramDef, ScheduleDef, SystemGroupDef
 )
 
-# I/O rows for pumps
-_PRI_SS_BASE = 5       # BO: PCHWP1-S/S at OUT5, PCHWP2 at OUT6, etc.
-_PRI_STS_BASE = 16     # BI: PCHWP1-STS at IN16, PCHWP2 at IN17, etc.
-_SEC_SS_BASE = 9       # BO: SCHWP1-S/S at OUT9, SCHWP2 at OUT10, etc.
-_SEC_STS_BASE = 20     # BI: SCHWP1-STS at IN20, SCHWP2 at IN21, etc.
-_SEC_SPD_BASE = 13     # AO: SCHWP1-SPEED at OUT13, SCHWP2 at OUT14, etc.
-_DP_SENSOR_BASE = 24   # AI: CHW-PRESS1 at IN24, CHW-PRESS2 at IN25
-_CW_SS_BASE = 17       # BO: CDWP1-S/S at OUT17, CDWP2 at OUT18, etc.
-_CW_STS_BASE = 26      # BI: CDWP1-STS at IN26, CDWP2 at IN27, etc.
+# Packed I/O layout — no gaps, minimize expansion modules
+_PRI_SS_BASE = 3       # BO: PCHWP1-S/S at OUT3, PCHWP2 at OUT4
+_PRI_STS_BASE = 12     # BI: PCHWP1-STS at IN12, PCHWP2 at IN13
+_SEC_SS_BASE = 5       # BO: SCHWP1-S/S at OUT5, SCHWP2 at OUT6
+_SEC_STS_BASE = 14     # BI: SCHWP1-STS at IN14, SCHWP2 at IN15
+_SEC_SPD_BASE = 7      # AO: SCHWP1-SPEED at OUT7, SCHWP2 at OUT8
+_DP_SENSOR_BASE = 16   # AI: CHW-PRESS1 at IN16, CHW-PRESS2 at IN17
+_CW_SS_BASE = 9        # BO: CDWP1-S/S at OUT9, CDWP2 at OUT10
+_CW_STS_BASE = 18      # BI: CDWP1-STS at IN18, CDWP2 at IN19
 
 
 def build_pump_pri(num_pumps=2):

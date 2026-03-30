@@ -1,9 +1,16 @@
-CHW-PLANT I/O Terminal Map (MPS)
-=================================
+CHW-PLANT I/O Terminal Map (MPS) — Packed Layout
+==================================================
 
-INPUTS (AI/BI):
-  IN1   CHW-FLOW       AI   CHW System Flow (GPM)           [core]
-  IN2   CHWS-T         AI   CHW Supply Temperature          [core]
+Design goal: minimize expansion modules.
+  MPS base: 12 IN, 8 OUT
+  Each MPP-IO-U expansion: +12 IN, +8 OUT
+  Standard air cooled (2ch, 2+2): 17 IN, 8 OUT → base only
+  Standard tower (2ch, 2+2+2+2): 23 IN, 14 OUT → 1 expansion
+  Full tower + iso + bypass: 29 IN, 20 OUT → 2 expansions
+
+INPUTS (packed, no gaps):
+  IN1   CHWS-T         AI   CHW Supply Temperature          [core]
+  IN2   CHWR-T         AI   CHW Return Temperature          [core]
   IN3   OAT            AI   Outside Air Temperature         [core]
   IN4   OAH            AI   Outside Air Humidity            [core]
   IN5   CHW-FLOW       AI   CHW System Flow                 [core]
@@ -13,87 +20,55 @@ INPUTS (AI/BI):
   IN9   CHLR1-CHWR-T   AI   Chiller 1 Entering CHW Temp    [chiller]
   IN10  CHLR2-CHWS-T   AI   Chiller 2 Leaving CHW Temp     [chiller]
   IN11  CHLR2-CHWR-T   AI   Chiller 2 Entering CHW Temp    [chiller]
-  IN16  PCHWP1-STS     BI   Primary CHW Pump 1 Status       [pri-pump]
-  IN17  PCHWP2-STS     BI   Primary CHW Pump 2 Status       [pri-pump]
-  IN20  SCHWP1-STS     BI   Secondary CHW Pump 1 Status     [sec-pump]
-  IN21  SCHWP2-STS     BI   Secondary CHW Pump 2 Status     [sec-pump]
-  IN24  CHW-PRESS1     AI   CHW DP Sensor 1                 [sec-pump]
-  IN25  CHW-PRESS2     AI   CHW DP Sensor 2                 [sec-pump]
-  IN26  CDWP1-STS      BI   CW Pump 1 Status                [cdwp]
-  IN27  CDWP2-STS      BI   CW Pump 2 Status                [cdwp]
-  IN28  CT1-STS        BI   Cooling Tower 1 Fan Status      [tower]
-  IN29  CT2-STS        BI   Cooling Tower 2 Fan Status      [tower]
-  IN30  CDW-ENT-T      AI   Condenser Water Entering Temp   [tower]
-  IN31  CDW-LVG-T      AI   Condenser Water Leaving Temp    [tower]
-  IN32  CHW-BYP-T      AI   CHW Bypass Temperature          [bypass-valve]
-  IN33  CHLR1-CHW-ISO  BI   Chiller 1 CHW Iso Valve ES      [iso-valves]
-  IN34  CHLR2-CHW-ISO  BI   Chiller 2 CHW Iso Valve ES      [iso-valves]
-  IN35  CHLR1-CDW-ISO  BI   Chiller 1 CDW Iso Valve ES      [iso-valves, tower]
-  IN36  CHLR2-CDW-ISO  BI   Chiller 2 CDW Iso Valve ES      [iso-valves, tower]
-  IN37  MAKEUP-WTR     AI   Makeup Water Flow               [makeup-water]
+  IN12  PCHWP1-STS     BI   Primary CHW Pump 1 Status       [pri-pump]
+  --- expansion 1 starts at IN13 ---
+  IN13  PCHWP2-STS     BI   Primary CHW Pump 2 Status       [pri-pump]
+  IN14  SCHWP1-STS     BI   Secondary CHW Pump 1 Status     [sec-pump]
+  IN15  SCHWP2-STS     BI   Secondary CHW Pump 2 Status     [sec-pump]
+  IN16  CHW-PRESS1     AI   CHW DP Sensor 1                 [sec-pump]
+  IN17  CHW-PRESS2     AI   CHW DP Sensor 2                 [sec-pump]
+  IN18  CDWP1-STS      BI   CW Pump 1 Status                [cdwp]
+  IN19  CDWP2-STS      BI   CW Pump 2 Status                [cdwp]
+  IN20  CT1-FAN-STS    BI   Cooling Tower 1 Fan Status      [tower]
+  IN21  CT2-FAN-STS    BI   Cooling Tower 2 Fan Status      [tower]
+  IN22  CDW-ENT-T      AI   Condenser Water Entering Temp   [tower]
+  IN23  CDW-LVG-T      AI   Condenser Water Leaving Temp    [tower]
+  IN24  CHW-BYP-T      AI   CHW Bypass Temperature          [bypass-valve]
+  --- expansion 2 starts at IN25 ---
+  IN25  CHLR1-CHW-ISO  BI   Chiller 1 CHW Iso Valve ES      [iso-valves]
+  IN26  CHLR2-CHW-ISO  BI   Chiller 2 CHW Iso Valve ES      [iso-valves]
+  IN27  CHLR1-CDW-ISO  BI   Chiller 1 CDW Iso Valve ES      [iso-valves, tower]
+  IN28  CHLR2-CDW-ISO  BI   Chiller 2 CDW Iso Valve ES      [iso-valves, tower]
+  IN29  MAKEUP-WTR     AI   Makeup Water Flow               [makeup-water]
 
-OUTPUTS (AO/BO):
-  OUT1  CHLR1-ENABLE   BO   Chiller 1 Enable Contact        [chiller]
-  OUT2  CHLR2-ENABLE   BO   Chiller 2 Enable Contact        [chiller]
-  OUT5  PCHWP1-S/S     BO   Primary CHW Pump 1 S/S          [pri-pump]
-  OUT6  PCHWP2-S/S     BO   Primary CHW Pump 2 S/S          [pri-pump]
-  OUT9  SCHWP1-S/S     BO   Secondary CHW Pump 1 S/S        [sec-pump]
-  OUT10 SCHWP2-S/S     BO   Secondary CHW Pump 2 S/S        [sec-pump]
-  OUT13 SCHWP1-SPEED   AO   Secondary CHW Pump 1 VFD Speed  [sec-pump]
-  OUT14 SCHWP2-SPEED   AO   Secondary CHW Pump 2 VFD Speed  [sec-pump]
-  OUT17 CDWP1-S/S      BO   CW Pump 1 S/S                   [cdwp]
-  OUT18 CDWP2-S/S      BO   CW Pump 2 S/S                   [cdwp]
-  OUT21 CT1-S/S        BO   Cooling Tower 1 Fan S/S         [tower]
-  OUT22 CT2-S/S        BO   Cooling Tower 2 Fan S/S         [tower]
-  OUT23 CT1-SPD        AO   Cooling Tower 1 Fan VFD Speed   [tower]
-  OUT24 CT2-SPD        AO   Cooling Tower 2 Fan VFD Speed   [tower]
-  OUT25 CT-BYP-VLV     AO   Tower CW Bypass Valve           [tower-bypass]
-  OUT26 CHW-BYP-VLV    AO   CHW Bypass Valve                [bypass-valve]
-  OUT27 CHLR1-CHW-ISO  BO   Chiller 1 CHW Isolation Valve   [iso-valves]
-  OUT28 CHLR2-CHW-ISO  BO   Chiller 2 CHW Isolation Valve   [iso-valves]
-  OUT29 CHLR1-CDW-ISO  BO   Chiller 1 CDW Isolation Valve   [iso-valves, tower]
-  OUT30 CHLR2-CDW-ISO  BO   Chiller 2 CDW Isolation Valve   [iso-valves, tower]
+OUTPUTS (packed, no gaps):
+  OUT1  CHLR1-S/S       BO   Chiller 1 Enable               [chiller]
+  OUT2  CHLR2-S/S       BO   Chiller 2 Enable               [chiller]
+  OUT3  PCHWP1-S/S      BO   Primary CHW Pump 1 S/S         [pri-pump]
+  OUT4  PCHWP2-S/S      BO   Primary CHW Pump 2 S/S         [pri-pump]
+  OUT5  SCHWP1-S/S      BO   Secondary CHW Pump 1 S/S       [sec-pump]
+  OUT6  SCHWP2-S/S      BO   Secondary CHW Pump 2 S/S       [sec-pump]
+  OUT7  SCHWP1-SPEED    AO   Secondary CHW Pump 1 VFD Speed [sec-pump]
+  OUT8  SCHWP2-SPEED    AO   Secondary CHW Pump 2 VFD Speed [sec-pump]
+  --- expansion 1 starts at OUT9 ---
+  OUT9  CDWP1-S/S       BO   CW Pump 1 S/S                  [cdwp]
+  OUT10 CDWP2-S/S       BO   CW Pump 2 S/S                  [cdwp]
+  OUT11 CT1-FAN-S/S     BO   Cooling Tower 1 Fan S/S        [tower]
+  OUT12 CT2-FAN-S/S     BO   Cooling Tower 2 Fan S/S        [tower]
+  OUT13 CT1-FAN-SPEED   AO   Cooling Tower 1 Fan VFD Speed  [tower]
+  OUT14 CT2-FAN-SPEED   AO   Cooling Tower 2 Fan VFD Speed  [tower]
+  OUT15 CT-BYP-VLV      AO   Tower CW Bypass Valve          [tower-bypass]
+  OUT16 CHW-BYP-VLV     AO   CHW Bypass Valve               [bypass-valve]
+  --- expansion 2 starts at OUT17 ---
+  OUT17 CHLR1-CHW-ISO   BO   Chiller 1 CHW Isolation Valve  [iso-valves]
+  OUT18 CHLR2-CHW-ISO   BO   Chiller 2 CHW Isolation Valve  [iso-valves]
+  OUT19 CHLR1-CDW-ISO   BO   Chiller 1 CDW Isolation Valve  [iso-valves, tower]
+  OUT20 CHLR2-CDW-ISO   BO   Chiller 2 CDW Isolation Valve  [iso-valves, tower]
 
-PROGRAM ALLOCATION (no conflicts):
-  PRG1   CHW-CONFIG-PRG              [core]
-  PRG2   CHW-SPT-PRG                 [core]
-  PRG3   (reserved)                  [core]
-  PRG4   (reserved)                  [core]
-  PRG5   CHW-STATUS-PRG              [core]
-  PRG6   CHW-CHLR-CTRL-PRG           [chiller]
-  PRG7   CHW-CHLR-LEAD-LAG-PRG       [chiller, if N>1]
-  PRG8   (reserved)                  [chiller]
-  PRG9-15 (reserved per-chiller)
-  PRG16  CHW-PCHWP1-PRG              [pri-pump]
-  PRG17  CHW-PCHWP-LEAD-LAG-PRG      [pri-pump, if N>1]
-  PRG18  (reserved)                  [pri-pump]
-  PRG19  CHW-PCHWP2-PRG              [pri-pump, if N>1]
-  PRG20  CHW-PCHWP3-PRG              [pri-pump, if N>=3]
-  PRG21  CHW-PCHWP4-PRG              [pri-pump, if N>=4]
-  PRG22  CHW-SCHWP1-PRG              [sec-pump]
-  PRG23  CHW-SCHWP2-PRG              [sec-pump, if N>1]
-  PRG24  CHW-SCHWP1-SPEED-PRG        [sec-pump]
-  PRG25  CHW-SCHWP2-SPEED-PRG        [sec-pump, if N>1]
-  PRG26  CHW-SCHWP-LEAD-LAG-PRG      [sec-pump, if N>1]
-  PRG27  CHW-SCHWP-LAG-PRG           [sec-pump]
-  PRG28-29 (reserved)                [sec-pump]
-  PRG30  CHW-CDWP1-PRG               [cdwp]
-  PRG31  CHW-CDWP2-PRG               [cdwp, if N>1]
-  PRG32  CHW-CDWP-LEAD-LAG-PRG       [cdwp, if N>1]
-  PRG33  CHW-CDWP3-PRG               [cdwp, if N>=3]
-  PRG34  CHW-CT-CTRL-PRG             [tower]
-  PRG35  CHW-CT-LEAD-LAG-PRG         [tower, if N>1]
-  PRG36-38 (reserved)                [tower]
-  PRG39  CHW-CT-BYP-VLV-PRG          [tower-bypass]
-  PRG40  CHW-ISO-VLV-PRG             [iso-valves]
-  PRG42  CHW-BYP-VLV-PRG             [bypass-valve]
-  PRG43  CHW-MAKEUP-WTR-PRG          [makeup-water]
-  PRG45  CHW-NET-DATA-PRG            [ahu-integ]
-  PRG46+ CHW-AHU{N}-CFG-PRG          [ahu-integ, per AHU]
-  PRG50-54 (reserved power metering)
-
-LOOP ALLOCATION:
-  LOOP1  CHW-DP-LOOP                 [sec-pump]
-  LOOP2  CDWS-T-LOOP                 [tower]
-  LOOP3  CT-BYP-LOOP                 [tower-bypass]
-  LOOP4  CHW-BYP-LOOP                [bypass-valve]
+EXPANSION SUMMARY:
+  Air cooled (no tower):         12 IN, 8 OUT  → MPS base only
+  Air cooled + bypass:           13 IN, 9 OUT  → 1 expansion
+  Tower (no iso):                23 IN, 15 OUT → 1 expansion
+  Tower + bypass:                24 IN, 16 OUT → 1 expansion
+  Tower + iso + bypass:          29 IN, 20 OUT → 2 expansions
+  Tower + iso + bypass + makeup: 29 IN, 20 OUT → 2 expansions
