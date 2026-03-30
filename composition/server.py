@@ -1782,6 +1782,10 @@ function getModList(){
 }
 
 async function doGeneratePan(){
+  if(activeFamily==='HW-PLANT'||activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER'){
+    document.getElementById('status').textContent='.pan compile for plant controllers — use Download Excel + .bas, then compile separately';
+    return;
+  }
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
   var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value});
@@ -1798,6 +1802,22 @@ async function doGeneratePan(){
 }
 
 async function doGenerateFull(){
+  if(activeFamily==='HW-PLANT'){
+    var params=hwpGetParams();params.config_name='SBS-HW-Plant';
+    var res=await fetch('api/hwp-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+    if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
+    var blob=await res.blob();var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='hw-plant-package.zip';a.click();
+    document.getElementById('status').textContent='HW Plant package downloaded!';return;
+  }
+  if(activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER'){
+    var params=chwpGetParams();params.config_name='SBS-CHW-Plant';
+    var res=await fetch('api/chwp-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+    if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
+    var blob=await res.blob();var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='chw-plant-package.zip';a.click();
+    document.getElementById('status').textContent='CHW Plant package downloaded!';return;
+  }
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
   var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value});
