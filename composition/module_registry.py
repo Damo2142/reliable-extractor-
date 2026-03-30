@@ -149,6 +149,7 @@ def list_by_category():
             "description": mod.description,
             "is_core": mod.is_core,
             "mutually_exclusive_group": mod.mutually_exclusive_group,
+            "programs": len(mod.programs),
         })
     return result
 

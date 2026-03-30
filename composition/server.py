@@ -72,7 +72,19 @@ async def api_get_module(module_id: str):
         "mutually_exclusive_group": mod.mutually_exclusive_group,
         "inputs": len(mod.inputs), "outputs": len(mod.outputs),
         "values": len(mod.values), "loops": len(mod.loops),
-        "programs": len(mod.programs), "soo_paragraph": mod.soo_paragraph,
+        "program_count": len(mod.programs), "soo_paragraph": mod.soo_paragraph,
+        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename,
+                      "description": p.description, "enabled": p.enabled,
+                      "exec_order": p.exec_order} for p in mod.programs],
+        "point_summary": {
+            "AI": sum(1 for p in mod.inputs if p.point_type == "AI"),
+            "AO": sum(1 for p in mod.outputs if p.point_type == "AO"),
+            "DI": sum(1 for p in mod.inputs if p.point_type == "DI" or p.point_type == "BI"),
+            "DO": sum(1 for p in mod.outputs if p.point_type == "DO" or p.point_type == "BO"),
+            "AV": sum(1 for p in mod.values if p.point_type == "AV"),
+            "BV": sum(1 for p in mod.values if p.point_type == "BV"),
+            "MV": sum(1 for p in mod.values if p.point_type == "MV"),
+        },
     }
 
 
@@ -741,15 +753,41 @@ async def api_admin_list_users(token: str = ""):
 
 # --- .bas Editor API (admin-protected) ---
 
-BAS_DIR = Path(__file__).parent / "programs" / "reliable"
+BAS_ROOT = Path(__file__).parent / "programs"
+
+
+def _resolve_bas(filename: str) -> Path:
+    """Resolve a .bas filename to its path, searching all subdirectories."""
+    if ".." in filename or "\\" in filename:
+        raise HTTPException(400, "Invalid filename")
+    # If filename includes subfolder prefix like "hw_plant/HW-PRG-xxx.bas"
+    if "/" in filename:
+        path = BAS_ROOT / filename
+    else:
+        # Search all subdirectories
+        for sub in sorted(BAS_ROOT.iterdir()):
+            if sub.is_dir():
+                candidate = sub / filename
+                if candidate.exists() and candidate.is_file():
+                    return candidate
+        path = BAS_ROOT / filename
+    if not path.exists() or not path.is_file():
+        raise HTTPException(404, f"File not found: {filename}")
+    return path
 
 
 @app.get("/api/bas/list")
 async def api_bas_list(token: str = ""):
-    """List all .bas template files."""
+    """List all .bas template files from all program subdirectories."""
     _check_admin(token)
-    files = sorted(f.name for f in BAS_DIR.glob("*.bas")
-                   if not f.name.endswith(".bak-20260323") and not f.name.endswith(".editor-bak"))
+    files = []
+    for sub in sorted(BAS_ROOT.iterdir()):
+        if sub.is_dir():
+            folder = sub.name
+            for f in sorted(sub.glob("*.bas")):
+                if f.name.endswith(".bak-20260323") or f.name.endswith(".editor-bak"):
+                    continue
+                files.append({"filename": f.name, "folder": folder, "path": f"{folder}/{f.name}"})
     return {"files": files}
 
 
@@ -757,26 +795,21 @@ async def api_bas_list(token: str = ""):
 async def api_bas_read(filename: str, token: str = ""):
     """Read a .bas template file."""
     _check_admin(token)
-    path = BAS_DIR / filename
-    if not path.exists() or not path.is_file() or ".." in filename:
-        raise HTTPException(404, f"File not found: {filename}")
-    return {"filename": filename, "code": path.read_text(encoding="utf-8", errors="replace")}
+    path = _resolve_bas(filename)
+    folder = path.parent.name
+    return {"filename": path.name, "folder": folder, "code": path.read_text(encoding="utf-8", errors="replace")}
 
 
 @app.post("/api/bas/save")
 async def api_bas_save(req: BasSaveRequest):
     """Save a .bas template file (admin-protected)."""
     _check_admin(req.token)
-    if ".." in req.filename or "/" in req.filename or "\\" in req.filename:
-        raise HTTPException(400, "Invalid filename")
-    path = BAS_DIR / req.filename
-    if not path.exists():
-        raise HTTPException(404, f"File not found: {req.filename}")
+    path = _resolve_bas(req.filename)
     import shutil
-    bak = BAS_DIR / (req.filename + ".editor-bak")
+    bak = path.parent / (path.name + ".editor-bak")
     shutil.copy2(path, bak)
     path.write_text(req.code, encoding="utf-8")
-    return {"ok": True, "filename": req.filename, "size": len(req.code)}
+    return {"ok": True, "filename": path.name, "folder": path.parent.name, "size": len(req.code)}
 
 
 # --- .pan Intake ---
@@ -1280,7 +1313,7 @@ function renderModules(){
   var el=document.getElementById('modList');
   if(!activeFamily){el.innerHTML='';return;}
   var html='';
-  var catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','optimum-start'];
+  var catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','optimum-start','boiler','plant'];
   for(var ci=0;ci<catOrder.length;ci++){
     var cat=catOrder[ci];
     var mods=modules[cat];if(!mods)continue;
@@ -1290,7 +1323,9 @@ function renderModules(){
       var isCore=m.is_core;
       var checked=(isCore||selected.has(m.id))?'checked':'';
       var cls=isCore?'mod-item core':(selected.has(m.id)?'mod-item on':'mod-item');
-      html+='<div class="'+cls+'"><input type="checkbox" '+checked+' '+(isCore?'disabled':'')+' onchange="toggleMod(\\x27'+m.id+'\\x27,this.checked)"><span>'+m.name+'</span></div>';
+      html+='<div class="'+cls+'" style="display:flex;align-items:center;gap:6px"><input type="checkbox" '+checked+' '+(isCore?'disabled':'')+' onchange="toggleMod(\\x27'+m.id+'\\x27,this.checked)">';
+      html+='<span style="flex:1;cursor:pointer" onclick="showModuleDetail(\\x27'+m.id+'\\x27)">'+m.name+'</span>';
+      html+='<span style="font-size:0.7em;color:#64748b">'+m.programs+'P</span></div>';
     }
     html+='</div>';
   }
@@ -1300,6 +1335,66 @@ function renderModules(){
 function toggleMod(id,on){
   if(on)selected.add(id);else selected.delete(id);
   renderModules();
+}
+
+async function showModuleDetail(modId){
+  var panel=document.getElementById('modDetailPanel');
+  if(!panel){
+    var d=document.createElement('div');
+    d.id='modDetailPanel';
+    d.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#0f172a;border:2px solid #3b82f6;border-radius:8px;padding:0;z-index:1000;min-width:500px;max-width:700px;max-height:80vh;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,0.5)';
+    document.body.appendChild(d);
+    panel=d;
+    var overlay=document.createElement('div');
+    overlay.id='modDetailOverlay';
+    overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:999';
+    overlay.onclick=function(){closeModuleDetail();};
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('modDetailOverlay').style.display='block';
+  panel.style.display='block';
+  panel.innerHTML='<div style="padding:16px;color:#94a3b8">Loading...</div>';
+  try{
+    var res=await fetch('api/modules/'+modId);
+    var m=await res.json();
+    var html='<div style="padding:12px 16px;background:#1e293b;border-bottom:1px solid #334155;display:flex;justify-content:space-between;align-items:center">';
+    html+='<div><h3 style="margin:0;color:#60a5fa;font-size:1em">'+m.name+'</h3><div style="font-size:0.75em;color:#94a3b8;margin-top:2px">'+m.category.toUpperCase()+' module — '+m.id+'</div></div>';
+    html+='<button class="btn btn-o" style="padding:4px 12px;font-size:0.8em" onclick="closeModuleDetail()">Close</button></div>';
+    html+='<div style="padding:12px 16px">';
+    if(m.description)html+='<div style="font-size:0.8em;color:#cbd5e1;margin-bottom:10px">'+m.description+'</div>';
+    var ps=m.point_summary;
+    var counts=[];
+    if(ps.AI)counts.push(ps.AI+' AI');if(ps.AO)counts.push(ps.AO+' AO');if(ps.DI)counts.push(ps.DI+' DI');if(ps.DO)counts.push(ps.DO+' DO');
+    if(ps.AV)counts.push(ps.AV+' AV');if(ps.BV)counts.push(ps.BV+' BV');if(ps.MV)counts.push(ps.MV+' MV');
+    if(counts.length)html+='<div style="font-size:0.75em;color:#64748b;margin-bottom:10px">Points: '+counts.join(' | ')+'</div>';
+    if(m.programs.length){
+      html+='<div style="font-size:0.8em;font-weight:700;color:#a78bfa;margin-bottom:6px">Programs ('+m.programs.length+')</div>';
+      html+='<table style="width:100%;border-collapse:collapse;font-size:0.75em"><tr style="background:#1e293b"><th style="padding:4px 8px;text-align:left;color:#60a5fa">PRG#</th><th style="padding:4px 8px;text-align:left;color:#60a5fa">Name</th><th style="padding:4px 8px;text-align:left;color:#60a5fa">File</th><th style="padding:4px 8px;text-align:left;color:#60a5fa">Description</th></tr>';
+      m.programs.sort(function(a,b){return a.exec_order-b.exec_order;});
+      for(var i=0;i<m.programs.length;i++){
+        var p=m.programs[i];
+        html+='<tr style="border-bottom:1px solid #1e293b"><td style="padding:4px 8px;color:#e2e8f0">PRG'+p.instance+'</td><td style="padding:4px 8px;color:#e2e8f0">'+p.name+'</td>';
+        html+='<td style="padding:4px 8px"><span style="color:#34d399;cursor:pointer;text-decoration:underline" onclick="closeModuleDetail();openBasFromModule(\\x27'+p.filename+'\\x27)">'+p.filename+'</span></td>';
+        html+='<td style="padding:4px 8px;color:#94a3b8">'+p.description+'</td></tr>';
+      }
+      html+='</table>';
+    }else{
+      html+='<div style="font-size:0.8em;color:#64748b;font-style:italic">No programs in this module</div>';
+    }
+    html+='</div>';
+    panel.innerHTML=html;
+  }catch(e){panel.innerHTML='<div style="padding:16px;color:#ef4444">Error: '+e.message+'</div>';}
+}
+
+function closeModuleDetail(){
+  var p=document.getElementById('modDetailPanel');if(p)p.style.display='none';
+  var o=document.getElementById('modDetailOverlay');if(o)o.style.display='none';
+}
+
+function openBasFromModule(filename){
+  if(!adminToken){alert('Login to admin to view .bas files');return;}
+  openEditor();
+  loadBasFile(filename);
 }
 
 async function doAssemble(){
@@ -1663,16 +1758,25 @@ async function loadBasList(){
   var res=await fetch('api/bas/list?token='+adminToken);
   var d=await res.json();
   var el=document.getElementById('basFileList');
-  el.innerHTML=d.files.map(function(f){return '<div class="bf'+(f===editorFile?' sel':'')+'" onclick="loadBasFile(\\x27'+f+'\\x27)">'+f+'</div>';}).join('');
+  var folders={};
+  d.files.forEach(function(f){if(!folders[f.folder])folders[f.folder]=[];folders[f.folder].push(f);});
+  var html='';
+  Object.keys(folders).sort().forEach(function(folder){
+    html+='<div style="padding:4px 8px;font-weight:700;color:#7c3aed;font-size:11px;background:#1e293b;border-bottom:1px solid #334155;text-transform:uppercase;letter-spacing:0.05em">'+folder+' ('+folders[folder].length+')</div>';
+    folders[folder].forEach(function(f){
+      html+='<div class="bf'+(f.path===editorFile?' sel':'')+'" onclick="loadBasFile(\\x27'+f.path+'\\x27)">'+f.filename+'</div>';
+    });
+  });
+  el.innerHTML=html;
 }
 async function loadBasFile(fn){
   if(editorDirty&&!confirm('Unsaved changes in '+editorFile+'. Discard?'))return;
   var res=await fetch('api/bas/read?filename='+encodeURIComponent(fn)+'&token='+adminToken);
   if(!res.ok){document.getElementById('edStatus').textContent='Error loading';return;}
   var d=await res.json();
-  editorFile=fn;
+  editorFile=d.folder+'/'+d.filename;
   document.getElementById('basEditor').value=d.code;
-  document.getElementById('edStatus').textContent='Loaded: '+fn+' ('+d.code.length+' chars)';
+  document.getElementById('edStatus').textContent='Loaded: '+editorFile+' ('+d.code.length+' chars)';
   editorDirty=false;
   loadBasList();
 }
