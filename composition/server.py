@@ -224,21 +224,50 @@ async def api_hwp_generate(req: HWPAssembleRequest):
     wb = write_excel(merged, trends, alarm_code, config_name)
 
     prg_dir = Path(__file__).parent / "programs" / "hw_plant"
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+
+    # Compile .pan via temp dir
+    import tempfile, shutil
+    pan_data = b""
+    tmp = tempfile.mkdtemp(prefix="sbs-hwp-")
+    try:
         excel_buf = io.BytesIO()
         wb.save(excel_buf)
-        zf.writestr("RC-Studio-Output.xlsx", excel_buf.getvalue())
+        excel_bytes = excel_buf.getvalue()
+        with open(os.path.join(tmp, "RC-Studio-Output.xlsx"), "wb") as f:
+            f.write(excel_bytes)
+        tmp_prg = os.path.join(tmp, "programs")
+        os.makedirs(tmp_prg, exist_ok=True)
+        for prg in merged['programs']:
+            bas_path = prg_dir / prg.filename
+            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            with open(os.path.join(tmp_prg, prg.filename), "w") as f:
+                f.write(code)
+        with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f:
+            f.write(alarm_code)
+        try:
+            from compile_from_excel import compile_package
+            pan_data = compile_package(tmp, verbose=False)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
         for prg in merged['programs']:
             bas_path = prg_dir / prg.filename
             code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
             zf.writestr(f"programs/{prg.filename}", code)
         zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
+        if pan_data:
+            zf.writestr(f"{config_name}.pan", pan_data)
         soo = '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph)
         zf.writestr("SOO.txt", soo)
         zf.writestr("summary.json", json.dumps({
             "name": config_name, "family": "HW-PLANT", "controller": "MPS",
             "params": req.params,
+            "pan_included": bool(pan_data), "pan_size": len(pan_data),
             "counts": {"inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
                        "values": len(merged['values']), "programs": len(merged['programs'])+1,
                        "trends": len(trends)},
@@ -327,22 +356,51 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
     wb = write_excel(merged, trends, alarm_code, config_name)
 
     prg_dir = Path(__file__).parent / "programs" / "chw_plant"
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+
+    # Compile .pan via temp dir
+    import tempfile, shutil
+    pan_data = b""
+    tmp = tempfile.mkdtemp(prefix="sbs-chwp-")
+    try:
         excel_buf = io.BytesIO()
         wb.save(excel_buf)
-        zf.writestr("RC-Studio-Output.xlsx", excel_buf.getvalue())
+        excel_bytes = excel_buf.getvalue()
+        with open(os.path.join(tmp, "RC-Studio-Output.xlsx"), "wb") as f:
+            f.write(excel_bytes)
+        tmp_prg = os.path.join(tmp, "programs")
+        os.makedirs(tmp_prg, exist_ok=True)
+        for prg in merged['programs']:
+            bas_path = prg_dir / prg.filename
+            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            with open(os.path.join(tmp_prg, prg.filename), "w") as f:
+                f.write(code)
+        with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f:
+            f.write(alarm_code)
+        try:
+            from compile_from_excel import compile_package
+            pan_data = compile_package(tmp, verbose=False)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    family = "CHW-PLANT-TOWER" if req.params.get('num_towers') else "CHW-PLANT-AIR"
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
         for prg in merged['programs']:
             bas_path = prg_dir / prg.filename
             code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
             zf.writestr(f"programs/{prg.filename}", code)
         zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
+        if pan_data:
+            zf.writestr(f"{config_name}.pan", pan_data)
         soo = '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph)
         zf.writestr("SOO.txt", soo)
-        family = "CHW-PLANT-TOWER" if req.params.get('num_towers') else "CHW-PLANT-AIR"
         zf.writestr("summary.json", json.dumps({
             "name": config_name, "family": family, "controller": "MPS",
             "params": req.params,
+            "pan_included": bool(pan_data), "pan_size": len(pan_data),
             "counts": {"inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
                        "values": len(merged['values']), "programs": len(merged['programs'])+1,
                        "trends": len(trends)},
@@ -1783,8 +1841,8 @@ function getModList(){
 
 async function doGeneratePan(){
   if(activeFamily==='HW-PLANT'||activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER'){
-    document.getElementById('status').textContent='.pan compile for plant controllers — use Download Excel + .bas, then compile separately';
-    return;
+    document.getElementById('status').textContent='Generating plant .pan — use Full Package (includes .pan)...';
+    doGenerateFull();return;
   }
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
