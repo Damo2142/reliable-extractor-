@@ -76,25 +76,16 @@ def build_blr_cascade(num_boilers=2, analog_spt=True, monitor_hwst=False):
             22 + n, f"BLR{n}-ALARM-STS", "BV", False,
             f"Boiler {n} Alarm Status"))
 
-    # Lead boiler rotation
-    if num_boilers > 1:
-        values.append(ValuePoint(27, "LEAD-BLR", "AV", 1.0,
-            "Lead Boiler Number", "#"))
+    # Cascade: NO lead/lag, NO rotation schedule for boilers
+    # The boiler master controller handles its own internal staging
+    # We just enable and set the supply temp setpoint
 
     programs = [
         ProgramDef(6, "HW-BLRS-PRG", "HW-PRG06-BLRS.bas", "", True,
                    "Cascade boiler enable and setpoint control", "hw-blr-cascade", exec_order=6),
     ]
 
-    if num_boilers > 1:
-        programs.append(ProgramDef(7, "HW-BLR-LEAD-SCHED-PRG", "HW-PRG07-BLR-LEAD-SCHED.bas", "", True,
-                   "Boiler lead rotation schedule", "hw-blr-cascade", exec_order=7))
-
     schedules = []
-    if num_boilers > 1:
-        schedules.append(ScheduleDef(2, "{device-name}-BLR-LEAD-SCHED", "Boiler 1",
-            [f"Boiler {n}" for n in range(1, num_boilers + 1)], 10,
-            "Boiler lead rotation schedule"))
 
     return Module(
         id="hw-blr-cascade",
