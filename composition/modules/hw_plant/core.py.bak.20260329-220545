@@ -3,7 +3,7 @@ HW-PLANT Core Module — Always present in every HW plant build.
 
 Provides: system enable, OA reset logic, HW supply/return temps,
           OAT/OAH monitoring, network valve position feedback,
-          runtime tracking, delta-T monitoring, schedule, config program.
+          schedule, config program, setpoint program.
 
 I/O Map:
   IN1  = HWS-T   (AI)  Hot Water Supply Temp
@@ -23,7 +23,7 @@ def build():
         id="hw-core",
         name="HW Plant Core",
         category="hw-core",
-        description="Base HW plant: system enable, OA reset, supply/return temps, runtime tracking, delta-T monitoring",
+        description="Base HW plant: system enable, OA reset, supply/return temps, config, schedule",
         is_core=True,
 
         inputs=[
@@ -61,21 +61,10 @@ def build():
             ValuePoint(16, "HHW-OA-RESET",      "AV", 0.0,   "OA Reset Output",               "°F"),
             ValuePoint(17, "HHW-HWV-OFFSET",    "AV", 0.0,   "Valve Position Offset",         "°F"),
 
-            # HW system timing and config
-            ValuePoint(18, "HWP-STOP-DELAY",    "AV", 30.0,  "Pump Proof Failure Delay",      "Sec"),
+            # HW system status
+            ValuePoint(18, "HWS-HWP-STOP-DELAY","AV", 120.0, "Pump Stop Delay After Disable", "Sec"),
             ValuePoint(19, "HW-DELTA-T",        "AV", 0.0,   "HW Supply-Return Delta T",      "°F"),
             ValuePoint(20, "RESET-SAFETIES",     "BV", False, "Reset Safeties Command"),
-
-            # Pump speed config
-            ValuePoint(75, "HWP-RAMP-RATE",     "AV", 3.33,  "Pump Speed Ramp Rate",          ""),
-            ValuePoint(76, "HWS-T-MIN-FOR-SPD", "AV", 110.0, "Min HWS-T Before Speed Ramp",   "°F"),
-
-            # Delta-T alarm
-            ValuePoint(77, "LOW-DELTA-T",       "BV", False,  "Low Delta-T Alarm"),
-            ValuePoint(78, "LOW-DELTA-T-SP",    "AV", 5.0,    "Low Delta-T Alarm Setpoint",    "°F"),
-
-            # Lead/lag config
-            ValuePoint(79, "HWP-ROTATION-HOLD", "AV", 168.0,  "Min Hours Before Pump Rotation","Hrs"),
         ],
 
         loops=[],
@@ -84,11 +73,11 @@ def build():
 
         programs=[
             ProgramDef(1, "HW-CONFIG-PRG", "HW-PRG01-CONFIG.bas", "", True,
-                       "Configuration — network reads, enthalpy, runtime tracking, DP averaging", "hw-core", exec_order=1),
+                       "Configuration — network reads, enthalpy calc, system enable", "hw-core", exec_order=1),
             ProgramDef(2, "HW-SPT-PRG", "HW-PRG02-SPT.bas", "", True,
                        "HW supply temp setpoint — OA reset with valve feedback", "hw-core", exec_order=2),
             ProgramDef(5, "HW-STATUS-PRG", "HW-PRG05-STATUS.bas", "", True,
-                       "System status — HW available, delta-T monitoring, low-flow alarm", "hw-core", exec_order=5),
+                       "System status — HW available flag, delta T calc", "hw-core", exec_order=5),
         ],
 
         schedules=[
@@ -109,8 +98,5 @@ air handling units. The hot water supply temperature setpoint shall be reset bas
 outside air temperature between configurable min/max limits. Valve position feedback
 from network AHUs shall provide trim-and-respond offset to optimize supply temperature.
 The system shall enable when outside air temperature falls below the configurable
-enable setpoint and at least one served AHU requires heating. HW availability to
-served AHUs requires system enabled, pump proven running, and supply temperature
-above 110°F. Low delta-T alarm shall activate when supply-return delta-T drops below
-5°F while pumps are running, indicating possible flow issue.""",
+enable setpoint and at least one served AHU requires heating.""",
     )
