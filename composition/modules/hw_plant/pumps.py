@@ -246,8 +246,8 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
             60 + (n-1)*2, f"SHWP{n}-OOS", "BV", False,
             f"Secondary Pump {n} Out of Service"))
 
-    # DP sensor — after loop temps
-    inputs.append(InputPoint(20, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
+    # DP sensor
+    inputs.append(InputPoint(15, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
         "HW Differential Pressure", "PSI"))
 
     # System values
