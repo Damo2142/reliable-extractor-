@@ -25,7 +25,7 @@ from composition.excel_gen import generate_excel
 from composition.program_loader import inject_program_code
 from composition.module_registry import (
     list_modules, list_by_category, get_module, STANDARD_CONFIGS, EQUIPMENT_FAMILIES,
-    hwp_assemble
+    hwp_assemble, chwp_assemble
 )
 
 app = FastAPI(
@@ -238,6 +238,110 @@ async def api_hwp_generate(req: HWPAssembleRequest):
         zf.writestr("SOO.txt", soo)
         zf.writestr("summary.json", json.dumps({
             "name": config_name, "family": "HW-PLANT", "controller": "MPS",
+            "params": req.params,
+            "counts": {"inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
+                       "values": len(merged['values']), "programs": len(merged['programs'])+1,
+                       "trends": len(trends)},
+        }, indent=2, default=str))
+    zip_buf.seek(0)
+    return StreamingResponse(zip_buf, media_type="application/zip",
+                             headers={"Content-Disposition": f"attachment; filename={config_name}.zip"})
+
+
+class CHWPAssembleRequest(BaseModel):
+    params: dict
+    controller_model: str = "MPS"
+
+
+@app.post("/api/chwp-assemble")
+async def api_chwp_assemble(req: CHWPAssembleRequest):
+    """Assemble CHW plant from wizard parameters."""
+    try:
+        modules = chwp_assemble(req.params)
+    except Exception as e:
+        raise HTTPException(400, f"CHW Plant assembly error: {str(e)}")
+
+    from composition.hw_plant_test import merge_modules, generate_trends, generate_alarm_bas
+    merged = merge_modules(modules)
+    trends = generate_trends(merged)
+
+    prg_dir = Path(__file__).parent / "programs" / "chw_plant"
+    for prg in merged['programs']:
+        bas_path = prg_dir / prg.filename
+        if bas_path.exists():
+            prg.code = bas_path.read_text()
+
+    alarm_code = generate_alarm_bas(merged)
+    from composition.models import ProgramDef
+    alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
+                           "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
+    merged['programs'].append(alarm_prg)
+
+    highest_in = max((p.row for p in merged['inputs']), default=0)
+    highest_out = max((p.row for p in merged['outputs']), default=0)
+
+    return {
+        "modules": [m.id for m in modules],
+        "controller": {
+            "model": req.controller_model or "MPS",
+            "expansion_count": max(0, (highest_in - 8 + 11) // 12) if highest_in > 8 else 0,
+            "expansion_model": "MPP-IO-U",
+            "highest_input_row": highest_in,
+            "highest_output_row": highest_out,
+        },
+        "counts": {
+            "inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
+            "values": len(merged['values']), "loops": len(merged['loops']),
+            "tables": len(merged['tables']), "programs": len(merged['programs']),
+            "schedules": len(merged['schedules']), "trends": len(trends),
+            "max_value_inst": max((v.instance for v in merged['values']), default=0),
+            "max_loop_inst": max((l.instance for l in merged['loops']), default=0),
+            "max_prg_inst": max((p.instance for p in merged['programs']), default=0),
+            "system_groups": len(merged['system_groups']),
+        },
+        "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "units": p.units, "range": p.range_code, "module": p.module} for p in merged['inputs']],
+        "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in merged['outputs']],
+        "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in merged['values']],
+        "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in merged['loops']],
+        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50), "code": p.code or ""} for p in sorted(merged['programs'], key=lambda x: x.exec_order)],
+        "soo": '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph),
+        "warnings": [],
+        "chwp_params": req.params,
+    }
+
+
+@app.post("/api/chwp-generate")
+async def api_chwp_generate(req: CHWPAssembleRequest):
+    """Generate CHW plant Excel + .bas package from wizard parameters."""
+    try:
+        modules = chwp_assemble(req.params)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+    from composition.hw_plant_test import merge_modules, generate_trends, generate_alarm_bas, write_excel
+    merged = merge_modules(modules)
+    trends = generate_trends(merged)
+    alarm_code = generate_alarm_bas(merged)
+
+    config_name = req.params.get('config_name', 'CHW-Plant')
+    wb = write_excel(merged, trends, alarm_code, config_name)
+
+    prg_dir = Path(__file__).parent / "programs" / "chw_plant"
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        excel_buf = io.BytesIO()
+        wb.save(excel_buf)
+        zf.writestr("RC-Studio-Output.xlsx", excel_buf.getvalue())
+        for prg in merged['programs']:
+            bas_path = prg_dir / prg.filename
+            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            zf.writestr(f"programs/{prg.filename}", code)
+        zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
+        soo = '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph)
+        zf.writestr("SOO.txt", soo)
+        family = "CHW-PLANT-TOWER" if req.params.get('num_towers') else "CHW-PLANT-AIR"
+        zf.writestr("summary.json", json.dumps({
+            "name": config_name, "family": family, "controller": "MPS",
             "params": req.params,
             "counts": {"inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
                        "values": len(merged['values']), "programs": len(merged['programs'])+1,
@@ -1160,6 +1264,65 @@ tr.unused td{color:#475569;font-style:italic}
       <input type="checkbox" id="hwp_makeup_water" onchange="hwpUpdate()"> Makeup Water Monitoring
     </label>
   </div>
+  <div class="sec" id="chwpWizard" style="display:none">
+    <div class="sec-t">CHW Plant Configuration</div>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Number of Chillers</label>
+    <select id="chwp_num_chillers" onchange="chwpUpdate()">
+      <option value="1">1</option><option value="2" selected>2</option>
+      <option value="3">3</option><option value="4">4</option>
+    </select>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Primary CHW Pumps</label>
+    <select id="chwp_num_pri" onchange="chwpUpdate()">
+      <option value="1">1</option><option value="2" selected>2</option>
+      <option value="3">3</option><option value="4">4</option>
+    </select>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Secondary CHW Pumps</label>
+    <select id="chwp_num_sec" onchange="chwpUpdate()">
+      <option value="1">1</option><option value="2" selected>2</option>
+      <option value="3">3</option><option value="4">4</option>
+    </select>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">DP Sensors</label>
+    <select id="chwp_num_dp" onchange="chwpUpdate()">
+      <option value="1">1</option><option value="2" selected>2 (averaged)</option>
+    </select>
+    <div id="chwp_tower_section" style="display:none">
+      <div class="sec-t" style="margin-top:10px">Condenser Water / Towers</div>
+      <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">CW Pumps</label>
+      <select id="chwp_num_cw" onchange="chwpUpdate()">
+        <option value="1">1</option><option value="2" selected>2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select>
+      <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Cooling Towers</label>
+      <select id="chwp_num_towers" onchange="chwpUpdate()">
+        <option value="1">1</option><option value="2" selected>2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select>
+      <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+        <input type="checkbox" id="chwp_tower_bypass" checked onchange="chwpUpdate()"> Tower CW Bypass Valve
+      </label>
+    </div>
+    <div class="sec-t" style="margin-top:10px">Optional Add-ons</div>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="chwp_bypass_valve" onchange="chwpUpdate()"> CHW Bypass Valve
+    </label>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="chwp_iso_valves" onchange="chwpUpdate()"> Isolation Valves
+    </label>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="chwp_ahu_integ" onchange="chwpUpdate()"> AHU Integration
+    </label>
+    <div id="chwp_ahu_row" style="display:none;margin-left:20px">
+      <select id="chwp_num_ahus" onchange="chwpUpdate()">
+        <option value="1">1 AHU</option><option value="2" selected>2 AHUs</option>
+        <option value="3">3</option><option value="4">4</option>
+        <option value="5">5</option><option value="6">6</option>
+        <option value="7">7</option><option value="8">8</option>
+      </select>
+    </div>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="chwp_makeup_water" onchange="chwpUpdate()"> Makeup Water Monitoring
+    </label>
+  </div>
 </div>
 <div class="main">
   <div id="status">Select an equipment family to begin.</div>
@@ -1217,12 +1380,16 @@ function onFamilyChange(){
   activeCfg='';
   selected.clear();
   const isHWP=activeFamily==='HW-PLANT';
-  document.getElementById('modToggles').style.display=isHWP?'none':'';
+  const isCHWP=activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER';
+  const isPlant=isHWP||isCHWP;
+  document.getElementById('modToggles').style.display=isPlant?'none':'';
   document.getElementById('hwpWizard').style.display=isHWP?'':'none';
+  document.getElementById('chwpWizard').style.display=isCHWP?'':'none';
+  if(isCHWP)chwpUpdate();
   renderConfigs();
-  if(!isHWP)renderModules();
+  if(!isPlant)renderModules();
   document.getElementById('results').style.display='none';
-  document.getElementById('status').textContent=f?(isHWP?'Configure HW Plant options, then click Assemble.':'Select a standard configuration, then click Assemble.'):'Select an equipment family.';
+  document.getElementById('status').textContent=f?(isPlant?'Configure plant options, then click Assemble.':'Select a standard configuration, then click Assemble.'):'Select an equipment family.';
 }
 
 function hwpUpdate(){
@@ -1279,6 +1446,47 @@ function hwpLoadPreset(params){
   hwpUpdate();
 }
 
+function chwpUpdate(){
+  var isTower=activeFamily==='CHW-PLANT-TOWER';
+  document.getElementById('chwp_tower_section').style.display=isTower?'':'none';
+  document.getElementById('chwp_ahu_row').style.display=document.getElementById('chwp_ahu_integ').checked?'':'none';
+}
+
+function chwpGetParams(){
+  var p={};
+  p.num_chillers=parseInt(document.getElementById('chwp_num_chillers').value);
+  p.num_pri_pumps=parseInt(document.getElementById('chwp_num_pri').value);
+  p.num_sec_pumps=parseInt(document.getElementById('chwp_num_sec').value);
+  p.num_dp_sensors=parseInt(document.getElementById('chwp_num_dp').value);
+  if(activeFamily==='CHW-PLANT-TOWER'){
+    p.num_cw_pumps=parseInt(document.getElementById('chwp_num_cw').value);
+    p.num_towers=parseInt(document.getElementById('chwp_num_towers').value);
+    p.tower_bypass=document.getElementById('chwp_tower_bypass').checked;
+  }
+  p.bypass_valve=document.getElementById('chwp_bypass_valve').checked;
+  p.iso_valves=document.getElementById('chwp_iso_valves').checked;
+  p.ahu_integration=document.getElementById('chwp_ahu_integ').checked;
+  if(p.ahu_integration) p.num_ahus=parseInt(document.getElementById('chwp_num_ahus').value);
+  p.makeup_water=document.getElementById('chwp_makeup_water').checked;
+  return p;
+}
+
+function chwpLoadPreset(params){
+  document.getElementById('chwp_num_chillers').value=params.num_chillers||2;
+  document.getElementById('chwp_num_pri').value=params.num_pri_pumps||2;
+  document.getElementById('chwp_num_sec').value=params.num_sec_pumps||2;
+  document.getElementById('chwp_num_dp').value=params.num_dp_sensors||2;
+  if(params.num_cw_pumps) document.getElementById('chwp_num_cw').value=params.num_cw_pumps;
+  if(params.num_towers) document.getElementById('chwp_num_towers').value=params.num_towers;
+  document.getElementById('chwp_tower_bypass').checked=!!params.tower_bypass;
+  document.getElementById('chwp_bypass_valve').checked=!!params.bypass_valve;
+  document.getElementById('chwp_iso_valves').checked=!!params.iso_valves;
+  document.getElementById('chwp_ahu_integ').checked=!!params.ahu_integration;
+  if(params.num_ahus) document.getElementById('chwp_num_ahus').value=params.num_ahus;
+  document.getElementById('chwp_makeup_water').checked=!!params.makeup_water;
+  chwpUpdate();
+}
+
 function renderConfigs(){
   var el=document.getElementById('cfgList');
   if(!activeFamily){el.innerHTML='<div style="color:#475569;font-size:0.8em">Select a family first</div>';return;}
@@ -1303,6 +1511,9 @@ function selectCfg(id){
   if(cfg.hwp_params){
     hwpLoadPreset(cfg.hwp_params);
     document.getElementById('status').textContent='Loaded: '+id+' — '+cfg.name+' (HW Plant preset)';
+  }else if(cfg.chwp_params){
+    chwpLoadPreset(cfg.chwp_params);
+    document.getElementById('status').textContent='Loaded: '+id+' — '+cfg.name+' (CHW Plant preset)';
   }else{
     renderModules();
     document.getElementById('status').textContent='Loaded: '+id+' — '+cfg.name;
@@ -1404,6 +1615,9 @@ async function doAssemble(){
     if(activeFamily==='HW-PLANT'){
       var params=hwpGetParams();
       res=await fetch('api/hwp-assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+    }else if(activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER'){
+      var params=chwpGetParams();
+      res=await fetch('api/chwp-assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
     }else{
       var mods=Array.from(selected);
       var cats=Object.keys(modules);
@@ -1531,6 +1745,10 @@ async function doGenerate(){
       var params=hwpGetParams();
       params.config_name='SBS-HW-Plant';
       res=await fetch('api/hwp-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+    }else if(activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER'){
+      var params=chwpGetParams();
+      params.config_name='SBS-CHW-Plant';
+      res=await fetch('api/chwp-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
     }else{
       var mods=Array.from(selected);
       var cats=Object.keys(modules);
@@ -1545,7 +1763,8 @@ async function doGenerate(){
     if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
     var blob=await res.blob();
     var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');a.href=url;a.download=activeFamily==='HW-PLANT'?'hw-plant-package.zip':'composition-package.zip';a.click();
+    var fname=activeFamily==='HW-PLANT'?'hw-plant-package.zip':(activeFamily.startsWith('CHW')?'chw-plant-package.zip':'composition-package.zip');
+    var a=document.createElement('a');a.href=url;a.download=fname;a.click();
     document.getElementById('status').textContent='Package downloaded!';
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }

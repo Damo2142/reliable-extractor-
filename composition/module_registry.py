@@ -18,6 +18,19 @@ from composition.modules.hw_plant import (
     build_mixing_valve, build_iso_valves, build_comb_damper,
     build_heat_exchanger, build_ahu_integration, build_makeup_water
 )
+from composition.modules.chw_plant import (
+    build_core as chwp_build_core,
+    build_chiller as chwp_build_chiller,
+    build_pump_pri as chwp_build_pump_pri,
+    build_pump_sec as chwp_build_pump_sec,
+    build_cdwp as chwp_build_cdwp,
+    build_tower as chwp_build_tower,
+    build_tower_bypass as chwp_build_tower_bypass,
+    build_bypass_valve as chwp_build_bypass_valve,
+    build_iso_valves as chwp_build_iso_valves,
+    build_makeup_water as chwp_build_makeup_water,
+    build_ahu_integration as chwp_build_ahu_integration,
+)
 
 
 # Registry: module_id -> builder function
@@ -115,6 +128,9 @@ _register("dd-hot-elec", dual_duct.build_dd_hot_elec)
 
 # HW Plant — static core registration (dynamic modules built via hwp_assemble)
 _register("hw-core", hwp_build_core)
+
+# CHW Plant — static core registration (dynamic modules built via chwp_assemble)
+_register("chw-core", chwp_build_core)
 
 
 # Cache built modules
@@ -261,6 +277,25 @@ EQUIPMENT_FAMILIES = {
         "required_modules": ["hw-core"],
         "available_categories": ["hw-core", "hw-boiler", "hw-pump", "hw-optional"],
         "notes": "Wizard-based configuration. Boiler and pump modules selected via question flow. One controller per plant.",
+        "wizard": True,
+    },
+    "CHW-PLANT-AIR": {
+        "name": "Air Cooled Chiller Plant",
+        "description": "Air cooled chiller plant — chiller enable/staging, primary + secondary pumps, no cooling towers. MPS controller.",
+        "prefix": "SBS-PLT",
+        "required_modules": ["chw-core"],
+        "available_categories": ["chw-core", "chw-chiller", "chw-pump-pri", "chw-pump-sec", "chw-optional"],
+        "notes": "Wizard-based. Air cooled chillers — no condenser water system. Primary pumps CS, secondary pumps VFD with DP.",
+        "wizard": True,
+    },
+    "CHW-PLANT-TOWER": {
+        "name": "Water Cooled Chiller Plant",
+        "description": "Water cooled chiller plant — chillers, primary/secondary CHW pumps, CW pumps, cooling towers. MPS controller.",
+        "prefix": "SBS-PLT",
+        "required_modules": ["chw-core"],
+        "available_categories": ["chw-core", "chw-chiller", "chw-pump-pri", "chw-pump-sec",
+                                 "chw-cw-pump", "chw-tower", "chw-tower-opt", "chw-optional"],
+        "notes": "Wizard-based. Water cooled chillers with cooling towers, CW pumps, and optional tower bypass.",
         "wizard": True,
     },
 }
@@ -875,6 +910,74 @@ STANDARD_CONFIGS = {
             "pump_type": "pri-sec", "num_primary": 2, "num_secondary": 2,
         },
     },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  CHW Plant Air Cooled — SBS-PLT-751 to 760
+    # ═══════════════════════════════════════════════════════════════════════
+    "SBS-PLT-751": {
+        "family": "CHW-PLANT-AIR",
+        "name": "1-Chiller, 1-Pri, 2-Sec VFD",
+        "description": "Single air cooled chiller, 1 primary CS pump, 2 secondary VFD pumps with DP",
+        "modules": ["chw-core"],
+        "chwp_params": {
+            "num_chillers": 1, "num_pri_pumps": 1, "num_sec_pumps": 2, "num_dp_sensors": 2,
+        },
+    },
+    "SBS-PLT-752": {
+        "family": "CHW-PLANT-AIR",
+        "name": "2-Chiller, 2-Pri, 2-Sec VFD",
+        "description": "2 air cooled chillers, 2 primary CS pumps, 2 secondary VFD pumps with DP",
+        "modules": ["chw-core"],
+        "chwp_params": {
+            "num_chillers": 2, "num_pri_pumps": 2, "num_sec_pumps": 2, "num_dp_sensors": 2,
+        },
+    },
+    "SBS-PLT-753": {
+        "family": "CHW-PLANT-AIR",
+        "name": "2-Chiller, 2-Pri, 3-Sec VFD, Bypass",
+        "description": "2 air cooled chillers, 2 primary CS, 3 secondary VFD, CHW bypass valve",
+        "modules": ["chw-core"],
+        "chwp_params": {
+            "num_chillers": 2, "num_pri_pumps": 2, "num_sec_pumps": 3, "num_dp_sensors": 2,
+            "bypass_valve": True,
+        },
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  CHW Plant Water Cooled (Tower) — SBS-PLT-771 to 780
+    # ═══════════════════════════════════════════════════════════════════════
+    "SBS-PLT-771": {
+        "family": "CHW-PLANT-TOWER",
+        "name": "2-Chiller, 2-Tower, 2+2 Pumps",
+        "description": "2 water cooled chillers, 2 towers, 2 primary + 2 secondary CHW, 2 CW pumps",
+        "modules": ["chw-core"],
+        "chwp_params": {
+            "num_chillers": 2, "num_pri_pumps": 2, "num_sec_pumps": 2, "num_dp_sensors": 2,
+            "num_cw_pumps": 2, "num_towers": 2, "tower_bypass": True,
+        },
+    },
+    "SBS-PLT-772": {
+        "family": "CHW-PLANT-TOWER",
+        "name": "2-Chiller, 2-Tower, 2+3 Pumps, Iso",
+        "description": "2 water cooled chillers, 2 towers, 2 pri + 3 sec, 2 CW pumps, isolation valves",
+        "modules": ["chw-core"],
+        "chwp_params": {
+            "num_chillers": 2, "num_pri_pumps": 2, "num_sec_pumps": 3, "num_dp_sensors": 2,
+            "num_cw_pumps": 2, "num_towers": 2, "tower_bypass": True,
+            "iso_valves": True,
+        },
+    },
+    "SBS-PLT-773": {
+        "family": "CHW-PLANT-TOWER",
+        "name": "3-Chiller, 3-Tower, 3+3 Pumps, Iso",
+        "description": "3 water cooled chillers, 3 towers, 3 pri + 3 sec, 3 CW pumps, isolation + bypass",
+        "modules": ["chw-core"],
+        "chwp_params": {
+            "num_chillers": 3, "num_pri_pumps": 3, "num_sec_pumps": 3, "num_dp_sensors": 2,
+            "num_cw_pumps": 3, "num_towers": 3, "tower_bypass": True,
+            "iso_valves": True, "bypass_valve": True,
+        },
+    },
 }
 
 
@@ -942,5 +1045,61 @@ def hwp_assemble(params):
         modules.append(build_ahu_integration(num_ahus=params.get('num_ahus', 2)))
     if params.get('makeup_water'):
         modules.append(build_makeup_water())
+
+    return modules
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CHW Plant Dynamic Assembly
+# ═══════════════════════════════════════════════════════════════════════════
+
+def chwp_assemble(params):
+    """Build CHW plant module list from wizard parameters.
+
+    Args:
+        params: dict with keys:
+            num_chillers: 1-4
+            num_pri_pumps: 1-4
+            num_sec_pumps: 1-4
+            num_dp_sensors: 1 or 2 (default 2)
+            num_cw_pumps: 1-4 (tower only)
+            num_towers: 1-4 (tower only)
+            tower_bypass: bool (tower only)
+            bypass_valve: bool
+            iso_valves: bool
+            makeup_water: bool
+            ahu_integration: bool
+            num_ahus: 1-8
+
+    Returns:
+        list of Module objects ready for assembly
+    """
+    modules = [chwp_build_core()]
+
+    nc = params.get('num_chillers', 2)
+    modules.append(chwp_build_chiller(num_chillers=nc))
+    modules.append(chwp_build_pump_pri(num_pumps=params.get('num_pri_pumps', 2)))
+    modules.append(chwp_build_pump_sec(
+        num_pumps=params.get('num_sec_pumps', 2),
+        num_dp_sensors=params.get('num_dp_sensors', 2)))
+
+    # Tower-specific modules
+    if params.get('num_cw_pumps'):
+        modules.append(chwp_build_cdwp(num_pumps=params['num_cw_pumps']))
+    if params.get('num_towers'):
+        modules.append(chwp_build_tower(num_towers=params['num_towers']))
+    if params.get('tower_bypass'):
+        modules.append(chwp_build_tower_bypass())
+
+    # Optional modules
+    if params.get('bypass_valve'):
+        modules.append(chwp_build_bypass_valve())
+    if params.get('iso_valves'):
+        has_cdw = bool(params.get('num_cw_pumps'))
+        modules.append(chwp_build_iso_valves(num_chillers=nc, has_cdw_side=has_cdw))
+    if params.get('ahu_integration'):
+        modules.append(chwp_build_ahu_integration(num_ahus=params.get('num_ahus', 2)))
+    if params.get('makeup_water'):
+        modules.append(chwp_build_makeup_water())
 
     return modules
