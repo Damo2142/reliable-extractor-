@@ -16,8 +16,7 @@ from composition.models import (
 # I/O rows for boiler inputs/outputs (fixed per boiler slot)
 # Inputs start at row 5 for boiler module
 _BLR_INPUT_BASE = 5      # BI: BLR1-ALARM at IN5, BLR2 at IN6, etc.
-_BLR_HWST_BASE = 7       # AI: BLR1-HWST at IN7, BLR2 at IN9, etc. (if monitored)
-_BLR_HWRT_BASE = 8       # AI: BLR1-HWRT at IN8, BLR2 at IN10, etc. (if monitored)
+_BLR_HWST_BASE = 7       # AI: BLR1-HWST at IN7, BLR2 at IN8, etc. (if monitored)
 # Outputs: cascade starts at OUT1, full control at OUT1
 _BLR_ENABLE_ROW = 1      # BO: BLRS-ENABLE (cascade only)
 _BLR_SPT_AO_ROW = 2      # AO: BLRS-SPT (cascade, analog only)
@@ -43,15 +42,12 @@ def build_blr_cascade(num_boilers=2, analog_spt=True, monitor_hwst=False):
             _BLR_INPUT_BASE + n - 1, f"BLR{n}-ALARM", "BI", "Normal/Alarm",
             f"Boiler {n} Alarm Contact"))
 
-    # Per-boiler supply and return temps (optional)
+    # Per-boiler supply temp (optional)
     if monitor_hwst:
         for n in range(1, num_boilers + 1):
             inputs.append(InputPoint(
                 _BLR_HWST_BASE + (n - 1) * 2, f"BLR{n}-HWST", "AI", "10K -40 ->250",
                 f"Boiler {n} HW Supply Temperature", "°F"))
-            inputs.append(InputPoint(
-                _BLR_HWRT_BASE + (n - 1) * 2, f"BLR{n}-HWRT", "AI", "10K -40 ->250",
-                f"Boiler {n} HW Return Temperature", "°F"))
 
     # System enable output
     outputs.append(OutputPoint(
@@ -137,14 +133,11 @@ def build_blr_full(num_boilers=2, monitor_hwst=True):
             _BLR_INPUT_BASE + n - 1, f"BLR{n}-ALARM", "BI", "Normal/Alarm",
             f"Boiler {n} Alarm Contact"))
 
-        # Supply and return temp per boiler
+        # Supply temp per boiler (full control always monitors)
         if monitor_hwst:
             inputs.append(InputPoint(
                 _BLR_HWST_BASE + (n - 1) * 2, f"BLR{n}-HWST", "AI", "10K -40 ->250",
                 f"Boiler {n} HW Supply Temperature", "°F"))
-            inputs.append(InputPoint(
-                _BLR_HWRT_BASE + (n - 1) * 2, f"BLR{n}-HWRT", "AI", "10K -40 ->250",
-                f"Boiler {n} HW Return Temperature", "°F"))
 
         # Start/stop per boiler
         outputs.append(OutputPoint(

@@ -48,9 +48,9 @@ def build():
 
             # OA Reset setpoints
             ValuePoint(7,  "ACT-HWS-TEMP-SP",   "AV", 160.0, "Active HW Supply Temp Setpoint", "°F"),
-            ValuePoint(8,  "CFG-RESET-OA-MIN",  "AV", 0.0,   "OA Reset Min OAT",              "°F"),
-            ValuePoint(9,  "CFG-RESET-OA-MAX",  "AV", 60.0,  "OA Reset Max OAT",              "°F"),
-            ValuePoint(10, "CFG-RESET-HW-MIN",  "AV", 140.0, "OA Reset Min HW Temp",          "°F"),
+            ValuePoint(8,  "CFG-RESET-OA-MIN",  "AV", 20.0,  "OA Reset Min OAT",              "°F"),
+            ValuePoint(9,  "CFG-RESET-OA-MAX",  "AV", 70.0,  "OA Reset Max OAT",              "°F"),
+            ValuePoint(10, "CFG-RESET-HW-MIN",  "AV", 120.0, "OA Reset Min HW Temp",          "°F"),
             ValuePoint(11, "CFG-RESET-HW-MAX",  "AV", 180.0, "OA Reset Max HW Temp",          "°F"),
             ValuePoint(12, "CFG-HHW-OA-ENAB-SP","AV", 65.0,  "OA Temp Enable Setpoint",       "°F"),
 
