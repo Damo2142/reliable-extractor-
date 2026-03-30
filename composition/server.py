@@ -24,7 +24,8 @@ from composition.assembler import assemble, CONTROLLER_SPECS
 from composition.excel_gen import generate_excel
 from composition.program_loader import inject_program_code
 from composition.module_registry import (
-    list_modules, list_by_category, get_module, STANDARD_CONFIGS, EQUIPMENT_FAMILIES
+    list_modules, list_by_category, get_module, STANDARD_CONFIGS, EQUIPMENT_FAMILIES,
+    hwp_assemble
 )
 
 app = FastAPI(
@@ -125,6 +126,111 @@ async def api_assemble(req: AssembleRequest):
         "soo": config.soo_document,
         "warnings": getattr(config, 'warnings', []),
     }
+
+
+class HWPAssembleRequest(BaseModel):
+    params: dict
+    controller_model: str = "MPS"
+
+
+@app.post("/api/hwp-assemble")
+async def api_hwp_assemble(req: HWPAssembleRequest):
+    """Assemble HW plant from wizard parameters."""
+    try:
+        modules = hwp_assemble(req.params)
+    except Exception as e:
+        raise HTTPException(400, f"HW Plant assembly error: {str(e)}")
+
+    # Merge modules manually (HW plant uses its own merge, not the AHU assembler)
+    from composition.modules.hw_plant.core import build as _hwp_core
+    from composition.hw_plant_test import merge_modules, generate_trends, generate_alarm_bas
+    merged = merge_modules(modules)
+    trends = generate_trends(merged)
+
+    # Load .bas program code
+    prg_dir = Path(__file__).parent / "programs" / "hw_plant"
+    for prg in merged['programs']:
+        bas_path = prg_dir / prg.filename
+        if bas_path.exists():
+            prg.code = bas_path.read_text()
+
+    # Build alarm program
+    alarm_code = generate_alarm_bas(merged)
+    from composition.models import ProgramDef
+    alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
+                           "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
+    merged['programs'].append(alarm_prg)
+
+    # Calculate highest I/O rows
+    highest_in = max((p.row for p in merged['inputs']), default=0)
+    highest_out = max((p.row for p in merged['outputs']), default=0)
+
+    return {
+        "modules": [m.id for m in modules],
+        "controller": {
+            "model": req.controller_model or "MPS",
+            "expansion_count": max(0, (highest_in - 8 + 11) // 12) if highest_in > 8 else 0,
+            "expansion_model": "MPP-IO-U",
+            "highest_input_row": highest_in,
+            "highest_output_row": highest_out,
+        },
+        "counts": {
+            "inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
+            "values": len(merged['values']), "loops": len(merged['loops']),
+            "tables": len(merged['tables']), "programs": len(merged['programs']),
+            "schedules": len(merged['schedules']), "trends": len(trends),
+            "system_groups": len(merged['system_groups']),
+        },
+        "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "units": p.units, "range": p.range_code, "module": p.module} for p in merged['inputs']],
+        "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in merged['outputs']],
+        "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in merged['values']],
+        "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in merged['loops']],
+        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50), "code": p.code or ""} for p in sorted(merged['programs'], key=lambda x: x.exec_order)],
+        "soo": '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph),
+        "warnings": [],
+        "hwp_params": req.params,
+    }
+
+
+@app.post("/api/hwp-generate")
+async def api_hwp_generate(req: HWPAssembleRequest):
+    """Generate HW plant Excel + .bas package from wizard parameters."""
+    try:
+        modules = hwp_assemble(req.params)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+    from composition.hw_plant_test import merge_modules, generate_trends, generate_alarm_bas, write_excel
+    merged = merge_modules(modules)
+    trends = generate_trends(merged)
+    alarm_code = generate_alarm_bas(merged)
+
+    config_name = req.params.get('config_name', 'HW-Plant')
+    wb = write_excel(merged, trends, alarm_code, config_name)
+
+    prg_dir = Path(__file__).parent / "programs" / "hw_plant"
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        excel_buf = io.BytesIO()
+        wb.save(excel_buf)
+        zf.writestr("RC-Studio-Output.xlsx", excel_buf.getvalue())
+        for prg in merged['programs']:
+            bas_path = prg_dir / prg.filename
+            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            zf.writestr(f"programs/{prg.filename}", code)
+        zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
+        soo = '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph)
+        zf.writestr("SOO.txt", soo)
+        zf.writestr("summary.json", json.dumps({
+            "name": config_name, "family": "HW-PLANT", "controller": "MPS",
+            "params": req.params,
+            "counts": {"inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
+                       "values": len(merged['values']), "programs": len(merged['programs'])+1,
+                       "trends": len(trends)},
+        }, indent=2, default=str))
+    zip_buf.seek(0)
+    return StreamingResponse(zip_buf, media_type="application/zip",
+                             headers={"Content-Disposition": f"attachment; filename={config_name}.zip"})
 
 
 @app.post("/api/generate")
@@ -932,9 +1038,91 @@ tr.unused td{color:#475569;font-style:italic}
     <div class="sec-t">Controller Model</div>
     <select id="selCtrl"><option value="auto">Auto-Select (recommended)</option></select>
   </div>
-  <div class="sec">
+  <div class="sec" id="modToggles">
     <div class="sec-t">Module Toggles <span style="font-size:0.85em;color:#475569">(on/off from standard)</span></div>
     <div id="modList"></div>
+  </div>
+  <div class="sec" id="hwpWizard" style="display:none">
+    <div class="sec-t">HW Plant Configuration</div>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Boiler Control</label>
+    <select id="hwp_boiler_type" onchange="hwpUpdate()">
+      <option value="cascade">Cascade (enable + setpoint)</option>
+      <option value="full">Full Control (direct fire rate)</option>
+    </select>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Number of Boilers</label>
+    <select id="hwp_num_boilers" onchange="hwpUpdate()">
+      <option value="1">1</option><option value="2" selected>2</option>
+      <option value="3">3</option><option value="4">4</option>
+    </select>
+    <div id="hwp_spt_row">
+      <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Boiler SPT Output</label>
+      <select id="hwp_spt_output" onchange="hwpUpdate()">
+        <option value="analog">Analog AO (0-10V)</option>
+        <option value="bacnet">BACnet (AV only)</option>
+      </select>
+    </div>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:4px 0 8px">
+      <input type="checkbox" id="hwp_monitor_temps" onchange="hwpUpdate()"> Monitor individual boiler supply temps
+    </label>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Pump Configuration</label>
+    <select id="hwp_pump_type" onchange="hwpUpdate()">
+      <option value="cs">Constant Speed</option>
+      <option value="vfd">VFD (with DP control)</option>
+      <option value="pri-sec">Primary / Secondary</option>
+    </select>
+    <div id="hwp_pump_count_row">
+      <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Number of Pumps</label>
+      <select id="hwp_num_pumps" onchange="hwpUpdate()">
+        <option value="1">1</option><option value="2" selected>2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select>
+    </div>
+    <div id="hwp_prisec_row" style="display:none">
+      <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Primary Pumps</label>
+      <select id="hwp_num_primary" onchange="hwpUpdate()">
+        <option value="1">1</option><option value="2" selected>2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select>
+      <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Secondary Pumps</label>
+      <select id="hwp_num_secondary" onchange="hwpUpdate()">
+        <option value="1">1</option><option value="2" selected>2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select>
+    </div>
+    <div class="sec-t" style="margin-top:10px">Optional Add-ons</div>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="hwp_mixing_valve" onchange="hwpUpdate()"> Mixing Valve
+    </label>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="hwp_iso_valves" onchange="hwpUpdate()"> Isolation Valves
+    </label>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="hwp_comb_damper" onchange="hwpUpdate()"> Combustion Damper
+    </label>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="hwp_heat_exchanger" onchange="hwpUpdate()"> Heat Exchanger
+    </label>
+    <div id="hwp_hx_row" style="display:none;margin-left:20px">
+      <select id="hwp_hx_valve_type" onchange="hwpUpdate()">
+        <option value="single_mod">Single Modulating</option>
+        <option value="single_onoff">Single On/Off</option>
+        <option value="third_twothird">1/3 + 2/3 Sequence</option>
+      </select>
+    </div>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="hwp_ahu_integ" onchange="hwpUpdate()"> AHU Integration
+    </label>
+    <div id="hwp_ahu_row" style="display:none;margin-left:20px">
+      <select id="hwp_num_ahus" onchange="hwpUpdate()">
+        <option value="1">1 AHU</option><option value="2" selected>2 AHUs</option>
+        <option value="3">3</option><option value="4">4</option>
+        <option value="5">5</option><option value="6">6</option>
+        <option value="7">7</option><option value="8">8</option>
+      </select>
+    </div>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:3px 0">
+      <input type="checkbox" id="hwp_makeup_water" onchange="hwpUpdate()"> Makeup Water Monitoring
+    </label>
   </div>
 </div>
 <div class="main">
@@ -992,10 +1180,67 @@ function onFamilyChange(){
   document.getElementById('familyDesc').textContent=f?f.description:'';
   activeCfg='';
   selected.clear();
+  const isHWP=activeFamily==='HW-PLANT';
+  document.getElementById('modToggles').style.display=isHWP?'none':'';
+  document.getElementById('hwpWizard').style.display=isHWP?'':'none';
   renderConfigs();
-  renderModules();
+  if(!isHWP)renderModules();
   document.getElementById('results').style.display='none';
-  document.getElementById('status').textContent=f?'Select a standard configuration, then click Assemble.':'Select an equipment family.';
+  document.getElementById('status').textContent=f?(isHWP?'Configure HW Plant options, then click Assemble.':'Select a standard configuration, then click Assemble.'):'Select an equipment family.';
+}
+
+function hwpUpdate(){
+  var bt=document.getElementById('hwp_boiler_type').value;
+  document.getElementById('hwp_spt_row').style.display=bt==='cascade'?'':'none';
+  var pt=document.getElementById('hwp_pump_type').value;
+  document.getElementById('hwp_pump_count_row').style.display=pt!=='pri-sec'?'':'none';
+  document.getElementById('hwp_prisec_row').style.display=pt==='pri-sec'?'':'none';
+  document.getElementById('hwp_hx_row').style.display=document.getElementById('hwp_heat_exchanger').checked?'':'none';
+  document.getElementById('hwp_ahu_row').style.display=document.getElementById('hwp_ahu_integ').checked?'':'none';
+}
+
+function hwpGetParams(){
+  var p={};
+  p.boiler_type=document.getElementById('hwp_boiler_type').value;
+  p.num_boilers=parseInt(document.getElementById('hwp_num_boilers').value);
+  if(p.boiler_type==='cascade') p.spt_output=document.getElementById('hwp_spt_output').value;
+  p.monitor_boiler_temps=document.getElementById('hwp_monitor_temps').checked;
+  p.pump_type=document.getElementById('hwp_pump_type').value;
+  if(p.pump_type==='pri-sec'){
+    p.num_primary=parseInt(document.getElementById('hwp_num_primary').value);
+    p.num_secondary=parseInt(document.getElementById('hwp_num_secondary').value);
+  }else{
+    p.num_pumps=parseInt(document.getElementById('hwp_num_pumps').value);
+  }
+  p.mixing_valve=document.getElementById('hwp_mixing_valve').checked;
+  p.iso_valves=document.getElementById('hwp_iso_valves').checked;
+  p.comb_damper=document.getElementById('hwp_comb_damper').checked;
+  p.heat_exchanger=document.getElementById('hwp_heat_exchanger').checked;
+  if(p.heat_exchanger) p.hx_valve_type=document.getElementById('hwp_hx_valve_type').value;
+  p.ahu_integration=document.getElementById('hwp_ahu_integ').checked;
+  if(p.ahu_integration) p.num_ahus=parseInt(document.getElementById('hwp_num_ahus').value);
+  p.makeup_water=document.getElementById('hwp_makeup_water').checked;
+  return p;
+}
+
+function hwpLoadPreset(params){
+  document.getElementById('hwp_boiler_type').value=params.boiler_type||'cascade';
+  document.getElementById('hwp_num_boilers').value=params.num_boilers||2;
+  document.getElementById('hwp_spt_output').value=params.spt_output||'analog';
+  document.getElementById('hwp_monitor_temps').checked=!!params.monitor_boiler_temps;
+  document.getElementById('hwp_pump_type').value=params.pump_type||'cs';
+  document.getElementById('hwp_num_pumps').value=params.num_pumps||2;
+  document.getElementById('hwp_num_primary').value=params.num_primary||2;
+  document.getElementById('hwp_num_secondary').value=params.num_secondary||2;
+  document.getElementById('hwp_mixing_valve').checked=!!params.mixing_valve;
+  document.getElementById('hwp_iso_valves').checked=!!params.iso_valves;
+  document.getElementById('hwp_comb_damper').checked=!!params.comb_damper;
+  document.getElementById('hwp_heat_exchanger').checked=!!params.heat_exchanger;
+  document.getElementById('hwp_hx_valve_type').value=params.hx_valve_type||'single_mod';
+  document.getElementById('hwp_ahu_integ').checked=!!params.ahu_integration;
+  document.getElementById('hwp_num_ahus').value=params.num_ahus||2;
+  document.getElementById('hwp_makeup_water').checked=!!params.makeup_water;
+  hwpUpdate();
 }
 
 function renderConfigs(){
@@ -1019,8 +1264,13 @@ function selectCfg(id){
   const cfg=standards[id];
   selected=new Set(cfg.modules);
   renderConfigs();
-  renderModules();
-  document.getElementById('status').textContent='Loaded: '+id+' — '+cfg.name;
+  if(cfg.hwp_params){
+    hwpLoadPreset(cfg.hwp_params);
+    document.getElementById('status').textContent='Loaded: '+id+' — '+cfg.name+' (HW Plant preset)';
+  }else{
+    renderModules();
+    document.getElementById('status').textContent='Loaded: '+id+' — '+cfg.name;
+  }
 }
 
 function renderModules(){
@@ -1050,18 +1300,23 @@ function toggleMod(id,on){
 }
 
 async function doAssemble(){
-  var mods=Array.from(selected);
-  var cats=Object.keys(modules);
-  for(var ci=0;ci<cats.length;ci++){
-    var ms=modules[cats[ci]];
-    for(var mi=0;mi<ms.length;mi++){
-      if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
-    }
-  }
-  var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
   document.getElementById('status').textContent='Assembling...';
   try{
-    var res=await fetch('api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var res;
+    if(activeFamily==='HW-PLANT'){
+      var params=hwpGetParams();
+      res=await fetch('api/hwp-assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+    }else{
+      var mods=Array.from(selected);
+      var cats=Object.keys(modules);
+      for(var ci=0;ci<cats.length;ci++){
+        var ms=modules[cats[ci]];
+        for(var mi=0;mi<ms.length;mi++){
+          if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
+        }
+      }
+      res=await fetch('api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value})});
+    }
     if(!res.ok){var e=await res.json();throw new Error(e.detail);}
     var r=await res.json();
     renderResults(r);
@@ -1177,22 +1432,28 @@ function showTab(i){
 }
 
 async function doGenerate(){
-  var mods=Array.from(selected);
-  var cats=Object.keys(modules);
-  for(var ci=0;ci<cats.length;ci++){
-    var ms=modules[cats[ci]];
-    for(var mi=0;mi<ms.length;mi++){
-      if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
-    }
-  }
-  var body={modules:mods,controller_model:document.getElementById('selCtrl').value};
   document.getElementById('status').textContent='Generating package...';
   try{
-    var res=await fetch('api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var res;
+    if(activeFamily==='HW-PLANT'){
+      var params=hwpGetParams();
+      params.config_name='SBS-HW-Plant';
+      res=await fetch('api/hwp-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+    }else{
+      var mods=Array.from(selected);
+      var cats=Object.keys(modules);
+      for(var ci=0;ci<cats.length;ci++){
+        var ms=modules[cats[ci]];
+        for(var mi=0;mi<ms.length;mi++){
+          if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
+        }
+      }
+      res=await fetch('api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value})});
+    }
     if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
     var blob=await res.blob();
     var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');a.href=url;a.download='composition-package.zip';a.click();
+    var a=document.createElement('a');a.href=url;a.download=activeFamily==='HW-PLANT'?'hw-plant-package.zip':'composition-package.zip';a.click();
     document.getElementById('status').textContent='Package downloaded!';
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }

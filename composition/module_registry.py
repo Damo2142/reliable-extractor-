@@ -9,6 +9,15 @@ from composition.modules import (
     economizer, erw, ventilation, optimum_start, safety, preheat, humidity, pump,
     dual_duct
 )
+from composition.modules.hw_plant import (
+    build_core as hwp_build_core,
+    build_blr_cascade, build_blr_full,
+    build_pump_cs as hwp_build_pump_cs,
+    build_pump_vfd as hwp_build_pump_vfd,
+    build_pump_pri_sec as hwp_build_pump_pri_sec,
+    build_mixing_valve, build_iso_valves, build_comb_damper,
+    build_heat_exchanger, build_ahu_integration, build_makeup_water
+)
 
 
 # Registry: module_id -> builder function
@@ -103,6 +112,9 @@ _register("ph-hw-pump", pump.build_ph_pump)
 _register("dd-cold-chw", dual_duct.build_dd_cold_chw)
 _register("dd-hot-hw", dual_duct.build_dd_hot_hw)
 _register("dd-hot-elec", dual_duct.build_dd_hot_elec)
+
+# HW Plant — static core registration (dynamic modules built via hwp_assemble)
+_register("hw-core", hwp_build_core)
 
 
 # Cache built modules
@@ -240,6 +252,15 @@ EQUIPMENT_FAMILIES = {
         "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
                                  "ventilation", "safety"],
         "notes": "Zone dampers are outputs on the AHU controller. Limited zone count (4-12 typical). Hot/cold deck SAT control. Common in older buildings / retrofit.",
+    },
+    "HW-PLANT": {
+        "name": "Hot Water Plant",
+        "description": "Central HW heating plant — boiler control, pump control, distribution. MPS controller.",
+        "prefix": "SBS-PLT",
+        "required_modules": ["hw-core"],
+        "available_categories": ["hw-core", "hw-boiler", "hw-pump", "hw-optional"],
+        "notes": "Wizard-based configuration. Boiler and pump modules selected via question flow. One controller per plant.",
+        "wizard": True,
     },
 }
 
@@ -795,4 +816,130 @@ STANDARD_CONFIGS = {
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  HW Plant — SBS-PLT-701 to 720
+    #  Wizard-based. Module list built dynamically from parameters.
+    #  These presets define the wizard defaults for quick selection.
+    # ═══════════════════════════════════════════════════════════════════════
+    "SBS-PLT-701": {
+        "family": "HW-PLANT",
+        "name": "2-Boiler Cascade, 2-Pump CS",
+        "description": "Interface boilers with analog setpoint, 2 constant speed pumps",
+        "modules": ["hw-core"],
+        "hwp_params": {
+            "boiler_type": "cascade", "num_boilers": 2, "spt_output": "analog",
+            "monitor_boiler_temps": False,
+            "pump_type": "cs", "num_pumps": 2,
+        },
+    },
+    "SBS-PLT-702": {
+        "family": "HW-PLANT",
+        "name": "2-Boiler Cascade, 2-Pump VFD",
+        "description": "Interface boilers with analog setpoint, 2 VFD pumps with DP control",
+        "modules": ["hw-core"],
+        "hwp_params": {
+            "boiler_type": "cascade", "num_boilers": 2, "spt_output": "analog",
+            "monitor_boiler_temps": False,
+            "pump_type": "vfd", "num_pumps": 2,
+        },
+    },
+    "SBS-PLT-703": {
+        "family": "HW-PLANT",
+        "name": "2-Boiler Full, 2-Pump CS",
+        "description": "Direct fire rate control, 2 boilers, 2 constant speed pumps",
+        "modules": ["hw-core"],
+        "hwp_params": {
+            "boiler_type": "full", "num_boilers": 2, "monitor_boiler_temps": True,
+            "pump_type": "cs", "num_pumps": 2,
+        },
+    },
+    "SBS-PLT-704": {
+        "family": "HW-PLANT",
+        "name": "2-Boiler Full, 2-Pump VFD",
+        "description": "Direct fire rate control, 2 boilers, 2 VFD pumps with DP",
+        "modules": ["hw-core"],
+        "hwp_params": {
+            "boiler_type": "full", "num_boilers": 2, "monitor_boiler_temps": True,
+            "pump_type": "vfd", "num_pumps": 2,
+        },
+    },
+    "SBS-PLT-705": {
+        "family": "HW-PLANT",
+        "name": "3-Boiler Full, Pri-Sec (2+2)",
+        "description": "3 direct-control boilers, primary/secondary pumping 2+2",
+        "modules": ["hw-core"],
+        "hwp_params": {
+            "boiler_type": "full", "num_boilers": 3, "monitor_boiler_temps": True,
+            "pump_type": "pri-sec", "num_primary": 2, "num_secondary": 2,
+        },
+    },
 }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HW Plant Dynamic Assembly
+# ═══════════════════════════════════════════════════════════════════════════
+
+def hwp_assemble(params):
+    """Build HW plant module list from wizard parameters.
+
+    Args:
+        params: dict with keys:
+            boiler_type: "cascade" | "full"
+            num_boilers: 1-4
+            spt_output: "analog" | "bacnet" (cascade only)
+            monitor_boiler_temps: bool
+            pump_type: "cs" | "vfd" | "pri-sec"
+            num_pumps: 1-4 (for cs/vfd)
+            num_primary: 1-4 (for pri-sec)
+            num_secondary: 1-4 (for pri-sec)
+            mixing_valve: bool
+            iso_valves: bool
+            comb_damper: bool
+            heat_exchanger: bool
+            hx_valve_type: "single_mod" | "single_onoff" | "third_twothird"
+            ahu_integration: bool
+            num_ahus: 1-8
+            makeup_water: bool
+
+    Returns:
+        list of Module objects ready for assembly
+    """
+    modules = [hwp_build_core()]
+
+    bt = params.get('boiler_type', 'cascade')
+    nb = params.get('num_boilers', 2)
+    mbt = params.get('monitor_boiler_temps', False)
+
+    if bt == 'cascade':
+        analog = params.get('spt_output', 'analog') == 'analog'
+        modules.append(build_blr_cascade(num_boilers=nb, analog_spt=analog, monitor_hwst=mbt))
+    else:
+        modules.append(build_blr_full(num_boilers=nb, monitor_hwst=mbt))
+
+    pt = params.get('pump_type', 'cs')
+    if pt == 'cs':
+        modules.append(hwp_build_pump_cs(num_pumps=params.get('num_pumps', 2)))
+    elif pt == 'vfd':
+        modules.append(hwp_build_pump_vfd(num_pumps=params.get('num_pumps', 2)))
+    elif pt == 'pri-sec':
+        modules.append(hwp_build_pump_pri_sec(
+            num_primary=params.get('num_primary', 2),
+            num_secondary=params.get('num_secondary', 2)))
+
+    if params.get('mixing_valve'):
+        modules.append(build_mixing_valve())
+    if params.get('iso_valves'):
+        modules.append(build_iso_valves(num_boilers=nb))
+    if params.get('comb_damper'):
+        modules.append(build_comb_damper(num_boilers=nb))
+    if params.get('heat_exchanger'):
+        hvt = params.get('hx_valve_type', 'single_mod')
+        modules.append(build_heat_exchanger(valve_type=hvt))
+    if params.get('ahu_integration'):
+        modules.append(build_ahu_integration(num_ahus=params.get('num_ahus', 2)))
+    if params.get('makeup_water'):
+        modules.append(build_makeup_water())
+
+    return modules
