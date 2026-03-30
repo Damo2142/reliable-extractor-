@@ -41,12 +41,14 @@ def build_bypass_valve():
         ],
 
         values=[
-            ValuePoint(125, "CHW-BYP-SP", "AV", 44.0,
+            ValuePoint(253, "CHW-BYP-SP", "AV", 44.0,
                 "CHW Bypass Valve Setpoint", "°F"),
+            ValuePoint(254, "CHW-BYP-PID-SP", "AV", 44.0,
+                "CHW Bypass Valve PID Setpoint (loop copy)", "°F"),
         ],
 
         loops=[
-            LoopDef(4, "CHW-BYP-LOOP", "CHW-BYP-T", "CHW-BYP-SP", "CHW-BYP-VLV",
+            LoopDef(4, "CHW-BYP-LOOP", "CHW-BYP-T", "CHW-BYP-PID-SP", "CHW-BYP-VLV",
                     10.0, 40.0, action="reverse",
                     description="CHW bypass valve PID — valve opens when bypass temp rises above setpoint"),
         ],
@@ -98,8 +100,16 @@ def build_iso_valves(num_chillers=2, has_cdw_side=False):
                 _ISO_CDW_ES_BASE + n - 1, f"CHLR{n}-CDW-ISO-ES", "BI", "Open/Closed",
                 f"Chiller {n} CDW Isolation Valve End Switch"))
 
-    values.append(ValuePoint(126, "ISO-VLV-OPEN-DLY", "AV", 30.0,
+    values.append(ValuePoint(255, "ISO-VLV-OPEN-DLY", "AV", 30.0,
         "Isolation Valve Open Delay", "Sec"))
+
+    # .bas references CHLR{N}-ISO-VLV for START/STOP commands.
+    # The actual BO outputs are CHLR{N}-CHW-ISO (Dave's ruling).
+    # Add BV aliases so the .bas can reference them.
+    # TODO: update .bas to use CHLR{N}-CHW-ISO directly
+    for n in range(1, num_chillers + 1):
+        values.append(ValuePoint(256 + n - 1, f"CHLR{n}-ISO-VLV", "BV", False,
+            f"Chiller {n} Isolation Valve Command (alias for CHLR{n}-CHW-ISO)"))
 
     return Module(
         id="chw-iso-valves",
@@ -147,10 +157,10 @@ def build_makeup_water():
         outputs=[],
 
         values=[
-            ValuePoint(131, "MAKEUP-WTR-TTL", "AV", 0.0, "Makeup Water Total", "Gal"),
-            ValuePoint(132, "MAKEUP-WTR-ALARM", "BV", False, "Excessive Makeup Water Alarm"),
-            ValuePoint(133, "MAKEUP-WTR-HI-SP", "AV", 50.0, "Makeup Water High Flow SP", "GPM"),
-            ValuePoint(134, "MAKEUP-WTR-RESET", "BV", False, "Reset Makeup Water Total"),
+            ValuePoint(261, "MAKEUP-WTR-TTL", "AV", 0.0, "Makeup Water Total", "Gal"),
+            ValuePoint(262, "MAKEUP-WTR-ALARM", "BV", False, "Excessive Makeup Water Alarm"),
+            ValuePoint(263, "MAKEUP-WTR-HI-SP", "AV", 50.0, "Makeup Water High Flow SP", "GPM"),
+            ValuePoint(264, "MAKEUP-WTR-RESET", "BV", False, "Reset Makeup Water Total"),
         ],
 
         loops=[],
@@ -185,12 +195,13 @@ def build_ahu_integration(num_ahus=2):
     programs = []
 
     # System-level aggregated values
-    values.append(ValuePoint(139, "SNOW-DAY", "BV", False, "Snow Day Override"))
-    values.append(ValuePoint(140, "TOTAL-CLG-REQS", "AV", 0.0, "Total Cooling Requests", "#"))
+    values.append(ValuePoint(271, "SNOW-DAY", "BV", False, "Snow Day Override"))
+    values.append(ValuePoint(272, "TOTAL-CLG-REQUESTS", "AV", 0.0, "Total Cooling Requests", "#"))
+    values.append(ValuePoint(273, "AHUS-REQUESTING-CLG", "AV", 0.0, "AHUs Requesting Cooling", "#"))
 
-    # Per-AHU zone data (base = 141 + (n-1)*10)
+    # Per-AHU zone data (base = 281 + (n-1)*10)
     for n in range(1, num_ahus + 1):
-        base = 141 + (n - 1) * 10
+        base = 281 + (n - 1) * 10
         values.extend([
             ValuePoint(base + 0, f"AHU{n}-NET-OCC-CMD", "BV", False,
                 f"AHU {n} Occupancy Command"),

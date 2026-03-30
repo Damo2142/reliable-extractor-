@@ -83,6 +83,12 @@ def build():
             # Pump config
             ValuePoint(81, "CHWP-STOP-DELAY",   "AV", 30.0,  "Pump Stop Delay",               "Sec"),
             ValuePoint(82, "CHWP-ROTATION-HOLD","AV", 168.0,  "Min Hours Before Pump Rotation","Hrs"),
+
+            # Flow totalization
+            ValuePoint(83, "CHW-FLOW-TTL",      "AV", 0.0,   "CHW Flow Totalization",         "Gal"),
+
+            # System-wide pump status
+            ValuePoint(84, "ANY-CHWP-ON",       "BV", False,  "Any CHW Pump Running"),
         ],
 
         loops=[],

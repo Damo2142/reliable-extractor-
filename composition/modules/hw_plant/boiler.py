@@ -172,6 +172,11 @@ def build_blr_full(num_boilers=2, monitor_hwst=True):
         values.append(ValuePoint(base_av+5, f"B{n}-DEV",             "AV", 0.0,
             f"Boiler {n} Deviation from Setpoint", "°F"))
 
+    # Per-boiler calculated fire rate value (from .bas: B1-VOLT-BURN, B2-VOLT-BURN)
+    for n in range(1, num_boilers + 1):
+        values.append(ValuePoint(80 + n, f"B{n}-VOLT-BURN", "AV", 0.0,
+            f"Boiler {n} Voltage to Burn Rate (calculated)", "%"))
+
     # System-level values
     values.append(ValuePoint(29, "BLR-PURGE-DELAY", "AV", 30.0,
         "Boiler Purge Delay Before Ignition", "Sec"))

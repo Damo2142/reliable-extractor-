@@ -45,44 +45,64 @@ def build_chiller(num_chillers=2):
             _CHLR_CHWS_T_BASE + (n - 1) * 2 + 1, f"CHLR{n}-CHWR-T", "AI", "10K -40 ->250",
             f"Chiller {n} Entering CHW Temperature", "°F"))
 
-        # Enable output (BO)
+        # Enable output (BO) — .bas references CHLR{N}-S/S for START/STOP
         outputs.append(OutputPoint(
-            _CHLR_ENABLE_BASE + n - 1, f"CHLR{n}-ENABLE", "BO", "Stop/Start",
-            f"Chiller {n} Enable Contact"))
+            _CHLR_ENABLE_BASE + n - 1, f"CHLR{n}-S/S", "BO", "Stop/Start",
+            f"Chiller {n} Start/Stop Enable"))
 
-        # Per-chiller status values
-        values.append(ValuePoint(21 + (n - 1) * 5, f"CHLR{n}-FAIL", "BV", False,
+        # Per-chiller status values (8 per chiller starting at 21)
+        base = 21 + (n - 1) * 8
+        values.append(ValuePoint(base,     f"CHLR{n}-FAIL", "BV", False,
             f"Chiller {n} Failure"))
-        values.append(ValuePoint(22 + (n - 1) * 5, f"CHLR{n}-IN-SERVICE", "BV", True,
+        values.append(ValuePoint(base + 1, f"CHLR{n}-IN-SERVICE", "BV", True,
             f"Chiller {n} In Service"))
-        values.append(ValuePoint(23 + (n - 1) * 5, f"CHLR{n}-STS", "BV", False,
+        values.append(ValuePoint(base + 2, f"CHLR{n}-STS", "BV", False,
             f"Chiller {n} Running Status"))
-        values.append(ValuePoint(24 + (n - 1) * 5, f"CHLR{n}-ALARM-STS", "BV", False,
+        values.append(ValuePoint(base + 3, f"CHLR{n}-ALARM-STS", "BV", False,
             f"Chiller {n} Alarm Status"))
-        values.append(ValuePoint(25 + (n - 1) * 5, f"CHLR{n}-MIN-RUN", "AV", 0.0,
+        values.append(ValuePoint(base + 4, f"CHLR{n}-MIN-RUN", "AV", 0.0,
             f"Chiller {n} Min Run Timer", "Min"))
+        values.append(ValuePoint(base + 5, f"CHLR{n}-OOS", "BV", False,
+            f"Chiller {n} Out of Service"))
+        values.append(ValuePoint(base + 6, f"CHLR{n}-RUNTIME", "AV", 0.0,
+            f"Chiller {n} Runtime", "Hrs"))
+        values.append(ValuePoint(base + 7, f"CHLR{n}-SS", "BV", False,
+            f"Chiller {n} Start/Stop Command"))
+        # Per-chiller setpoint (from .bas: CHLR1-CHWS-SP)
+        values.append(ValuePoint(53 + (n - 1), f"CHLR{n}-CHWS-SP", "AV", 44.0,
+            f"Chiller {n} CHW Supply Setpoint", "°F"))
 
-    # System-level chiller values
-    values.append(ValuePoint(41, "CHLR-CHWS-SP", "AV", 44.0,
-        "Chiller CHW Supply Setpoint", "°F"))
-    values.append(ValuePoint(42, "TOTAL-CHLRS-REQUESTED", "AV", 0.0,
+    # System-level chiller values (55+)
+    values.append(ValuePoint(55, "CHLR-CHWS-SP", "AV", 44.0,
+        "System CHW Supply Setpoint", "°F"))
+    values.append(ValuePoint(56, "TOTAL-CHLRS-REQUESTED", "AV", 0.0,
         "Total Chillers Requested", "#"))
-    values.append(ValuePoint(43, "CHLR-MIN-ON-TIME", "AV", 10.0,
+    values.append(ValuePoint(57, "CHLR-MIN-ON-TIME", "AV", 10.0,
         "Chiller Min On Time", "Min"))
-    values.append(ValuePoint(44, "CHLR-MIN-OFF-TIME", "AV", 10.0,
+    values.append(ValuePoint(58, "CHLR-MIN-OFF-TIME", "AV", 10.0,
         "Chiller Min Off Time", "Min"))
+    values.append(ValuePoint(59, "CHLR-ALARM-DELAY", "AV", 30.0,
+        "Chiller Alarm Delay", "Sec"))
 
     if num_chillers > 1:
-        values.append(ValuePoint(45, "LEAD-CHLR", "AV", 1.0,
+        values.append(ValuePoint(60, "LEAD-CHLR", "AV", 1.0,
             "Lead Chiller Number", "#"))
-        values.append(ValuePoint(46, "CHLR-LAG-ENABLE", "BV", False,
+        values.append(ValuePoint(61, "CHLR-LAG-ENABLE", "BV", False,
             "Lag Chiller Enable"))
-        values.append(ValuePoint(47, "CHLR-LAG-SP", "AV", 85.0,
+        values.append(ValuePoint(62, "CHLR-LAG-SP", "AV", 85.0,
             "Lag Chiller Load Threshold", "%"))
-        values.append(ValuePoint(48, "CHLR-LAG-DELAY", "AV", 15.0,
+        values.append(ValuePoint(63, "CHLR-LAG-DELAY", "AV", 15.0,
             "Lag Chiller Start Delay", "Min"))
-        values.append(ValuePoint(49, "CHLR-SWITCH-DELAY", "AV", 5.0,
+        values.append(ValuePoint(64, "CHLR-SWITCH-DELAY", "AV", 5.0,
             "Lead/Lag Switch Delay", "Min"))
+        values.append(ValuePoint(65, "CHLR-ROTATION-HOLD", "AV", 168.0,
+            "Min Hours Before Chiller Rotation", "Hrs"))
+        values.append(ValuePoint(66, "LEAD-CHLR-SS", "BV", False,
+            "Lead Chiller Start/Stop"))
+        values.append(ValuePoint(67, "LAG-CHLR-SS", "BV", False,
+            "Lag Chiller Start/Stop"))
+        values.append(ValuePoint(68, "LEAD-CHLR-FAIL", "BV", False,
+            "Lead Chiller Failure"))
 
     # Programs
     programs.append(ProgramDef(6, "CHW-CHLR-CTRL-PRG", "CHW-PRG06-CHLR-CTRL.bas", "", True,

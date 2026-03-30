@@ -22,13 +22,14 @@ _DP_INPUT_2 = 16         # AI: HW-PRESS2 at IN16
 
 
 def _common_pump_values(num_pumps):
-    """Generate per-pump values shared across CS/VFD/PriSec."""
+    """Generate per-pump values shared across CS/VFD.
+    Note: ANY-HWP-ON is now defined in hw-core (BV80) — not duplicated here.
+    """
     values = []
     for n in range(1, num_pumps + 1):
         values.append(ValuePoint(51 + (n-1)*3, f"HWP{n}-FAIL", "BV", False, f"HW Pump {n} Failure"))
         values.append(ValuePoint(52 + (n-1)*3, f"HWP{n}-OOS", "BV", False, f"HW Pump {n} Out of Service"))
         values.append(ValuePoint(53 + (n-1)*3, f"HWP{n}-RUNTIME", "AV", 0.0, f"HW Pump {n} Runtime", "Hrs"))
-    values.append(ValuePoint(64, "ANY-HWP-ON", "BV", False, "Any Pump Running"))
     return values
 
 
@@ -210,7 +211,7 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
     inputs.append(InputPoint(19, "SEC-HWR-T", "AI", "10K -40 ->250",
         "Secondary Loop HW Return Temperature", "°F"))
 
-    # Primary pumps — constant speed
+    # Primary pumps — constant speed (instances 101+)
     for n in range(1, num_primary + 1):
         outputs.append(OutputPoint(
             _PUMP_SS_BASE + n - 1, f"PHWP{n}", "BO", "Stop/Start",
@@ -218,12 +219,12 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
         inputs.append(InputPoint(
             _PUMP_STS_BASE + n - 1, f"PHWP{n}-STS", "BI", "Off/On",
             f"Primary HW Pump {n} Status"))
-        values.append(ValuePoint(51 + (n-1)*2, f"PHWP{n}-FAIL", "BV", False,
+        values.append(ValuePoint(101 + (n-1)*2, f"PHWP{n}-FAIL", "BV", False,
             f"Primary Pump {n} Failure"))
-        values.append(ValuePoint(52 + (n-1)*2, f"PHWP{n}-OOS", "BV", False,
+        values.append(ValuePoint(102 + (n-1)*2, f"PHWP{n}-OOS", "BV", False,
             f"Primary Pump {n} Out of Service"))
 
-    # Secondary pumps — VFD with DP control
+    # Secondary pumps — VFD with DP control (instances 111+)
     sec_ss_base = _PUMP_SS_BASE + num_primary
     sec_sts_base = _PUMP_STS_BASE + num_primary
     sec_spd_base = 15
@@ -237,35 +238,35 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
         outputs.append(OutputPoint(
             sec_spd_base + n - 1, f"SHWP{n}-SPEED", "AO", "0.0 ->100%",
             f"Secondary HW Pump {n} VFD Speed", 2.0, 10.0))
-        values.append(ValuePoint(59 + (n-1)*3, f"SHWP{n}-FAIL", "BV", False,
+        values.append(ValuePoint(111 + (n-1)*3, f"SHWP{n}-FAIL", "BV", False,
             f"Secondary Pump {n} Failure"))
-        values.append(ValuePoint(60 + (n-1)*3, f"SHWP{n}-OOS", "BV", False,
+        values.append(ValuePoint(112 + (n-1)*3, f"SHWP{n}-OOS", "BV", False,
             f"Secondary Pump {n} Out of Service"))
-        values.append(ValuePoint(61 + (n-1)*3, f"SHWP{n}-RUNTIME", "AV", 0.0,
+        values.append(ValuePoint(113 + (n-1)*3, f"SHWP{n}-RUNTIME", "AV", 0.0,
             f"Secondary Pump {n} Runtime", "Hrs"))
 
     # DP sensor
     inputs.append(InputPoint(20, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
         "HW Differential Pressure", "PSI"))
 
-    # System values
+    # System values (121+)
     values.extend([
-        ValuePoint(67, "HWS-DP-SP",       "AV", 12.0,  "Secondary DP Setpoint",  "PSI"),
-        ValuePoint(68, "HWP-MIN-SPEED",   "AV", 30.0,  "Secondary Min Speed",    "%"),
-        ValuePoint(69, "HWP-MAX-SPEED",   "AV", 100.0, "Secondary Max Speed",    "%"),
-        ValuePoint(73, "PRI-DELTA-T",     "AV", 0.0,   "Primary Loop Delta T",   "°F"),
-        ValuePoint(74, "SEC-DELTA-T",     "AV", 0.0,   "Secondary Loop Delta T", "°F"),
-        ValuePoint(64, "ANY-HWP-ON",      "BV", False,  "Any Pump Running"),
+        ValuePoint(121, "HWS-DP-SP",       "AV", 12.0,  "Secondary DP Setpoint",  "PSI"),
+        ValuePoint(122, "HWP-MIN-SPEED",   "AV", 30.0,  "Secondary Min Speed",    "%"),
+        ValuePoint(123, "HWP-MAX-SPEED",   "AV", 100.0, "Secondary Max Speed",    "%"),
+        ValuePoint(124, "PRI-DELTA-T",     "AV", 0.0,   "Primary Loop Delta T",   "°F"),
+        ValuePoint(125, "SEC-DELTA-T",     "AV", 0.0,   "Secondary Loop Delta T", "°F"),
+        # ANY-HWP-ON is defined in hw-core (BV80) — not duplicated here
     ])
 
-    # Lead/lag for secondary
+    # Lead/lag for secondary (131+)
     if num_secondary > 1:
         values.extend([
-            ValuePoint(65, "LEAD-SHWP",       "AV", 1.0,  "Lead Secondary Pump Number", "#"),
-            ValuePoint(66, "LEAD-SHWP-SS",    "BV", False, "Lead Secondary Pump S/S"),
-            ValuePoint(70, "LAG-SHWP-SS",     "BV", False, "Lag Secondary Pump S/S"),
-            ValuePoint(71, "LEAD-SHWP-FAIL",  "BV", False, "Lead Secondary Pump Failure"),
-            ValuePoint(72, "ANY-SHWP-ON",     "BV", False, "Any Secondary Pump Running"),
+            ValuePoint(131, "LEAD-SHWP",       "AV", 1.0,  "Lead Secondary Pump Number", "#"),
+            ValuePoint(132, "LEAD-SHWP-SS",    "BV", False, "Lead Secondary Pump S/S"),
+            ValuePoint(133, "LAG-SHWP-SS",     "BV", False, "Lag Secondary Pump S/S"),
+            ValuePoint(134, "LEAD-SHWP-FAIL",  "BV", False, "Lead Secondary Pump Failure"),
+            ValuePoint(135, "ANY-SHWP-ON",     "BV", False, "Any Secondary Pump Running"),
         ])
 
     loops = [

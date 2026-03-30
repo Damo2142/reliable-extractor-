@@ -39,56 +39,63 @@ def build_tower(num_towers=2):
         _CDW_TEMP_BASE + 1, "CDW-LVG-T", "AI", "10K -40 ->250",
         "Condenser Water Leaving Temperature", "°F"))
 
-    # Per-tower I/O
+    # Per-tower I/O — renamed to match .bas (CT{N}-FAN-S/S, CT{N}-FAN-STS, CT{N}-FAN-SPEED)
     for n in range(1, num_towers + 1):
         outputs.append(OutputPoint(
-            _CT_SS_BASE + n - 1, f"CT{n}-S/S", "BO", "Stop/Start",
+            _CT_SS_BASE + n - 1, f"CT{n}-FAN-S/S", "BO", "Stop/Start",
             f"Cooling Tower {n} Fan Start/Stop"))
         inputs.append(InputPoint(
-            _CT_STS_BASE + n - 1, f"CT{n}-STS", "BI", "Off/On",
+            _CT_STS_BASE + n - 1, f"CT{n}-FAN-STS", "BI", "Off/On",
             f"Cooling Tower {n} Fan Status"))
         outputs.append(OutputPoint(
-            _CT_SPD_BASE + n - 1, f"CT{n}-SPD", "AO", "0.0 ->100%",
+            _CT_SPD_BASE + n - 1, f"CT{n}-FAN-SPEED", "AO", "0.0 ->100%",
             f"Cooling Tower {n} Fan VFD Speed", 2.0, 10.0))
-        values.append(ValuePoint(121 + (n - 1) * 3, f"CT{n}-FAIL", "BV", False,
+        # Per tower: 4 values each starting at 221
+        base = 221 + (n - 1) * 4
+        values.append(ValuePoint(base,     f"CT{n}-FAIL", "BV", False,
             f"Cooling Tower {n} Fan Failure"))
-        values.append(ValuePoint(122 + (n - 1) * 3, f"CT{n}-IN-SERVICE", "BV", True,
+        values.append(ValuePoint(base + 1, f"CT{n}-IN-SERVICE", "BV", True,
             f"Cooling Tower {n} In Service"))
-        values.append(ValuePoint(123 + (n - 1) * 3, f"CT{n}-RUNTIME", "AV", 0.0,
+        values.append(ValuePoint(base + 2, f"CT{n}-RUNTIME", "AV", 0.0,
             f"Cooling Tower {n} Runtime", "Hrs"))
+        values.append(ValuePoint(base + 3, f"CT{n}-OOS", "BV", False,
+            f"Cooling Tower {n} Out of Service"))
 
-    # System values
-    # CDWS-T-SP: Condenser water LEAVING tower temp setpoint.
-    # Tower fan loop modulates fan speed to hit this target.
-    # Resets based on OA wet bulb + approach temperature.
-    values.append(ValuePoint(131, "CDWS-T-SP", "AV", 78.0,
+    # CDWS-T alias AV (referenced by .bas PRG34 as measured value)
+    values.append(ValuePoint(233, "CDWS-T", "AV", 0.0,
+        "Condenser Water Supply Temp (calculated/alias)", "°F"))
+
+    # System values starting at 235
+    values.append(ValuePoint(235, "CDWS-T-SP", "AV", 78.0,
         "Condenser Water Supply Temp Setpoint (leaving tower)", "°F"))
-
-    # Wet-bulb approach reset parameters
-    # OA-WET-BULB is calculated in the tower program from OAT + OAH
-    values.append(ValuePoint(132, "OA-WET-BULB", "AV", 0.0,
+    values.append(ValuePoint(236, "OA-WET-BULB", "AV", 0.0,
         "Calculated OA Wet Bulb Temperature", "°F"))
-    values.append(ValuePoint(133, "CFG-CT-APPROACH", "AV", 7.0,
+    values.append(ValuePoint(237, "CFG-CT-APPROACH", "AV", 7.0,
         "Min Approach Temp Above Wet Bulb", "°F"))
-    values.append(ValuePoint(134, "CFG-CT-MAX-CDWS-SP", "AV", 85.0,
+    values.append(ValuePoint(238, "CFG-CT-MAX-CDWS-SP", "AV", 85.0,
         "Max Condenser Water Supply Setpoint", "°F"))
-    values.append(ValuePoint(135, "CFG-CT-MIN-CDWS-SP", "AV", 65.0,
+    values.append(ValuePoint(239, "CFG-CT-MIN-CDWS-SP", "AV", 65.0,
         "Min Condenser Water Supply Setpoint", "°F"))
 
     # Tower timing
-    values.append(ValuePoint(136, "CT-MIN-ON", "AV", 5.0, "Tower Fan Min On Time", "Min"))
-    values.append(ValuePoint(137, "CT-MIN-OFF", "AV", 5.0, "Tower Fan Min Off Time", "Min"))
-    values.append(ValuePoint(138, "CT-FAN-MIN-SPEED", "AV", 20.0, "Tower Fan Min Speed", "%"))
-    values.append(ValuePoint(139, "CT-FAN-MAX-SPEED", "AV", 100.0, "Tower Fan Max Speed", "%"))
+    values.append(ValuePoint(240, "CT-MIN-ON", "AV", 5.0, "Tower Fan Min On Time", "Min"))
+    values.append(ValuePoint(241, "CT-MIN-OFF", "AV", 5.0, "Tower Fan Min Off Time", "Min"))
+    values.append(ValuePoint(242, "CT-FAN-MIN-SPEED", "AV", 20.0, "Tower Fan Min Speed", "%"))
+    values.append(ValuePoint(243, "CT-FAN-MAX-SPEED", "AV", 100.0, "Tower Fan Max Speed", "%"))
+    values.append(ValuePoint(244, "CT-FAN-RAMP-RATE", "AV", 3.33, "Tower Fan Ramp Rate", ""))
+    values.append(ValuePoint(245, "CT-ROTATION-HOLD", "AV", 168.0,
+        "Min Hours Before Tower Rotation", "Hrs"))
 
     if num_towers > 1:
-        values.append(ValuePoint(140, "LEAD-CT", "AV", 1.0, "Lead Tower Number", "#"))
-        values.append(ValuePoint(141, "LEAD-CT-SS", "BV", False, "Lead Tower Start/Stop"))
-        values.append(ValuePoint(142, "LEAD-CT-FAIL", "BV", False, "Lead Tower Failure"))
+        values.append(ValuePoint(246, "LEAD-CT", "AV", 1.0, "Lead Tower Number", "#"))
+        values.append(ValuePoint(247, "LEAD-CT-SS", "BV", False, "Lead Tower Start/Stop"))
+        values.append(ValuePoint(248, "LEAD-CT-FAIL", "BV", False, "Lead Tower Failure"))
+        values.append(ValuePoint(249, "LAG-CT-SS", "BV", False, "Lag Tower Start/Stop"))
+        values.append(ValuePoint(250, "ANY-CT-ON", "BV", False, "Any Tower Fan Running"))
 
     # Condenser water supply temp loop — fan speed controls leaving tower temp
     loops = [
-        LoopDef(2, "CDWS-T-LOOP", "CDW-LVG-T", "CDWS-T-SP", "CT1-SPD",
+        LoopDef(2, "CDWS-T-LOOP", "CDW-LVG-T", "CDWS-T-SP", "CT1-FAN-SPEED",
                 4.0, 60.0, action="direct",
                 description="Condenser water supply temp — fan speed (higher speed = cooler water)"),
     ]
@@ -152,7 +159,7 @@ def build_tower_bypass():
             # CT-BYPASS-SPT: Min entering CW temp at chiller condenser.
             # NOT the same as CDWS-T-SP (leaving tower temp).
             # Bypass opens when CW entering chiller drops below this setpoint.
-            ValuePoint(143, "CT-BYPASS-SPT", "AV", 65.0,
+            ValuePoint(251, "CT-BYPASS-SPT", "AV", 65.0,
                 "Min CW Entering Chiller Temp (bypass opens below this)", "°F"),
         ],
 

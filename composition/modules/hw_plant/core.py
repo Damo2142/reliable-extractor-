@@ -76,6 +76,9 @@ def build():
 
             # Lead/lag config
             ValuePoint(79, "HWP-ROTATION-HOLD", "AV", 168.0,  "Min Hours Before Pump Rotation","Hrs"),
+
+            # System-wide pump status (needed by STATUS and BOILER programs regardless of pump type)
+            ValuePoint(80, "ANY-HWP-ON",        "BV", False,   "Any HW Pump Running"),
         ],
 
         loops=[],

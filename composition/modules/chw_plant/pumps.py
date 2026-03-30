@@ -41,20 +41,24 @@ def build_pump_pri(num_pumps=2):
         inputs.append(InputPoint(
             _PRI_STS_BASE + n - 1, f"PCHWP{n}-STS", "BI", "Off/On",
             f"Primary CHW Pump {n} Status"))
-        values.append(ValuePoint(51 + (n - 1) * 3, f"PCHWP{n}-FAIL", "BV", False,
+        # Per pump: 4 values each starting at 151
+        base = 151 + (n - 1) * 4
+        values.append(ValuePoint(base,     f"PCHWP{n}-FAIL", "BV", False,
             f"Primary Pump {n} Failure"))
-        values.append(ValuePoint(52 + (n - 1) * 3, f"PCHWP{n}-OOS", "BV", False,
+        values.append(ValuePoint(base + 1, f"PCHWP{n}-OOS", "BV", False,
             f"Primary Pump {n} Out of Service"))
-        values.append(ValuePoint(53 + (n - 1) * 3, f"PCHWP{n}-RUNTIME", "AV", 0.0,
+        values.append(ValuePoint(base + 2, f"PCHWP{n}-RUNTIME", "AV", 0.0,
             f"Primary Pump {n} Runtime", "Hrs"))
+        values.append(ValuePoint(base + 3, f"PCHWP{n}-S", "BV", False,
+            f"Primary Pump {n} Status (from .bas)"))
 
-    values.append(ValuePoint(64, "ANY-PCHWP-ON", "BV", False, "Any Primary Pump Running"))
+    values.append(ValuePoint(163, "ANY-PCHWP-ON", "BV", False, "Any Primary Pump Running"))
 
     if num_pumps > 1:
-        values.append(ValuePoint(60, "LEAD-PCHWP", "AV", 1.0, "Lead Primary Pump Number", "#"))
-        values.append(ValuePoint(61, "LEAD-PCHWP-SS", "BV", False, "Lead Primary Pump Start/Stop"))
-        values.append(ValuePoint(62, "LAG-PCHWP-SS", "BV", False, "Lag Primary Pump Start/Stop"))
-        values.append(ValuePoint(63, "LEAD-PCHWP-FAIL", "BV", False, "Lead Primary Pump Failure"))
+        values.append(ValuePoint(164, "LEAD-PCHWP", "AV", 1.0, "Lead Primary Pump Number", "#"))
+        values.append(ValuePoint(165, "LEAD-PCHWP-SS", "BV", False, "Lead Primary Pump Start/Stop"))
+        values.append(ValuePoint(166, "LAG-PCHWP-SS", "BV", False, "Lag Primary Pump Start/Stop"))
+        values.append(ValuePoint(167, "LEAD-PCHWP-FAIL", "BV", False, "Lead Primary Pump Failure"))
 
     # Programs
     if num_pumps == 1:
@@ -120,12 +124,16 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
         outputs.append(OutputPoint(
             _SEC_SPD_BASE + n - 1, f"SCHWP{n}-SPEED", "AO", "0.0 ->100%",
             f"Secondary CHW Pump {n} VFD Speed", 2.0, 10.0))
-        values.append(ValuePoint(71 + (n - 1) * 3, f"SCHWP{n}-FAIL", "BV", False,
+        # Per pump: 4 values each starting at 171
+        base = 171 + (n - 1) * 4
+        values.append(ValuePoint(base,     f"SCHWP{n}-FAIL", "BV", False,
             f"Secondary Pump {n} Failure"))
-        values.append(ValuePoint(72 + (n - 1) * 3, f"SCHWP{n}-OOS", "BV", False,
+        values.append(ValuePoint(base + 1, f"SCHWP{n}-OOS", "BV", False,
             f"Secondary Pump {n} Out of Service"))
-        values.append(ValuePoint(73 + (n - 1) * 3, f"SCHWP{n}-RUNTIME", "AV", 0.0,
+        values.append(ValuePoint(base + 2, f"SCHWP{n}-RUNTIME", "AV", 0.0,
             f"Secondary Pump {n} Runtime", "Hrs"))
+        values.append(ValuePoint(base + 3, f"SCHWP{n}-S", "BV", False,
+            f"Secondary Pump {n} Status (from .bas)"))
 
     # DP sensors
     inputs.append(InputPoint(
@@ -136,25 +144,35 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
             _DP_SENSOR_BASE + 1, "CHW-PRESS2", "AI", "0 ->100% (0-5V)",
             "CHW Differential Pressure 2", "PSI"))
 
-    # System values
-    values.append(ValuePoint(84, "ANY-SCHWP-ON", "BV", False, "Any Secondary Pump Running"))
-    values.append(ValuePoint(85, "AVG-DP", "AV", 0.0, "Average Differential Pressure", "PSI"))
-    values.append(ValuePoint(86, "CHWS-DP-SP", "AV", 12.0, "CHW DP Setpoint", "PSI"))
-    values.append(ValuePoint(87, "SCHWP-MIN-SPEED", "AV", 30.0, "Secondary Pump Min Speed", "%"))
-    values.append(ValuePoint(88, "SCHWP-MAX-SPEED", "AV", 100.0, "Secondary Pump Max Speed", "%"))
-    values.append(ValuePoint(89, "SCHWP-LAG-START-SP", "AV", 8.0,
+    # System values starting at 185
+    values.append(ValuePoint(185, "ANY-SCHWP-ON", "BV", False, "Any Secondary Pump Running"))
+    values.append(ValuePoint(186, "AVG-DP", "AV", 0.0, "Average Differential Pressure", "PSI"))
+    values.append(ValuePoint(187, "CHWS-DP-SP", "AV", 12.0, "CHW DP Setpoint", "PSI"))
+    values.append(ValuePoint(188, "SCHWP-MIN-SPEED", "AV", 30.0, "Secondary Pump Min Speed", "%"))
+    values.append(ValuePoint(189, "SCHWP-MAX-SPEED", "AV", 100.0, "Secondary Pump Max Speed", "%"))
+    values.append(ValuePoint(190, "SCHWP-LAG-START-SP", "AV", 8.0,
         "Lag Pump Start DP Threshold", "PSI"))
-    values.append(ValuePoint(90, "SCHWP-LAG-STOP-SP", "AV", 14.0,
+    values.append(ValuePoint(191, "SCHWP-LAG-STOP-SP", "AV", 14.0,
         "Lag Pump Stop DP Threshold", "PSI"))
+    values.append(ValuePoint(192, "SCHWP-STOP-DELAY", "AV", 30.0,
+        "Secondary Pump Stop Delay", "Sec"))
+    values.append(ValuePoint(193, "SCHWP-RAMP-RATE", "AV", 3.33,
+        "Secondary Pump Ramp Rate", ""))
+    values.append(ValuePoint(194, "SCHWP-ROTATION-HOLD", "AV", 168.0,
+        "Min Hours Before Secondary Pump Rotation", "Hrs"))
+    values.append(ValuePoint(195, "SCHWP-LAG-START-DLY", "AV", 5.0,
+        "Lag Pump Start Delay", "Min"))
+    values.append(ValuePoint(196, "SCHWP-LAG-STOP-DLY", "AV", 5.0,
+        "Lag Pump Stop Delay", "Min"))
 
     if num_pumps > 1:
-        values.append(ValuePoint(83, "LEAD-SCHWP", "AV", 1.0,
+        values.append(ValuePoint(197, "LEAD-SCHWP", "AV", 1.0,
             "Lead Secondary Pump Number", "#"))
-        values.append(ValuePoint(91, "LEAD-SCHWP-SS", "BV", False,
+        values.append(ValuePoint(198, "LEAD-SCHWP-SS", "BV", False,
             "Lead Secondary Pump Start/Stop"))
-        values.append(ValuePoint(92, "LAG-SCHWP-SS", "BV", False,
+        values.append(ValuePoint(199, "LAG-SCHWP-SS", "BV", False,
             "Lag Secondary Pump Start/Stop"))
-        values.append(ValuePoint(93, "LEAD-SCHWP-FAIL", "BV", False,
+        values.append(ValuePoint(200, "LEAD-SCHWP-FAIL", "BV", False,
             "Lead Secondary Pump Failure"))
 
     # DP control loop
@@ -223,20 +241,23 @@ def build_cdwp(num_pumps=2):
         inputs.append(InputPoint(
             _CW_STS_BASE + n - 1, f"CDWP{n}-STS", "BI", "Off/On",
             f"Condenser Water Pump {n} Status"))
-        values.append(ValuePoint(101 + (n - 1) * 3, f"CDWP{n}-FAIL", "BV", False,
+        # Per pump: 3 values each starting at 201
+        base = 201 + (n - 1) * 3
+        values.append(ValuePoint(base,     f"CDWP{n}-FAIL", "BV", False,
             f"CW Pump {n} Failure"))
-        values.append(ValuePoint(102 + (n - 1) * 3, f"CDWP{n}-OOS", "BV", False,
+        values.append(ValuePoint(base + 1, f"CDWP{n}-OOS", "BV", False,
             f"CW Pump {n} Out of Service"))
-        values.append(ValuePoint(103 + (n - 1) * 3, f"CDWP{n}-RUNTIME", "AV", 0.0,
+        values.append(ValuePoint(base + 2, f"CDWP{n}-RUNTIME", "AV", 0.0,
             f"CW Pump {n} Runtime", "Hrs"))
 
-    values.append(ValuePoint(110, "ANY-CDWP-ON", "BV", False, "Any CW Pump Running"))
+    values.append(ValuePoint(213, "ANY-CDWP-ON", "BV", False, "Any CW Pump Running"))
+    values.append(ValuePoint(214, "CDWP-STOP-DELAY", "AV", 30.0, "CW Pump Stop Delay", "Sec"))
 
     if num_pumps > 1:
-        values.append(ValuePoint(111, "LEAD-CDWP", "AV", 1.0, "Lead CW Pump Number", "#"))
-        values.append(ValuePoint(112, "LEAD-CDWP-SS", "BV", False, "Lead CW Pump Start/Stop"))
-        values.append(ValuePoint(113, "LAG-CDWP-SS", "BV", False, "Lag CW Pump Start/Stop"))
-        values.append(ValuePoint(114, "LEAD-CDWP-FAIL", "BV", False, "Lead CW Pump Failure"))
+        values.append(ValuePoint(215, "LEAD-CDWP", "AV", 1.0, "Lead CW Pump Number", "#"))
+        values.append(ValuePoint(216, "LEAD-CDWP-SS", "BV", False, "Lead CW Pump Start/Stop"))
+        values.append(ValuePoint(217, "LAG-CDWP-SS", "BV", False, "Lag CW Pump Start/Stop"))
+        values.append(ValuePoint(218, "LEAD-CDWP-FAIL", "BV", False, "Lead CW Pump Failure"))
 
     programs.append(ProgramDef(30, "CHW-CDWP1-PRG", "CHW-PRG30-CDWP1.bas", "", True,
         "CW pump 1 start/stop", "chw-cdwp", exec_order=30))

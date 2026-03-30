@@ -27,7 +27,7 @@ def build_mixing_valve():
                 "HW Mixing Valve", 2.0, 10.0),
         ],
         values=[
-            ValuePoint(81, "HWV-PID-SP", "AV", 160.0, "Mixing Valve Setpoint", "°F"),
+            ValuePoint(141, "HWV-PID-SP", "AV", 160.0, "Mixing Valve Setpoint", "°F"),
         ],
         loops=[
             LoopDef(2, "HWV-PID", "HWS-T", "HWV-PID-SP", "HW-MIXING-VLV",
@@ -64,7 +64,7 @@ def build_iso_valves(num_boilers=2):
         description=f"Boiler isolation valves for {num_boilers} boiler(s)",
         inputs=inputs, outputs=outputs,
         values=[
-            ValuePoint(83, "ISO-VLV-OPEN-DLY", "AV", 30.0,
+            ValuePoint(142, "ISO-VLV-OPEN-DLY", "AV", 30.0,
                 "Isolation Valve Open Delay", "Sec"),
         ],
         tables=[
@@ -99,7 +99,7 @@ def build_comb_damper(num_boilers=2):
         description=f"Combustion air damper monitoring for {num_boilers} boiler(s)",
         inputs=inputs,
         values=[
-            ValuePoint(85, "COMB-DMPR-ALARM", "BV", False, "Combustion Damper Alarm"),
+            ValuePoint(143, "COMB-DMPR-ALARM", "BV", False, "Combustion Damper Alarm"),
         ],
         programs=[
             ProgramDef(28, "HW-COMB-DMPR-PRG", "HW-PRG28-COMB-DMPR.bas", "", True,
@@ -128,8 +128,8 @@ def build_heat_exchanger(valve_type="single_mod"):
     ]
     outputs = []
     values = [
-        ValuePoint(101, "HX-SP", "AV", 140.0, "Heat Exchanger Setpoint", "°F"),
-        ValuePoint(102, "HX-DELTA-T", "AV", 0.0, "HX Delta T", "°F"),
+        ValuePoint(151, "HX-SP", "AV", 140.0, "Heat Exchanger Setpoint", "°F"),
+        ValuePoint(152, "HX-DELTA-T", "AV", 0.0, "HX Delta T", "°F"),
     ]
     loops = []
     programs = []
@@ -158,8 +158,8 @@ def build_heat_exchanger(valve_type="single_mod"):
             p_band=10.0, integral=40.0, action="reverse",
             description="Heat Exchanger 1/3+2/3 Valve Sequence"))
         values.extend([
-            ValuePoint(103, "HX-VLV-1/3-POS", "AV", 0.0, "1/3 Valve Position", "%"),
-            ValuePoint(104, "HX-VLV-2/3-POS", "AV", 0.0, "2/3 Valve Position", "%"),
+            ValuePoint(153, "HX-VLV-1/3-POS", "AV", 0.0, "1/3 Valve Position", "%"),
+            ValuePoint(154, "HX-VLV-2/3-POS", "AV", 0.0, "2/3 Valve Position", "%"),
         ])
         programs.append(ProgramDef(29, "HW-HX-VLV-SEQ-PRG", "HW-PRG29-HX-VLV-SEQ.bas", "", True,
             "Heat exchanger 1/3+2/3 floating valve sequence", "hw-hx", exec_order=29))
@@ -197,7 +197,7 @@ def build_ahu_integration(num_ahus=2):
     """
     values = []
     for n in range(1, num_ahus + 1):
-        base = 121 + (n-1) * 10
+        base = 171 + (n-1) * 10
         values.extend([
             ValuePoint(base,   f"AHU{n}-NET-OCC-CMD",  "BV", False,  f"AHU {n} Occupancy Command"),
             ValuePoint(base+1, f"AHU{n}-NET-OK",       "BV", False,  f"AHU {n} Network OK"),
@@ -212,8 +212,8 @@ def build_ahu_integration(num_ahus=2):
 
     # Aggregated values
     values.extend([
-        ValuePoint(119, "SNOW-DAY",         "BV", False, "Snow Day Override"),
-        ValuePoint(120, "TOTAL-HTG-REQS",   "AV", 0.0,   "Total Heating Requests", "#"),
+        ValuePoint(161, "SNOW-DAY",         "BV", False, "Snow Day Override"),
+        ValuePoint(162, "TOTAL-HTG-REQS",   "AV", 0.0,   "Total Heating Requests", "#"),
     ])
 
     programs = [
