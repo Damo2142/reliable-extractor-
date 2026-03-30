@@ -1372,7 +1372,7 @@ function renderResults(r){
   }
   tc+='</table></div>';
 
-  // Values — show every row 1..max with empty fillers
+  // Values — skip unused rows, show only real values
   tc+='<div class="tp" id="t2"><table><tr><th>Instance</th><th>Type</th><th>Name</th><th>Default</th><th>Units</th><th>Description</th><th>Module</th></tr>';
   var valMap={};r.values.forEach(function(v){valMap[v.instance]=v;});
   for(var vi=1;vi<=c.max_value_inst;vi++){
@@ -1380,26 +1380,22 @@ function renderResults(r){
     if(v){
       var pre={AV:'AV',BV:'BV',MV:'MV'}[v.type]||'AV';
       tc+='<tr><td>'+pre+vi+'</td><td><span class="tag tag-'+v.type.toLowerCase()+'">'+v.type+'</span></td><td>{device-name}-'+v.name+'</td><td>'+v.default+'</td><td>'+(v.units||'')+'</td><td>'+v.desc+'</td><td>'+v.module+'</td></tr>';
-    }else{
-      tc+='<tr class="unused"><td>AV'+vi+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
     }
   }
   tc+='</table></div>';
 
-  // Loops — show every row 1..max with fillers
+  // Loops — skip unused rows, show only real loops
   tc+='<div class="tp" id="t3"><table><tr><th>Loop</th><th>Name</th><th>Input</th><th>Setpoint</th><th>Action</th><th>P Band</th><th>Integral</th><th>Description</th></tr>';
   var loopMap={};r.loops.forEach(function(l){loopMap[l.instance]=l;});
   for(var li=1;li<=c.max_loop_inst;li++){
     var l=loopMap[li];
     if(l){
       tc+='<tr><td>LOOP'+li+'</td><td>'+l.name+'</td><td>{device-name}-'+l.input+'</td><td>{device-name}-'+l.setpoint+'</td><td>'+(l.action==='direct'?'+':'-')+'</td><td>'+l.p+'</td><td>'+l.i+'</td><td>'+l.desc+'</td></tr>';
-    }else{
-      tc+='<tr class="unused"><td>LOOP'+li+'</td><td colspan="7">--- unused ---</td></tr>';
     }
   }
   tc+='</table></div>';
 
-  // Programs — show every row 1..max with fillers
+  // Programs — skip unused rows, show only real programs
   window._programs=r.programs;
   var prgMap={};r.programs.forEach(function(p,i){prgMap[p.instance]={p:p,i:i};});
   tc+='<div class="tp" id="t4"><table><tr><th>PRG#</th><th>Name</th><th>Filename</th><th>Enabled</th><th>Status</th><th>Description</th><th>View</th></tr>';
@@ -1409,8 +1405,6 @@ function renderResults(r){
       var p=pe.p;
       tc+='<tr><td>PRG'+pi+'</td><td>{device-name}-'+p.name+'</td><td>'+p.filename+'</td><td>'+(p.enabled?'Yes':'No')+'</td><td>'+(p.has_code?'OK':'STUB')+'</td><td>'+p.desc+'</td>';
       tc+='<td><button class="btn btn-p" style="padding:3px 10px;font-size:0.75em" onclick="viewProgram('+pe.i+')">View</button></td></tr>';
-    }else{
-      tc+='<tr class="unused"><td>PRG'+pi+'</td><td colspan="6">--- unused ---</td></tr>';
     }
   }
   tc+='</table><div id="prgViewer" style="display:none;margin-top:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h4 id="prgViewerTitle" style="color:#60a5fa;font-size:0.9em"></h4><button class="btn btn-o" style="padding:3px 10px;font-size:0.75em" onclick="document.getElementById(\\x27prgViewer\\x27).style.display=\\x27none\\x27">Close</button></div><pre class="soo" id="prgViewerCode" style="max-height:400px"></pre></div></div>';
