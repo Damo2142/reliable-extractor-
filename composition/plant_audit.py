@@ -90,9 +90,9 @@ def generate_hw_configs():
                 name = f"HW {bt[:4]}-{nb}blr vfd-{np}p"
                 configs.append((name, params))
 
-            # Pri-sec: 1-2 primary × 1-2 secondary
-            for npp in [1, 2]:
-                for nps in [1, 2]:
+            # Pri-sec: 1-3 primary × 1-3 secondary
+            for npp in [1, 2, 3]:
+                for nps in [1, 2, 3]:
                     params = {
                         'boiler_type': bt,
                         'num_boilers': nb,
@@ -134,10 +134,10 @@ def generate_chw_configs():
     """Generate all CHW plant parameter combinations."""
     configs = []
 
-    # Air cooled: chillers 1-4 × pri 1-2 × sec 1-2
+    # Air cooled: chillers 1-4 × pri 1-3 × sec 1-3
     for nc in [1, 2, 3, 4]:
-        for npp in [1, 2]:
-            for nps in [1, 2]:
+        for npp in [1, 2, 3]:
+            for nps in [1, 2, 3]:
                 params = {
                     'num_chillers': nc,
                     'num_pri_pumps': npp,

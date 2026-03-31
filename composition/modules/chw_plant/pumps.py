@@ -199,6 +199,11 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
             "Secondary pump lead rotation schedule"))
         programs.append(ProgramDef(27, "CHW-SCHWP-LAG-PRG", "CHW-PRG27-SCHWP-LAG.bas", "", True,
             "Secondary pump lag staging logic", "chw-pump-sec", exec_order=27))
+    if num_pumps >= 3:
+        programs.append(ProgramDef(28, "CHW-SCHWP3-PRG", "CHW-PRG28-SCHWP3.bas", "", True,
+            "Secondary pump 3 start/stop (lag-2)", "chw-pump-sec", exec_order=28))
+        programs.append(ProgramDef(29, "CHW-SCHWP3-SPEED-PRG", "CHW-PRG29-SCHWP3-SPEED.bas", "", True,
+            "Secondary pump 3 VFD speed from DP loop", "chw-pump-sec", exec_order=29))
 
     return Module(
         id="chw-pump-sec",

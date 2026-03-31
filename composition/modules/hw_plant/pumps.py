@@ -259,7 +259,7 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
     # Secondary pumps — VFD with DP control (instances 111+)
     sec_ss_base = _PUMP_SS_BASE + num_primary
     sec_sts_base = _PUMP_STS_BASE + num_primary
-    sec_spd_base = _PUMP_SPD_BASE
+    sec_spd_base = _PUMP_SS_BASE + num_primary + num_secondary  # after all S/S outputs
     for n in range(1, num_secondary + 1):
         outputs.append(OutputPoint(
             sec_ss_base + n - 1, f"SHWP{n}-S/S", "BO", "Stop/Start",
@@ -323,6 +323,11 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
                    "Secondary pump 2 VFD speed", "hw-pump-pri-sec", exec_order=25))
         programs.append(ProgramDef(26, "HW-SHWP-LEAD-LAG-PRG", "HW-PRG26-SHWP-LEAD-LAG.bas", "", True,
                    "Secondary pump lead/lag rotation", "hw-pump-pri-sec", exec_order=26))
+    if num_secondary >= 3:
+        programs.append(ProgramDef(35, "HW-SHWP3-PRG", "HW-PRG35-SHWP3.bas", "", True,
+                   "Secondary pump 3 start/stop (lag-2)", "hw-pump-pri-sec", exec_order=35))
+        programs.append(ProgramDef(36, "HW-SHWP3-SPEED-PRG", "HW-PRG36-SHWP3-SPEED.bas", "", True,
+                   "Secondary pump 3 VFD speed", "hw-pump-pri-sec", exec_order=36))
 
     schedules = []
     if num_secondary > 1:
