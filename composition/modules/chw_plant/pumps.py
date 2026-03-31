@@ -150,22 +150,22 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
     values.append(ValuePoint(187, "CHWS-DP-SP", "AV", 12.0, "CHW DP Setpoint", "PSI"))
     values.append(ValuePoint(188, "SCHWP-MIN-SPEED", "AV", 30.0, "Secondary Pump Min Speed", "%"))
     values.append(ValuePoint(189, "SCHWP-MAX-SPEED", "AV", 100.0, "Secondary Pump Max Speed", "%"))
-    values.append(ValuePoint(190, "SCHWP-LAG-START-SP", "AV", 8.0,
-        "Lag Pump Start DP Threshold", "PSI"))
-    values.append(ValuePoint(191, "SCHWP-LAG-STOP-SP", "AV", 14.0,
-        "Lag Pump Stop DP Threshold", "PSI"))
     values.append(ValuePoint(192, "SCHWP-STOP-DELAY", "AV", 30.0,
         "Secondary Pump Stop Delay", "Sec"))
     values.append(ValuePoint(193, "SCHWP-RAMP-RATE", "AV", 3.33,
         "Secondary Pump Ramp Rate", ""))
-    values.append(ValuePoint(194, "SCHWP-ROTATION-HOLD", "AV", 168.0,
-        "Min Hours Before Secondary Pump Rotation", "Hrs"))
-    values.append(ValuePoint(195, "SCHWP-LAG-START-DLY", "AV", 5.0,
-        "Lag Pump Start Delay", "Min"))
-    values.append(ValuePoint(196, "SCHWP-LAG-STOP-DLY", "AV", 5.0,
-        "Lag Pump Stop Delay", "Min"))
 
     if num_pumps > 1:
+        values.append(ValuePoint(190, "SCHWP-LAG-START-SP", "AV", 8.0,
+            "Lag Pump Start DP Threshold", "PSI"))
+        values.append(ValuePoint(191, "SCHWP-LAG-STOP-SP", "AV", 14.0,
+            "Lag Pump Stop DP Threshold", "PSI"))
+        values.append(ValuePoint(194, "SCHWP-ROTATION-HOLD", "AV", 168.0,
+            "Min Hours Before Secondary Pump Rotation", "Hrs"))
+        values.append(ValuePoint(195, "SCHWP-LAG-START-DLY", "AV", 5.0,
+            "Lag Pump Start Delay", "Min"))
+        values.append(ValuePoint(196, "SCHWP-LAG-STOP-DLY", "AV", 5.0,
+            "Lag Pump Stop Delay", "Min"))
         values.append(ValuePoint(197, "LEAD-SCHWP", "AV", 1.0,
             "Lead Secondary Pump Number", "#"))
         values.append(ValuePoint(198, "LEAD-SCHWP-SS", "BV", False,
@@ -197,9 +197,8 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
         schedules.append(ScheduleDef(4, "{device-name}-SCHWP-LEAD-SCHED",
             "Pump 1", [f"Pump {n}" for n in range(1, num_pumps + 1)], 10,
             "Secondary pump lead rotation schedule"))
-
-    programs.append(ProgramDef(27, "CHW-SCHWP-LAG-PRG", "CHW-PRG27-SCHWP-LAG.bas", "", True,
-        "Secondary pump lag staging logic", "chw-pump-sec", exec_order=27))
+        programs.append(ProgramDef(27, "CHW-SCHWP-LAG-PRG", "CHW-PRG27-SCHWP-LAG.bas", "", True,
+            "Secondary pump lag staging logic", "chw-pump-sec", exec_order=27))
 
     return Module(
         id="chw-pump-sec",
