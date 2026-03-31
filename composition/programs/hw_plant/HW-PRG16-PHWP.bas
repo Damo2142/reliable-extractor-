@@ -6,17 +6,17 @@ REM **** Primary loop delta T ****
 {device-name}-PRI-DELTA-T = {device-name}-PRI-HWS-T - {device-name}-PRI-HWR-T
 
 REM **** Start primary pump 1 when system enabled ****
-IF {device-name}-HW-SYS-ENAB AND NOT {device-name}-PHWP1-FAIL THEN START {device-name}-PHWP1 ELSE STOP {device-name}-PHWP1
+IF {device-name}-HW-SYS-ENAB AND NOT {device-name}-PHWP1-FAIL THEN START {device-name}-PHWP1-S/S ELSE STOP {device-name}-PHWP1-S/S
 
 REM **** Primary pump 1 failure proof ****
-IF TIME-ON( {device-name}-PHWP1 ) > 0:00:30 AND NOT {device-name}-PHWP1-STS THEN START {device-name}-PHWP1-FAIL
+IF TIME-ON( {device-name}-PHWP1-S/S ) > 0:00:30 AND NOT {device-name}-PHWP1-STS THEN START {device-name}-PHWP1-FAIL
 IF {device-name}-PHWP1-STS THEN STOP {device-name}-PHWP1-FAIL
 
 REM **** Standby — pump 2 starts on pump 1 failure ****
-IF {device-name}-HW-SYS-ENAB AND {device-name}-PHWP1-FAIL AND NOT {device-name}-PHWP2-FAIL THEN START {device-name}-PHWP2 ELSE STOP {device-name}-PHWP2
+IF {device-name}-HW-SYS-ENAB AND {device-name}-PHWP1-FAIL AND NOT {device-name}-PHWP2-FAIL THEN START {device-name}-PHWP2-S/S ELSE STOP {device-name}-PHWP2-S/S
 
 REM **** Primary pump 2 failure proof ****
-IF TIME-ON( {device-name}-PHWP2 ) > 0:00:30 AND NOT {device-name}-PHWP2-STS THEN START {device-name}-PHWP2-FAIL
+IF TIME-ON( {device-name}-PHWP2-S/S ) > 0:00:30 AND NOT {device-name}-PHWP2-STS THEN START {device-name}-PHWP2-FAIL
 IF {device-name}-PHWP2-STS THEN STOP {device-name}-PHWP2-FAIL
 
 REM **** Reset failures ****

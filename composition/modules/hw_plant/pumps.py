@@ -244,7 +244,7 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
     # Primary pumps — constant speed (instances 101+)
     for n in range(1, num_primary + 1):
         outputs.append(OutputPoint(
-            _PUMP_SS_BASE + n - 1, f"PHWP{n}", "BO", "Stop/Start",
+            _PUMP_SS_BASE + n - 1, f"PHWP{n}-S/S", "BO", "Stop/Start",
             f"Primary HW Pump {n}"))
         inputs.append(InputPoint(
             _PUMP_STS_BASE + n - 1, f"PHWP{n}-STS", "BI", "Off/On",
@@ -262,7 +262,7 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
     sec_spd_base = _PUMP_SPD_BASE
     for n in range(1, num_secondary + 1):
         outputs.append(OutputPoint(
-            sec_ss_base + n - 1, f"SHWP{n}", "BO", "Stop/Start",
+            sec_ss_base + n - 1, f"SHWP{n}-S/S", "BO", "Stop/Start",
             f"Secondary HW Pump {n}"))
         inputs.append(InputPoint(
             sec_sts_base + n - 1, f"SHWP{n}-STS", "BI", "Off/On",
