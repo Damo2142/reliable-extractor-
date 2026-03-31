@@ -11,15 +11,15 @@ from composition.models import (
     ProgramDef, ScheduleDef, SystemGroupDef
 )
 
-# Packed I/O layout — no gaps, minimize expansion modules
-_PRI_SS_BASE = 3       # BO: PCHWP1-S/S at OUT3, PCHWP2 at OUT4
-_PRI_STS_BASE = 12     # BI: PCHWP1-STS at IN12, PCHWP2 at IN13
-_SEC_SS_BASE = 5       # BO: SCHWP1-S/S at OUT5, SCHWP2 at OUT6
-_SEC_STS_BASE = 14     # BI: SCHWP1-STS at IN14, SCHWP2 at IN15
-_SEC_SPD_BASE = 7      # AO: SCHWP1-SPEED at OUT7, SCHWP2 at OUT8
-_DP_SENSOR_BASE = 16   # AI: CHW-PRESS1 at IN16, CHW-PRESS2 at IN17
-_CW_SS_BASE = 9        # BO: CDWP1-S/S at OUT9, CDWP2 at OUT10
-_CW_STS_BASE = 18      # BI: CDWP1-STS at IN18, CDWP2 at IN19
+# I/O layout — supports up to 4 of each pump type
+_PRI_SS_BASE = 5       # BO: PCHWP1-S/S at OUT5-8 (4 slots)
+_PRI_STS_BASE = 18     # BI: PCHWP1-STS at IN18-21 (4 slots)
+_SEC_SS_BASE = 9       # BO: SCHWP1-S/S at OUT9-12 (4 slots)
+_SEC_STS_BASE = 22     # BI: SCHWP1-STS at IN22-25 (4 slots)
+_SEC_SPD_BASE = 13     # AO: SCHWP1-SPEED at OUT13-16 (4 slots)
+_DP_SENSOR_BASE = 26   # AI: CHW-PRESS1 at IN26, CHW-PRESS2 at IN27 (always 2)
+_CW_SS_BASE = 17       # BO: CDWP1-S/S at OUT17-20 (4 slots)
+_CW_STS_BASE = 28      # BI: CDWP1-STS at IN28-31 (4 slots)
 
 
 def build_pump_pri(num_pumps=2):

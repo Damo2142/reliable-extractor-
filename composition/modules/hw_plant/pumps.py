@@ -39,12 +39,13 @@ def _gen_pump_lead_lag_code(num_pumps, prefix="HWP"):
     code += f"IF {sts_list} THEN START {d}-ANY-HWP-ON ELSE STOP {d}-ANY-HWP-ON\n"
     return code
 
-# I/O rows for pump module — after boiler module
-_PUMP_STS_BASE = 11      # BI: HWP1-STS at IN11, HWP2 at IN12
-_PUMP_SS_BASE = 9        # BO: HWP1-S/S at OUT9, HWP2 at OUT10
-_PUMP_SPD_BASE = 11      # AO: HWP1-SPEED at OUT11, HWP2 at OUT12 (VFD only)
-_DP_INPUT_1 = 15         # AI: HW-PRESS1 at IN15
-_DP_INPUT_2 = 16         # AI: HW-PRESS2 at IN16
+# I/O rows for pump module — after boiler module (supports up to 4 pumps)
+# Inputs: pump STS at 17-20 (4 slots), DP sensors at 21-22
+_PUMP_STS_BASE = 17      # BI: HWP1-STS at IN17, HWP2 at IN18, HWP3 at IN19, HWP4 at IN20
+_PUMP_SS_BASE = 9        # BO: HWP1-S/S at OUT9, HWP2 at OUT10, HWP3 at OUT11, HWP4 at OUT12
+_PUMP_SPD_BASE = 13      # AO: HWP1-SPEED at OUT13, HWP2 at OUT14 (VFD only)
+_DP_INPUT_1 = 21         # AI: HW-PRESS1 at IN21
+_DP_INPUT_2 = 22         # AI: HW-PRESS2 at IN22
 
 
 def _common_pump_values(num_pumps):
@@ -140,7 +141,7 @@ def build_pump_vfd(num_pumps=2):
             _PUMP_STS_BASE + n - 1, f"HWP{n}-STS", "BI", "Off/On",
             f"HW Pump {n} Status"))
         outputs.append(OutputPoint(
-            _PUMP_SPD_BASE + (n-1)*2, f"HWP{n}-SPEED", "AO", "0.0 ->100%",
+            _PUMP_SPD_BASE + n - 1, f"HWP{n}-SPEED", "AO", "0.0 ->100%",
             f"HW Pump {n} VFD Speed", 2.0, 10.0))
 
     # DP sensors
@@ -229,15 +230,15 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
     outputs = []
     values = []
 
-    # Primary loop temps
-    inputs.append(InputPoint(16, "PRI-HWS-T", "AI", "10K -40 ->250",
+    # Primary loop temps (IN23-26, after DP sensors)
+    inputs.append(InputPoint(23, "PRI-HWS-T", "AI", "10K -40 ->250",
         "Primary Loop HW Supply Temperature", "°F"))
-    inputs.append(InputPoint(17, "PRI-HWR-T", "AI", "10K -40 ->250",
+    inputs.append(InputPoint(24, "PRI-HWR-T", "AI", "10K -40 ->250",
         "Primary Loop HW Return Temperature", "°F"))
     # Secondary loop temps
-    inputs.append(InputPoint(18, "SEC-HWS-T", "AI", "10K -40 ->250",
+    inputs.append(InputPoint(25, "SEC-HWS-T", "AI", "10K -40 ->250",
         "Secondary Loop HW Supply Temperature", "°F"))
-    inputs.append(InputPoint(19, "SEC-HWR-T", "AI", "10K -40 ->250",
+    inputs.append(InputPoint(26, "SEC-HWR-T", "AI", "10K -40 ->250",
         "Secondary Loop HW Return Temperature", "°F"))
 
     # Primary pumps — constant speed (instances 101+)
@@ -258,7 +259,7 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
     # Secondary pumps — VFD with DP control (instances 111+)
     sec_ss_base = _PUMP_SS_BASE + num_primary
     sec_sts_base = _PUMP_STS_BASE + num_primary
-    sec_spd_base = 15
+    sec_spd_base = _PUMP_SPD_BASE
     for n in range(1, num_secondary + 1):
         outputs.append(OutputPoint(
             sec_ss_base + n - 1, f"SHWP{n}", "BO", "Stop/Start",
@@ -276,8 +277,8 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
         values.append(ValuePoint(113 + (n-1)*3, f"SHWP{n}-RUNTIME", "AV", 0.0,
             f"Secondary Pump {n} Runtime", "Hrs"))
 
-    # DP sensor
-    inputs.append(InputPoint(20, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
+    # DP sensor (IN27, after pri-sec loop temps)
+    inputs.append(InputPoint(27, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
         "HW Differential Pressure", "PSI"))
 
     # System values (121+)

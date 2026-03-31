@@ -7,15 +7,14 @@ from composition.models import (
     ProgramDef, ScheduleDef, SystemGroupDef
 )
 
-# I/O rows for optional modules
-# Packed I/O — follows tower outputs/inputs
-_BYP_VLV_AO_ROW = 16    # AO: CHW-BYP-VLV at OUT16
-_BYP_T_AI_ROW = 24      # AI: CHW-BYP-T at IN24
-_ISO_CHW_BO_BASE = 17   # BO: CHLR1-CHW-ISO at OUT17, CHLR2 at OUT18
-_ISO_CHW_ES_BASE = 25   # BI: CHLR1-CHW-ISO-ES at IN25, CHLR2 at IN26
-_ISO_CDW_BO_BASE = 19   # BO: CHLR1-CDW-ISO at OUT19 (tower only)
-_ISO_CDW_ES_BASE = 27   # BI: CHLR1-CDW-ISO-ES at IN27 (tower only)
-_MAKEUP_AI_ROW = 29      # AI: MAKEUP-WTR-FLOW at IN29
+# I/O rows for optional modules — follows tower, supports 4 chillers
+_BYP_VLV_AO_ROW = 30    # AO: CHW-BYP-VLV at OUT30
+_BYP_T_AI_ROW = 38      # AI: CHW-BYP-T at IN38
+_ISO_CHW_BO_BASE = 31   # BO: CHLR1-CHW-ISO at OUT31-34 (4 slots)
+_ISO_CHW_ES_BASE = 39   # BI: CHLR1-CHW-ISO-ES at IN39-42 (4 slots)
+_ISO_CDW_BO_BASE = 35   # BO: CHLR1-CDW-ISO at OUT35-38 (4 slots, tower only)
+_ISO_CDW_ES_BASE = 43   # BI: CHLR1-CDW-ISO-ES at IN43-46 (4 slots, tower only)
+_MAKEUP_AI_ROW = 47      # AI: MAKEUP-WTR-FLOW at IN47
 
 
 def build_bypass_valve():

@@ -13,16 +13,16 @@ from composition.models import (
 )
 
 
-# I/O rows for boiler inputs/outputs (fixed per boiler slot)
-# Inputs start at row 5 for boiler module
-_BLR_INPUT_BASE = 5      # BI: BLR1-ALARM at IN5, BLR2 at IN6, etc.
-_BLR_HWST_BASE = 7       # AI: BLR1-HWST at IN7, BLR2 at IN9, etc. (if monitored)
-_BLR_HWRT_BASE = 8       # AI: BLR1-HWRT at IN8, BLR2 at IN10, etc. (if monitored)
-# Outputs: cascade starts at OUT1, full control at OUT1
+# I/O rows for boiler inputs/outputs — supports up to 4 boilers
+# Inputs: alarms at 5-8 (4 slots), temps at 9-16 (4 pairs of 2)
+_BLR_INPUT_BASE = 5      # BI: BLR1-ALARM at IN5, BLR2 at IN6, BLR3 at IN7, BLR4 at IN8
+_BLR_HWST_BASE = 9       # AI: BLR1-HWST at IN9, BLR2 at IN11, BLR3 at IN13, BLR4 at IN15
+_BLR_HWRT_BASE = 10      # AI: BLR1-HWRT at IN10, BLR2 at IN12, BLR3 at IN14, BLR4 at IN16
+# Outputs: cascade at OUT1-2, full control S/S at OUT1-4, MOD at OUT5-8
 _BLR_ENABLE_ROW = 1      # BO: BLRS-ENABLE (cascade only)
 _BLR_SPT_AO_ROW = 2      # AO: BLRS-SPT (cascade, analog only)
-_BLR_SS_BASE = 1          # BO: BLR1-S/S at OUT1, BLR2 at OUT2 (full control)
-_BLR_MOD_BASE = 3         # AO: BLR1-MOD at OUT3, BLR2 at OUT4 (full control)
+_BLR_SS_BASE = 1          # BO: BLR1-S/S at OUT1, BLR2 at OUT2, BLR3 at OUT3, BLR4 at OUT4
+_BLR_MOD_BASE = 5         # AO: BLR1-MOD at OUT5, BLR2 at OUT6, BLR3 at OUT7, BLR4 at OUT8
 
 
 def build_blr_cascade(num_boilers=2, analog_spt=True, monitor_hwst=False):
@@ -154,7 +154,7 @@ def build_blr_full(num_boilers=2, monitor_hwst=True):
 
         # Fire rate modulation per boiler
         outputs.append(OutputPoint(
-            _BLR_MOD_BASE + (n - 1) * 2, f"BLR{n}-MOD", "AO", "0.0 ->100%",
+            _BLR_MOD_BASE + n - 1, f"BLR{n}-MOD", "AO", "0.0 ->100%",
             f"Boiler {n} Fire Rate (0-10V)", 2.0, 10.0))
 
         # Per-boiler status BVs

@@ -24,7 +24,7 @@ def build_mixing_valve():
         description="3-way mixing valve for HW header temperature control",
         outputs=[
             OutputPoint(17, "HW-MIXING-VLV", "AO", "0.0 ->100%",
-                "HW Mixing Valve", 2.0, 10.0),
+                "HW Mixing Valve", 2.0, 10.0),  # OUT17 — after pump outputs
         ],
         values=[
             ValuePoint(141, "HWV-PID-SP", "AV", 160.0, "Mixing Valve Setpoint", "°F"),
@@ -52,10 +52,10 @@ def build_iso_valves(num_boilers=2):
     for n in range(1, num_boilers + 1):
         outputs.append(OutputPoint(
             17 + n, f"BLR{n}-ISO-VLV", "BO", "Close/Open",
-            f"Boiler {n} Isolation Valve"))
+            f"Boiler {n} Isolation Valve"))  # OUT18-21 (4 slots)
         inputs.append(InputPoint(
-            20 + n, f"BLR{n}-ISO-VLV-ES", "BI", "Close/Open",
-            f"Boiler {n} Isolation Valve End Switch"))
+            27 + n, f"BLR{n}-ISO-VLV-ES", "BI", "Close/Open",
+            f"Boiler {n} Isolation Valve End Switch"))  # IN28-31 (4 slots)
 
     return Module(
         id="hw-iso-valves",
@@ -89,8 +89,8 @@ def build_comb_damper(num_boilers=2):
     inputs = []
     for n in range(1, num_boilers + 1):
         inputs.append(InputPoint(
-            24 + n, f"BLR{n}-COMB-DMPR-STS", "BI", "Close/Open",
-            f"Boiler {n} Combustion Damper Status"))
+            31 + n, f"BLR{n}-COMB-DMPR-STS", "BI", "Close/Open",
+            f"Boiler {n} Combustion Damper Status"))  # IN32-35 (4 slots)
 
     return Module(
         id="hw-comb-damper",
@@ -121,10 +121,10 @@ def build_heat_exchanger(valve_type="single_mod"):
                     "third_twothird" = 1/3 + 2/3 floating sequence
     """
     inputs = [
-        InputPoint(28, "HX-SUPW-T", "AI", "10K -40 ->250",
-            "Heat Exchanger Supply Water Temp", "°F"),
-        InputPoint(29, "HX-RETW-T", "AI", "10K -40 ->250",
-            "Heat Exchanger Return Water Temp", "°F"),
+        InputPoint(36, "HX-SUPW-T", "AI", "10K -40 ->250",
+            "Heat Exchanger Supply Water Temp", "°F"),  # IN36, after comb damper
+        InputPoint(37, "HX-RETW-T", "AI", "10K -40 ->250",
+            "Heat Exchanger Return Water Temp", "°F"),  # IN37
     ]
     outputs = []
     values = [
@@ -135,7 +135,7 @@ def build_heat_exchanger(valve_type="single_mod"):
     programs = []
 
     if valve_type == "single_mod":
-        outputs.append(OutputPoint(19, "HX-VLV", "AO", "0.0 ->100%",
+        outputs.append(OutputPoint(22, "HX-VLV", "AO", "0.0 ->100%",
             "Heat Exchanger Valve (modulating)", 2.0, 10.0))
         loops.append(LoopDef(3, "HX-VLV-LOOP", "HX-SUPW-T", "HX-SP", "HX-VLV",
             p_band=10.0, integral=40.0, action="reverse",
@@ -144,15 +144,15 @@ def build_heat_exchanger(valve_type="single_mod"):
             "Heat exchanger valve control", "hw-hx", exec_order=29))
 
     elif valve_type == "single_onoff":
-        outputs.append(OutputPoint(19, "HX-VLV", "BO", "Close/Open",
+        outputs.append(OutputPoint(22, "HX-VLV", "BO", "Close/Open",
             "Heat Exchanger Valve (on/off)"))
         programs.append(ProgramDef(29, "HW-HX-VLV-PRG", "HW-PRG29-HX-VLV-ONOFF.bas", "", True,
             "Heat exchanger on/off valve control", "hw-hx", exec_order=29))
 
     elif valve_type == "third_twothird":
-        outputs.append(OutputPoint(19, "HX-VLV-1/3", "AO", "0.0 ->100%",
+        outputs.append(OutputPoint(22, "HX-VLV-1/3", "AO", "0.0 ->100%",
             "Heat Exchanger 1/3 Valve", 2.0, 10.0))
-        outputs.append(OutputPoint(20, "HX-VLV-2/3", "AO", "0.0 ->100%",
+        outputs.append(OutputPoint(23, "HX-VLV-2/3", "AO", "0.0 ->100%",
             "Heat Exchanger 2/3 Valve", 2.0, 10.0))
         loops.append(LoopDef(3, "HX-VLV-LOOP", "HX-SUPW-T", "HX-SP", "HX-VLV-1/3",
             p_band=10.0, integral=40.0, action="reverse",
@@ -251,8 +251,8 @@ def build_makeup_water():
         category="hw-optional",
         description="Makeup water flow monitoring and totalization",
         inputs=[
-            InputPoint(31, "MAKEUP-WTR-FLOW", "AI", "0 ->100% (0-5V)",
-                "Makeup Water Flow Rate", "GPM"),
+            InputPoint(38, "MAKEUP-WTR-FLOW", "AI", "0 ->100% (0-5V)",
+                "Makeup Water Flow Rate", "GPM"),  # IN38, after HX temps
         ],
         values=[
             ValuePoint(201, "MAKEUP-WTR-TTL",    "AV", 0.0,  "Makeup Water Total",          "Gal"),

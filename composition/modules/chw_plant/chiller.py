@@ -13,9 +13,9 @@ from composition.models import (
     ProgramDef, ScheduleDef, SystemGroupDef
 )
 
-_CHLR_ALARM_BASE = 6     # BI: CHLR1-ALARM at IN6, CHLR2 at IN7, etc.
-_CHLR_CHWS_T_BASE = 8    # AI: CHLR1-CHWS-T at IN8, CHWR-T at IN9, etc.
-_CHLR_ENABLE_BASE = 1    # BO: CHLR1-ENABLE at OUT1, CHLR2 at OUT2, etc.
+_CHLR_ALARM_BASE = 6     # BI: CHLR1-ALARM at IN6-9 (4 slots)
+_CHLR_CHWS_T_BASE = 10   # AI: CHLR1-CHWS-T at IN10/11, CHLR2 at IN12/13, etc. (4 pairs)
+_CHLR_ENABLE_BASE = 1    # BO: CHLR1-S/S at OUT1-4 (4 slots)
 
 
 def build_chiller(num_chillers=2):
