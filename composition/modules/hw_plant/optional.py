@@ -255,10 +255,10 @@ def build_makeup_water():
                 "Makeup Water Flow Rate", "GPM"),  # IN38, after HX temps
         ],
         values=[
-            ValuePoint(201, "MAKEUP-WTR-TTL",    "AV", 0.0,  "Makeup Water Total",          "Gal"),
-            ValuePoint(202, "MAKEUP-WTR-ALARM",  "BV", False, "Excessive Makeup Water Alarm"),
-            ValuePoint(203, "MAKEUP-WTR-HI-SP",  "AV", 50.0,  "Makeup Water High Flow SP",   "GPM"),
-            ValuePoint(204, "MAKEUP-WTR-RESET",  "BV", False, "Reset Makeup Water Total"),
+            ValuePoint(251, "MAKEUP-WTR-TTL",    "AV", 0.0,  "Makeup Water Total",          "Gal"),
+            ValuePoint(252, "MAKEUP-WTR-ALARM",  "BV", False, "Excessive Makeup Water Alarm"),
+            ValuePoint(253, "MAKEUP-WTR-HI-SP",  "AV", 50.0,  "Makeup Water High Flow SP",   "GPM"),
+            ValuePoint(254, "MAKEUP-WTR-RESET",  "BV", False, "Reset Makeup Water Total"),
         ],
         tables=[
             TableDef(2, "MAKEUP-WTR-TBL", "Volts", "GPM",

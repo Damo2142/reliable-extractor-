@@ -159,9 +159,11 @@ async def api_hwp_assemble(req: HWPAssembleRequest):
     merged = merge_modules(modules)
     trends = generate_trends(merged)
 
-    # Load .bas program code
+    # Load .bas program code — skip if already has dynamic code from assembly
     prg_dir = Path(__file__).parent / "programs" / "hw_plant"
     for prg in merged['programs']:
+        if prg.code and len(prg.code) > 50:
+            continue  # Dynamic code already injected by hwp_assemble
         bas_path = prg_dir / prg.filename
         if bas_path.exists():
             prg.code = bas_path.read_text()
@@ -239,7 +241,7 @@ async def api_hwp_generate(req: HWPAssembleRequest):
         os.makedirs(tmp_prg, exist_ok=True)
         for prg in merged['programs']:
             bas_path = prg_dir / prg.filename
-            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
             with open(os.path.join(tmp_prg, prg.filename), "w") as f:
                 f.write(code)
         with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f:
@@ -257,7 +259,7 @@ async def api_hwp_generate(req: HWPAssembleRequest):
         zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
         for prg in merged['programs']:
             bas_path = prg_dir / prg.filename
-            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
             zf.writestr(f"programs/{prg.filename}", code)
         zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
         if pan_data:
@@ -296,6 +298,8 @@ async def api_chwp_assemble(req: CHWPAssembleRequest):
 
     prg_dir = Path(__file__).parent / "programs" / "chw_plant"
     for prg in merged['programs']:
+        if prg.code and len(prg.code) > 50:
+            continue  # Dynamic code already injected by chwp_assemble
         bas_path = prg_dir / prg.filename
         if bas_path.exists():
             prg.code = bas_path.read_text()
@@ -371,7 +375,7 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
         os.makedirs(tmp_prg, exist_ok=True)
         for prg in merged['programs']:
             bas_path = prg_dir / prg.filename
-            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
             with open(os.path.join(tmp_prg, prg.filename), "w") as f:
                 f.write(code)
         with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f:
@@ -390,7 +394,7 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
         zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
         for prg in merged['programs']:
             bas_path = prg_dir / prg.filename
-            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
             zf.writestr(f"programs/{prg.filename}", code)
         zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
         if pan_data:
@@ -433,7 +437,7 @@ async def api_hwp_generate_pan(req: HWPAssembleRequest):
         tmp_prg = os.path.join(tmp, "programs"); os.makedirs(tmp_prg, exist_ok=True)
         for prg in merged['programs']:
             bas_path = prg_dir / prg.filename
-            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
             with open(os.path.join(tmp_prg, prg.filename), "w") as f: f.write(code)
         with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f: f.write(alarm_code)
         from compile_from_excel import compile_package
@@ -468,7 +472,7 @@ async def api_chwp_generate_pan(req: CHWPAssembleRequest):
         tmp_prg = os.path.join(tmp, "programs"); os.makedirs(tmp_prg, exist_ok=True)
         for prg in merged['programs']:
             bas_path = prg_dir / prg.filename
-            code = bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n"
+            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
             with open(os.path.join(tmp_prg, prg.filename), "w") as f: f.write(code)
         with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f: f.write(alarm_code)
         from compile_from_excel import compile_package

@@ -1094,6 +1094,12 @@ def hwp_assemble(params):
     if bt == 'full':
         _inject_dynamic_boiler_ctrl(modules, nb, d)
 
+    # Generate dynamic ISO-VLV and COMB-DMPR code based on boiler type
+    if params.get('iso_valves'):
+        _inject_dynamic_iso_vlv(modules, nb, bt, d)
+    if params.get('comb_damper'):
+        _inject_dynamic_comb_dmpr(modules, nb, bt, d)
+
     return modules
 
 

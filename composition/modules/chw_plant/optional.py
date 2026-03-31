@@ -103,13 +103,7 @@ def build_iso_valves(num_chillers=2, has_cdw_side=False):
     values.append(ValuePoint(255, "ISO-VLV-OPEN-DLY", "AV", 30.0,
         "Isolation Valve Open Delay", "Sec"))
 
-    # .bas references CHLR{N}-ISO-VLV for START/STOP commands.
-    # The actual BO outputs are CHLR{N}-CHW-ISO (Dave's ruling).
-    # Add BV aliases so the .bas can reference them.
-    # TODO: update .bas to use CHLR{N}-CHW-ISO directly
-    for n in range(1, num_chillers + 1):
-        values.append(ValuePoint(256 + n - 1, f"CHLR{n}-ISO-VLV", "BV", False,
-            f"Chiller {n} Isolation Valve Command (alias for CHLR{n}-CHW-ISO)"))
+    # .bas now uses CHLR{N}-CHW-ISO directly (the actual BO outputs)
 
     return Module(
         id="chw-iso-valves",
