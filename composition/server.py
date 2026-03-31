@@ -1269,6 +1269,158 @@ async def api_import_io(config_id: str, file: UploadFile = File(...)):
     return result
 
 
+@app.get("/composition/preview-overrides/{config_id}")
+async def api_preview_overrides(config_id: str):
+    """Re-assemble with terminal overrides applied and return JSON for UI preview.
+
+    Returns the same structure as /api/assemble but with overrides applied,
+    plus a 'terminal_changes' list showing what moved.
+    """
+    try:
+        cfg = get_stored_config(config_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+    overrides = get_terminal_overrides(config_id)
+    source = cfg["source"]
+    params = cfg["params"]
+
+    if source == "ahu":
+        mod_list = params.get("modules", [])
+        ctrl = params.get("controller_model", "auto")
+        config = assemble(mod_list, controller_model=ctrl)
+        inject_program_code(config)
+
+        # Build original terminal map before overrides
+        orig_inputs = {p.name: p.row for p in config.inputs}
+        orig_outputs = {p.name: p.row for p in config.outputs}
+
+        if overrides:
+            apply_terminal_overrides(config_id, config.inputs, config.outputs)
+            config.highest_input_row = max((p.row for p in config.inputs), default=0)
+            config.highest_output_row = max((p.row for p in config.outputs), default=0)
+            _select_controller(config, ctrl)
+
+        # Build change list
+        changes = []
+        for p in config.inputs:
+            orig = orig_inputs.get(p.name)
+            if orig and orig != p.row:
+                changes.append({"name": p.name, "type": p.point_type,
+                                "old": f"IN{orig}", "new": f"IN{p.row}"})
+        for p in config.outputs:
+            orig = orig_outputs.get(p.name)
+            if orig and orig != p.row:
+                changes.append({"name": p.name, "type": p.point_type,
+                                "old": f"OUT{orig}", "new": f"OUT{p.row}"})
+
+        return {
+            "config_id": config_id,
+            "modules": config.selected_modules,
+            "controller": {
+                "model": config.controller_model,
+                "expansion_count": config.expansion_count,
+                "expansion_model": config.expansion_model,
+                "highest_input_row": config.highest_input_row,
+                "highest_output_row": config.highest_output_row,
+            },
+            "counts": {
+                "inputs": len(config.inputs), "outputs": len(config.outputs),
+                "values": len(config.values), "loops": len(config.loops),
+                "tables": len(config.tables), "programs": len(config.programs),
+                "schedules": len(config.schedules), "trends": len(config.trends),
+                "system_groups": len(config.system_groups),
+                "max_value_inst": max((v.instance for v in config.values), default=0),
+                "max_loop_inst": max((l.instance for l in config.loops), default=0),
+                "max_prg_inst": max((p.instance for p in config.programs), default=0),
+            },
+            "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "units": p.units, "range": p.range_code, "module": p.module} for p in config.inputs],
+            "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module, "reverse": getattr(p, 'reverse', False), "min_v": getattr(p, 'min_v', 0), "max_v": getattr(p, 'max_v', 0)} for p in config.outputs],
+            "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in config.values],
+            "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in config.loops],
+            "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50), "code": p.code or ""} for p in sorted(config.programs, key=lambda x: x.exec_order)],
+            "soo": config.soo_document,
+            "warnings": getattr(config, 'warnings', []),
+            "terminal_changes": changes,
+            "has_overrides": len(overrides) > 0,
+        }
+
+    elif source in ("hwp", "chwp"):
+        plant_params = params.get("params", {})
+        if source == "hwp":
+            mods = hwp_assemble(plant_params)
+        else:
+            mods = chwp_assemble(plant_params)
+
+        from composition.hw_plant_test import merge_modules
+        merged = merge_modules(mods)
+
+        # Load program code
+        prg_dir = Path(__file__).parent / "programs" / ("hw_plant" if source == "hwp" else "chw_plant")
+        for prg in merged['programs']:
+            if prg.code and len(prg.code) > 50:
+                continue
+            bas_path = prg_dir / prg.filename
+            if bas_path.exists():
+                prg.code = bas_path.read_text()
+
+        # Original terminals
+        orig_inputs = {p.name: p.row for p in merged['inputs']}
+        orig_outputs = {p.name: p.row for p in merged['outputs']}
+
+        if overrides:
+            apply_terminal_overrides(config_id, merged['inputs'], merged['outputs'])
+
+        highest_in = max((p.row for p in merged['inputs']), default=0)
+        highest_out = max((p.row for p in merged['outputs']), default=0)
+
+        changes = []
+        for p in merged['inputs']:
+            orig = orig_inputs.get(p.name)
+            if orig and orig != p.row:
+                changes.append({"name": p.name, "type": p.point_type,
+                                "old": f"IN{orig}", "new": f"IN{p.row}"})
+        for p in merged['outputs']:
+            orig = orig_outputs.get(p.name)
+            if orig and orig != p.row:
+                changes.append({"name": p.name, "type": p.point_type,
+                                "old": f"OUT{orig}", "new": f"OUT{p.row}"})
+
+        ctrl_model = cfg.get("controller", "MPS")
+        return {
+            "config_id": config_id,
+            "modules": [m.id for m in mods],
+            "controller": {
+                "model": ctrl_model,
+                "expansion_count": max(0, (highest_in - 12 + 11) // 12) if highest_in > 12 else 0,
+                "expansion_model": "MPP-IO-U",
+                "highest_input_row": highest_in,
+                "highest_output_row": highest_out,
+            },
+            "counts": {
+                "inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
+                "values": len(merged['values']), "loops": len(merged['loops']),
+                "tables": len(merged['tables']), "programs": len(merged['programs']),
+                "schedules": len(merged['schedules']), "trends": 0,
+                "system_groups": len(merged['system_groups']),
+                "max_value_inst": max((v.instance for v in merged['values']), default=0),
+                "max_loop_inst": max((l.instance for l in merged['loops']), default=0),
+                "max_prg_inst": max((p.instance for p in merged['programs']), default=0),
+            },
+            "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "units": p.units, "range": p.range_code, "module": p.module} for p in merged['inputs']],
+            "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module, "reverse": False, "min_v": 0, "max_v": 0} for p in merged['outputs']],
+            "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in merged['values']],
+            "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in merged['loops']],
+            "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50), "code": p.code or ""} for p in sorted(merged['programs'], key=lambda x: x.exec_order)],
+            "soo": '\n\n'.join(m.soo_paragraph for m in mods if m.soo_paragraph),
+            "warnings": [],
+            "terminal_changes": changes,
+            "has_overrides": len(overrides) > 0,
+        }
+
+    raise HTTPException(400, f"Unknown config source: {source}")
+
+
 class GenerateFromConfigRequest(BaseModel):
     config_id: str
     controller_model: str = "auto"
@@ -1465,6 +1617,11 @@ table{width:100%;border-collapse:collapse;font-size:0.8em}
 th{background:#1e293b;padding:6px 8px;text-align:left;color:#94a3b8;font-weight:500;position:sticky;top:0}
 td{padding:5px 8px;border-bottom:1px solid #1e293b}
 tr.unused td{color:#475569;font-style:italic}
+tr.io-changed{background:#1a2e1a}
+tr.io-changed td{color:#4ade80}
+tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:0.85em;margin-left:6px}
+.override-banner{background:#312e81;border:1px solid #6366f1;border-radius:6px;padding:10px 14px;margin:8px 0;color:#c7d2fe;font-size:0.85em;display:flex;align-items:center;gap:10px}
+.override-banner b{color:#a5b4fc}
 .tag{display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.75em;font-weight:600}
 .tag-ai{background:#1e3a5f;color:#60a5fa}.tag-bi{background:#1a3636;color:#5eead4}
 .tag-ao{background:#3b1f1f;color:#fca5a5}.tag-bo{background:#3b2f1f;color:#fbbf24}
@@ -1495,9 +1652,9 @@ tr.unused td{color:#475569;font-style:italic}
   <div><h1>SBS Composition Engine v2</h1><div class="sub">Reliable Controls Output Tool</div></div>
   <div class="btn-grp">
     <button class="btn btn-p" onclick="doAssemble()">Assemble</button>
-    <button class="btn btn-s" onclick="doGenerate()">Download Excel + .bas</button>
-    <button class="btn btn-s" style="background:#1e40af" onclick="doGeneratePan()">Download .pan</button>
-    <button class="btn btn-s" style="background:#065f46" onclick="doGenerateFull()">Full Package</button>
+    <button class="btn btn-s btn-default-dl" onclick="doGenerate()">Download Excel + .bas</button>
+    <button class="btn btn-s btn-default-dl" style="background:#1e40af" onclick="doGeneratePan()">Download .pan</button>
+    <button class="btn btn-s btn-default-dl" style="background:#065f46" onclick="doGenerateFull()">Full Package</button>
     <button class="btn btn-s" id="btnExportIOSched" style="display:none;background:#7c3aed" onclick="exportIOSchedule()">Export IO Schedule</button>
     <button class="btn btn-s" id="btnImportIOSched" style="display:none;background:#5b21b6" onclick="document.getElementById('ioSchedFile').click()">Import IO Schedule</button>
     <button class="btn btn-s" id="btnGenFromConfig" style="display:none;background:#4338ca" onclick="generateFromConfig()">Generate (with overrides)</button>
@@ -1959,6 +2116,10 @@ function openBasFromModule(filename){
 }
 
 async function doAssemble(){
+  hasOverrides=false;
+  currentConfigId='';
+  document.getElementById('btnGenFromConfig').style.display='none';
+  document.querySelectorAll('.btn-default-dl').forEach(function(b){b.style.opacity='1';b.title='';});
   document.getElementById('status').textContent='Assembling...';
   try{
     var res;
@@ -1998,6 +2159,17 @@ function renderResults(r){
   var statusText=ctrl.model+(ctrl.expansion_count?' + '+exp:'')+' | '+r.modules.length+' modules | '+c.inputs+' inputs, '+c.outputs+' outputs, '+c.programs+' programs';
   if(r.warnings&&r.warnings.length>0){statusText+=' | ⚠ '+r.warnings.length+' warning(s)';}
   document.getElementById('status').textContent=statusText;
+  // Build set of changed point names for highlighting
+  var changedPoints={};
+  if(r.terminal_changes&&r.terminal_changes.length>0){
+    r.terminal_changes.forEach(function(c){changedPoints[c.name]={old:c.old,new_term:c.new};});
+  }
+  // Override banner
+  if(r.has_overrides&&r.terminal_changes&&r.terminal_changes.length>0){
+    var bhtml='<div class="override-banner"><b>'+r.terminal_changes.length+' terminal override(s) active</b> — green rows below show moved points. Use <b>Generate (with overrides)</b> to download.';
+    bhtml+='<button class="btn" style="padding:4px 12px;font-size:0.75em;background:#4338ca;color:#fff;margin-left:auto" onclick="generateFromConfig()">Generate (with overrides)</button></div>';
+    document.getElementById('stats').insertAdjacentHTML('afterend',bhtml);
+  }
   if(r.warnings&&r.warnings.length>0){
     var whtml='<div style="background:#78350f;border:1px solid #f59e0b;border-radius:6px;padding:12px;margin:8px 0;color:#fef3c7;font-size:13px"><b>⚠ Warnings ('+r.warnings.length+'):</b><ul style="margin:6px 0 0 16px;padding:0">';
     r.warnings.forEach(function(w){whtml+='<li style="margin:2px 0">'+w+'</li>';});
@@ -2023,8 +2195,14 @@ function renderResults(r){
   tc+='<div class="tp act" id="t0"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Range</th><th>Units</th><th>Description</th><th>Module</th></tr>';
   for(let row=1;row<=ctrl.highest_input_row;row++){
     const pt=r.inputs.find(p=>p.row===row);
-    if(pt)tc+='<tr><td>'+row+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+'</td><td>'+pt.range+'</td><td>'+(pt.units||'')+'</td><td>'+pt.desc+'</td><td>'+pt.module+'</td></tr>';
-    else tc+='<tr class="unused"><td>'+row+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
+    if(pt){
+      var ch=changedPoints[pt.name];
+      var cls=ch?'io-changed':'';
+      var oldTag=ch?'<span class="old-term">was '+ch.old+'</span>':'';
+      tc+='<tr class="'+cls+'"><td>IN'+row+oldTag+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+'</td><td>'+(pt.range||'')+'</td><td>'+(pt.units||'')+'</td><td>'+pt.desc+'</td><td>'+pt.module+'</td></tr>';
+    }else{
+      tc+='<tr class="unused"><td>IN'+row+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
+    }
   }
   tc+='</table></div>';
 
@@ -2032,8 +2210,14 @@ function renderResults(r){
   tc+='<div class="tp" id="t1"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Min V</th><th>Max V</th><th>Description</th><th>Module</th></tr>';
   for(let row=1;row<=ctrl.highest_output_row;row++){
     const pt=r.outputs.find(p=>p.row===row);
-    if(pt)tc+='<tr><td>'+row+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+(pt.reverse?' (REV)':'')+'</td><td>'+(pt.min_v||'')+'</td><td>'+(pt.max_v||'')+'</td><td>'+pt.desc+'</td><td>'+pt.module+'</td></tr>';
-    else tc+='<tr class="unused"><td>'+row+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
+    if(pt){
+      var ch=changedPoints[pt.name];
+      var cls=ch?'io-changed':'';
+      var oldTag=ch?'<span class="old-term">was '+ch.old+'</span>':'';
+      tc+='<tr class="'+cls+'"><td>OUT'+row+oldTag+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+(pt.reverse?' (REV)':'')+'</td><td>'+(pt.min_v||'')+'</td><td>'+(pt.max_v||'')+'</td><td>'+(pt.desc||'')+'</td><td>'+pt.module+'</td></tr>';
+    }else{
+      tc+='<tr class="unused"><td>OUT'+row+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
+    }
   }
   tc+='</table></div>';
 
@@ -2255,6 +2439,7 @@ function importIOMap(input){
 }
 
 // --- IO Schedule Export/Import ---
+var hasOverrides=false;
 async function exportIOSchedule(){
   if(!currentConfigId){document.getElementById('status').textContent='Assemble first to get a config';return;}
   document.getElementById('status').textContent='Exporting IO schedule...';
@@ -2263,7 +2448,7 @@ async function exportIOSchedule(){
     a.href='composition/export-io/'+currentConfigId;
     a.download='IO-Schedule-'+currentConfigId+'.xlsx';
     document.body.appendChild(a);a.click();a.remove();
-    document.getElementById('status').textContent='IO schedule exported (config: '+currentConfigId+')';
+    document.getElementById('status').textContent='IO schedule exported — edit Terminal column (green), leave Point Name (gray) unchanged, then Import';
   }catch(e){document.getElementById('status').textContent='Export error: '+e;}
 }
 function importIOSchedule(input){
@@ -2275,20 +2460,34 @@ function importIOSchedule(input){
   fetch('composition/import-io/'+currentConfigId,{method:'POST',body:fd}).then(function(r){
     if(!r.ok)return r.json().then(function(e){throw new Error(e.detail);});
     return r.json();
-  }).then(function(d){
+  }).then(async function(d){
     if(d.ok){
-      document.getElementById('status').textContent='IO schedule imported: '+d.overrides_applied+' terminal overrides applied ('+d.total_points+' points)';
       if(d.overrides_applied>0){
-        document.getElementById('btnGenFromConfig').style.display='';
-      }
-      if(d.changes&&d.changes.length>0){
-        var msg='Terminal changes:\\n';
-        d.changes.forEach(function(c){msg+=c.point_name+': '+c.old_terminal+' → '+c.new_terminal+'\\n';});
-        alert(msg);
+        // Fetch preview with overrides applied and re-render
+        document.getElementById('status').textContent='Applying '+d.overrides_applied+' terminal overrides...';
+        var pres=await fetch('composition/preview-overrides/'+currentConfigId);
+        if(pres.ok){
+          var preview=await pres.json();
+          hasOverrides=true;
+          renderResults(preview);
+          updateDownloadButtons();
+        }
+      }else{
+        document.getElementById('status').textContent='IO schedule imported — no terminal changes detected';
       }
     }
   }).catch(function(e){document.getElementById('status').textContent='Import error: '+e.message;});
   input.value='';
+}
+function updateDownloadButtons(){
+  if(hasOverrides){
+    // Hide default downloads, show override generate
+    document.getElementById('btnGenFromConfig').style.display='';
+    document.querySelectorAll('.btn-default-dl').forEach(function(b){b.style.opacity='0.4';b.title='Terminals modified — use Generate (with overrides)';});
+  }else{
+    document.getElementById('btnGenFromConfig').style.display='none';
+    document.querySelectorAll('.btn-default-dl').forEach(function(b){b.style.opacity='1';b.title='';});
+  }
 }
 async function generateFromConfig(){
   if(!currentConfigId){document.getElementById('status').textContent='No config';return;}
@@ -2300,7 +2499,7 @@ async function generateFromConfig(){
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');a.href=url;a.download='sbs-package-modified.zip';
     document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
-    document.getElementById('status').textContent='Modified package downloaded (config: '+currentConfigId+')';
+    document.getElementById('status').textContent='Package with terminal overrides downloaded';
   }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
