@@ -1498,6 +1498,10 @@ tr.unused td{color:#475569;font-style:italic}
     <button class="btn btn-s" onclick="doGenerate()">Download Excel + .bas</button>
     <button class="btn btn-s" style="background:#1e40af" onclick="doGeneratePan()">Download .pan</button>
     <button class="btn btn-s" style="background:#065f46" onclick="doGenerateFull()">Full Package</button>
+    <button class="btn btn-s" id="btnExportIOSched" style="display:none;background:#7c3aed" onclick="exportIOSchedule()">Export IO Schedule</button>
+    <button class="btn btn-s" id="btnImportIOSched" style="display:none;background:#5b21b6" onclick="document.getElementById('ioSchedFile').click()">Import IO Schedule</button>
+    <button class="btn btn-s" id="btnGenFromConfig" style="display:none;background:#4338ca" onclick="generateFromConfig()">Generate (with overrides)</button>
+    <input type="file" id="ioSchedFile" accept=".xlsx" style="display:none" onchange="importIOSchedule(this)">
     <button class="btn btn-o" id="btnAdmin" onclick="showAdminLogin()">Admin</button>
     <button class="btn btn-o" id="btnEditor" style="display:none" onclick="openEditor()">Edit .bas</button>
     <button class="btn btn-o" id="btnExportIO" style="display:none;background:#7c3aed" onclick="exportIOMap()">Export I/O Map</button>
@@ -1681,6 +1685,7 @@ tr.unused td{color:#475569;font-style:italic}
 <script>
 let families={}, standards={}, modules={}, controllers={};
 let selected=new Set(), activeCfg='', activeFamily='';
+let currentConfigId=''; // IO schedule export/import
 
 async function init(){
   try{
@@ -1982,6 +1987,12 @@ async function doAssemble(){
 
 function renderResults(r){
   document.getElementById('results').style.display='block';
+  // Store config_id for IO schedule export/import
+  if(r.config_id){
+    currentConfigId=r.config_id;
+    document.getElementById('btnExportIOSched').style.display='';
+    document.getElementById('btnImportIOSched').style.display='';
+  }
   const c=r.counts,ctrl=r.controller;
   const exp=ctrl.expansion_count?ctrl.expansion_count+'x '+ctrl.expansion_model:'none';
   var statusText=ctrl.model+(ctrl.expansion_count?' + '+exp:'')+' | '+r.modules.length+' modules | '+c.inputs+' inputs, '+c.outputs+' outputs, '+c.programs+' programs';
@@ -2241,6 +2252,56 @@ function importIOMap(input){
     else document.getElementById('status').textContent='Import error: '+JSON.stringify(d);
   }).catch(e=>{document.getElementById('status').textContent='Import error: '+e;});
   input.value='';
+}
+
+// --- IO Schedule Export/Import ---
+async function exportIOSchedule(){
+  if(!currentConfigId){document.getElementById('status').textContent='Assemble first to get a config';return;}
+  document.getElementById('status').textContent='Exporting IO schedule...';
+  try{
+    var a=document.createElement('a');
+    a.href='composition/export-io/'+currentConfigId;
+    a.download='IO-Schedule-'+currentConfigId+'.xlsx';
+    document.body.appendChild(a);a.click();a.remove();
+    document.getElementById('status').textContent='IO schedule exported (config: '+currentConfigId+')';
+  }catch(e){document.getElementById('status').textContent='Export error: '+e;}
+}
+function importIOSchedule(input){
+  if(!input.files.length)return;
+  if(!currentConfigId){document.getElementById('status').textContent='Assemble first';input.value='';return;}
+  var fd=new FormData();
+  fd.append('file',input.files[0]);
+  document.getElementById('status').textContent='Importing IO schedule...';
+  fetch('composition/import-io/'+currentConfigId,{method:'POST',body:fd}).then(function(r){
+    if(!r.ok)return r.json().then(function(e){throw new Error(e.detail);});
+    return r.json();
+  }).then(function(d){
+    if(d.ok){
+      document.getElementById('status').textContent='IO schedule imported: '+d.overrides_applied+' terminal overrides applied ('+d.total_points+' points)';
+      if(d.overrides_applied>0){
+        document.getElementById('btnGenFromConfig').style.display='';
+      }
+      if(d.changes&&d.changes.length>0){
+        var msg='Terminal changes:\\n';
+        d.changes.forEach(function(c){msg+=c.point_name+': '+c.old_terminal+' → '+c.new_terminal+'\\n';});
+        alert(msg);
+      }
+    }
+  }).catch(function(e){document.getElementById('status').textContent='Import error: '+e.message;});
+  input.value='';
+}
+async function generateFromConfig(){
+  if(!currentConfigId){document.getElementById('status').textContent='No config';return;}
+  document.getElementById('status').textContent='Generating package with terminal overrides...';
+  try{
+    var res=await fetch('composition/generate-from-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({config_id:currentConfigId,controller_model:document.getElementById('selCtrl').value})});
+    if(!res.ok){var e=await res.json();document.getElementById('status').textContent='Error: '+e.detail;return;}
+    var blob=await res.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='sbs-package-modified.zip';
+    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    document.getElementById('status').textContent='Modified package downloaded (config: '+currentConfigId+')';
+  }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
 }
 
 // --- .pan Intake ---
