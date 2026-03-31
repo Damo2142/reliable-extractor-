@@ -167,8 +167,8 @@ def build_blr_full(num_boilers=2, monitor_hwst=True):
         values.append(ValuePoint(24 + (n-1)*4, f"BLR{n}-OOS", "BV", False,
             f"Boiler {n} Out of Service"))
 
-        # Per-boiler fire rate config
-        base_av = 35 + (n-1) * 6
+        # Per-boiler fire rate config (base 37 — after 4 boilers' status BVs at 21-36)
+        base_av = 37 + (n-1) * 6
         values.append(ValuePoint(base_av,   f"B{n}-LOW-FIRE",        "AV", 20.0,
             f"Boiler {n} Low Fire Rate", "%"))
         values.append(ValuePoint(base_av+1, f"B{n}-HI-FIRE",         "AV", 100.0,
@@ -187,23 +187,23 @@ def build_blr_full(num_boilers=2, monitor_hwst=True):
         values.append(ValuePoint(80 + n, f"B{n}-VOLT-BURN", "AV", 0.0,
             f"Boiler {n} Voltage to Burn Rate (calculated)", "%"))
 
-    # System-level values (60+ — safe from per-boiler range which ends at ~58 for 4 blrs)
-    values.append(ValuePoint(60, "BLR-PURGE-DELAY", "AV", 30.0,
+    # System-level values (61-74 — between fire rate end and core at 75+)
+    values.append(ValuePoint(61, "BLR-PURGE-DELAY", "AV", 30.0,
         "Boiler Purge Delay Before Ignition", "Sec"))
-    values.append(ValuePoint(61, "BLR-SUPPLY-STPNT", "AV", 160.0,
+    values.append(ValuePoint(62, "BLR-SUPPLY-STPNT", "AV", 160.0,
         "Boiler Supply Temperature Setpoint", "°F"))
-    values.append(ValuePoint(62, "TOTAL-BLRS-REQUESTED", "AV", 0.0,
+    values.append(ValuePoint(63, "TOTAL-BLRS-REQUESTED", "AV", 0.0,
         "Total Boilers Requested", "#"))
 
     if num_boilers > 1:
-        values.append(ValuePoint(63, "LEAD-BLR", "AV", 1.0,
+        values.append(ValuePoint(64, "LEAD-BLR", "AV", 1.0,
             "Lead Boiler Number", "#"))
-        values.append(ValuePoint(64, "LEAD-BLR-DEV", "AV", 0.0,
+        values.append(ValuePoint(65, "LEAD-BLR-DEV", "AV", 0.0,
             "Lead Boiler Deviation", "°F"))
-        values.append(ValuePoint(65, "LEAD-BLR-SS",   "BV", False, "Lead Boiler Start/Stop"))
+        values.append(ValuePoint(66, "LEAD-BLR-SS",   "BV", False, "Lead Boiler Start/Stop"))
         values.extend([
-            ValuePoint(66, "LAG-BLR-SS",   "BV", False, "Lag Boiler Start/Stop"),
-            ValuePoint(67, "LEAD-BLR-FAIL","BV", False, "Lead Boiler Failure"),
+            ValuePoint(67, "LAG-BLR-SS",   "BV", False, "Lag Boiler Start/Stop"),
+            ValuePoint(68, "LEAD-BLR-FAIL","BV", False, "Lead Boiler Failure"),
         ])
 
     # Generate fire rate program dynamically based on num_boilers

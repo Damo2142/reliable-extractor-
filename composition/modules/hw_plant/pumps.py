@@ -152,12 +152,12 @@ def build_pump_vfd(num_pumps=2):
 
     values.extend(_common_pump_values(num_pumps))
 
-    # Speed and DP setpoints
+    # Speed and DP setpoints (101+ — safe from per-pump values which end at 96 for 4 pumps)
     values.extend([
-        ValuePoint(91, "HWP-MIN-SPEED",   "AV", 30.0,  "Pump Minimum Speed",    "%"),
-        ValuePoint(92, "HWP-MAX-SPEED",   "AV", 100.0, "Pump Maximum Speed",    "%"),
-        ValuePoint(93, "AVG-DP",          "AV", 0.0,   "Average Differential Pressure", "PSI"),
-        ValuePoint(94, "HWS-DP-SP",       "AV", 12.0,  "DP Setpoint",           "PSI"),
+        ValuePoint(101, "HWP-MIN-SPEED",   "AV", 30.0,  "Pump Minimum Speed",    "%"),
+        ValuePoint(102, "HWP-MAX-SPEED",   "AV", 100.0, "Pump Maximum Speed",    "%"),
+        ValuePoint(103, "AVG-DP",          "AV", 0.0,   "Average Differential Pressure", "PSI"),
+        ValuePoint(104, "HWS-DP-SP",       "AV", 12.0,  "DP Setpoint",           "PSI"),
     ])
 
     if num_pumps > 1:
