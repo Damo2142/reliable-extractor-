@@ -20,12 +20,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
-from composition.assembler import assemble, CONTROLLER_SPECS
+from composition.assembler import assemble, CONTROLLER_SPECS, _select_controller
 from composition.excel_gen import generate_excel
 from composition.program_loader import inject_program_code
 from composition.module_registry import (
     list_modules, list_by_category, get_module, STANDARD_CONFIGS, EQUIPMENT_FAMILIES,
     hwp_assemble, chwp_assemble
+)
+from composition.io_schedule import (
+    store_config, get_stored_config, export_io_schedule,
+    import_io_schedule, apply_terminal_overrides, get_terminal_overrides,
 )
 
 app = FastAPI(
@@ -111,7 +115,14 @@ async def api_assemble(req: AssembleRequest):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    config_id = store_config(
+        config.inputs, config.outputs, config.equipment_family,
+        config.controller_model, "ahu",
+        {"modules": req.modules, "controller_model": req.controller_model},
+    )
+
     return {
+        "config_id": config_id,
         "modules": config.selected_modules,
         "controller": {
             "model": config.controller_model,
@@ -179,7 +190,13 @@ async def api_hwp_assemble(req: HWPAssembleRequest):
     highest_in = max((p.row for p in merged['inputs']), default=0)
     highest_out = max((p.row for p in merged['outputs']), default=0)
 
+    config_id = store_config(
+        merged['inputs'], merged['outputs'], "HW-PLANT",
+        req.controller_model or "MPS", "hwp", {"params": req.params},
+    )
+
     return {
+        "config_id": config_id,
         "modules": [m.id for m in modules],
         "controller": {
             "model": req.controller_model or "MPS",
@@ -313,7 +330,14 @@ async def api_chwp_assemble(req: CHWPAssembleRequest):
     highest_in = max((p.row for p in merged['inputs']), default=0)
     highest_out = max((p.row for p in merged['outputs']), default=0)
 
+    family = "CHW-PLANT-TOWER" if req.params.get('num_towers') else "CHW-PLANT-AIR"
+    config_id = store_config(
+        merged['inputs'], merged['outputs'], family,
+        req.controller_model or "MPS", "chwp", {"params": req.params},
+    )
+
     return {
+        "config_id": config_id,
         "modules": [m.id for m in modules],
         "controller": {
             "model": req.controller_model or "MPS",
@@ -1194,6 +1218,195 @@ async def api_io_map_json(token: str = ""):
     if not IO_MAP_PATH.exists():
         raise HTTPException(404, "Standard I/O map not found")
     return json.loads(IO_MAP_PATH.read_text())
+
+
+# --- IO Schedule Export/Import ---
+
+@app.get("/composition/export-io/{config_id}")
+async def api_export_io(config_id: str):
+    """Export IO schedule Excel for a previously assembled config.
+
+    Returns an Excel file with columns:
+      Terminal | Point Name | Description | Type | Units | Controller | Notes
+
+    Physical IO only (AI, AO, BI, BO). One tab per controller.
+    Point Name column is locked — user can only edit Terminal column.
+    """
+    try:
+        excel_data = export_io_schedule(config_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+    buf = io.BytesIO(excel_data)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=IO-Schedule-{config_id}.xlsx"},
+    )
+
+
+@app.post("/composition/import-io/{config_id}")
+async def api_import_io(config_id: str, file: UploadFile = File(...)):
+    """Import modified IO schedule Excel for a previously assembled config.
+
+    Reads the modified Terminal column and updates terminal assignments.
+    Validates:
+      - Point names unchanged (rejects with error if modified)
+      - No terminal conflicts (two points on same terminal)
+      - Terminal format valid (IN{n} or OUT{n})
+    """
+    try:
+        get_stored_config(config_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+    content = await file.read()
+    try:
+        result = import_io_schedule(config_id, content)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return result
+
+
+class GenerateFromConfigRequest(BaseModel):
+    config_id: str
+    controller_model: str = "auto"
+
+
+@app.post("/composition/generate-from-config")
+async def api_generate_from_config(req: GenerateFromConfigRequest):
+    """Generate a full package from a stored config, applying any terminal overrides from import.
+
+    Re-assembles from original parameters, applies terminal overrides, then generates
+    Excel + .bas + .pan + SOO as a ZIP package.
+    """
+    try:
+        cfg = get_stored_config(req.config_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+    overrides = get_terminal_overrides(req.config_id)
+    source = cfg["source"]
+    params = cfg["params"]
+
+    if source == "ahu":
+        # AHU path: re-assemble via standard assembler
+        mod_list = params.get("modules", [])
+        ctrl = req.controller_model if req.controller_model != "auto" else params.get("controller_model", "auto")
+        config = assemble(mod_list, controller_model=ctrl)
+        inject_program_code(config)
+
+        # Apply terminal overrides
+        if overrides:
+            apply_terminal_overrides(req.config_id, config.inputs, config.outputs)
+            config.highest_input_row = max((p.row for p in config.inputs), default=0)
+            config.highest_output_row = max((p.row for p in config.outputs), default=0)
+            _select_controller(config, ctrl)
+
+        from composition.alarm_gen import generate_alarm_bas
+        model = config.controller_model or "MPS"
+        excel_data = generate_excel(config)
+        pan_data = _compile_pan_from_config(config)
+
+        report = _build_validation_report(config)
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("SBS-Validation-Report.md", report)
+            zf.writestr("RC-Studio-Output.xlsx", excel_data)
+            zf.writestr(f"SBS-{config.equipment_family}-{model}.pan", pan_data)
+            for prg in config.programs:
+                zf.writestr(f"programs/{prg.filename}", prg.code or "")
+            zf.writestr("SOO.txt", config.soo_document)
+            zf.writestr("summary.json", json.dumps({
+                "config_id": req.config_id,
+                "modules": config.selected_modules,
+                "controller": model,
+                "terminal_overrides": overrides,
+                "counts": {"inputs": len(config.inputs), "outputs": len(config.outputs),
+                           "values": len(config.values), "programs": len(config.programs)},
+            }, indent=2))
+        zip_buf.seek(0)
+        return StreamingResponse(zip_buf, media_type="application/zip",
+                                 headers={"Content-Disposition": "attachment; filename=sbs-package.zip"})
+
+    elif source in ("hwp", "chwp"):
+        # Plant path: re-assemble via plant wizard
+        plant_params = params.get("params", {})
+        if source == "hwp":
+            modules = hwp_assemble(plant_params)
+            prg_dir = Path(__file__).parent / "programs" / "hw_plant"
+            config_name = plant_params.get('config_name', 'HW-Plant')
+        else:
+            modules = chwp_assemble(plant_params)
+            prg_dir = Path(__file__).parent / "programs" / "chw_plant"
+            config_name = plant_params.get('config_name', 'CHW-Plant')
+
+        from composition.hw_plant_test import merge_modules, generate_trends, generate_alarm_bas, write_excel
+        merged = merge_modules(modules)
+        trends = generate_trends(merged)
+        alarm_code = generate_alarm_bas(merged)
+
+        # Apply terminal overrides
+        if overrides:
+            apply_terminal_overrides(req.config_id, merged['inputs'], merged['outputs'])
+
+        wb = write_excel(merged, trends, alarm_code, config_name)
+
+        # Compile .pan
+        import tempfile, shutil
+        pan_data = b""
+        tmp = tempfile.mkdtemp(prefix="sbs-iogen-")
+        try:
+            excel_buf = io.BytesIO()
+            wb.save(excel_buf)
+            excel_bytes = excel_buf.getvalue()
+            with open(os.path.join(tmp, "RC-Studio-Output.xlsx"), "wb") as f:
+                f.write(excel_bytes)
+            tmp_prg = os.path.join(tmp, "programs")
+            os.makedirs(tmp_prg, exist_ok=True)
+            for prg in merged['programs']:
+                bas_path = prg_dir / prg.filename
+                code = prg.code if (prg.code and len(prg.code) > 50) else (
+                    bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
+                with open(os.path.join(tmp_prg, prg.filename), "w") as f:
+                    f.write(code)
+            with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f:
+                f.write(alarm_code)
+            try:
+                from compile_from_excel import compile_package
+                pan_data = compile_package(tmp, verbose=False)
+            except Exception:
+                import traceback; traceback.print_exc()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
+            for prg in merged['programs']:
+                bas_path = prg_dir / prg.filename
+                code = prg.code if (prg.code and len(prg.code) > 50) else (
+                    bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
+                zf.writestr(f"programs/{prg.filename}", code)
+            zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
+            if pan_data:
+                zf.writestr(f"{config_name}.pan", pan_data)
+            zf.writestr("summary.json", json.dumps({
+                "config_id": req.config_id,
+                "name": config_name, "family": cfg["family"],
+                "controller": cfg["controller"],
+                "terminal_overrides": overrides,
+                "pan_included": bool(pan_data),
+                "counts": {"inputs": len(merged['inputs']), "outputs": len(merged['outputs']),
+                           "values": len(merged['values']), "programs": len(merged['programs'])},
+            }, indent=2, default=str))
+        zip_buf.seek(0)
+        return StreamingResponse(zip_buf, media_type="application/zip",
+                                 headers={"Content-Disposition": f"attachment; filename={config_name}.zip"})
+
+    else:
+        raise HTTPException(400, f"Unknown config source: {source}")
 
 
 # --- UI ---
