@@ -35,7 +35,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
 
     # Step 1: Add core modules and resolve dependencies
     all_ids = set(module_ids)
-    for cid in get_core_modules():
+    for cid in get_core_modules(equipment_family):
         all_ids.add(cid)
 
     # Iteratively resolve dependencies
