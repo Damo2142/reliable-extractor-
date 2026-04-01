@@ -177,8 +177,8 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws.title = "Inputs"
     ws.cell(1, 1, value="INPUTS").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=f"{device_name} — {config_name}")
-    add_header(ws, 3, ["Terminal", "Name", "Type", "Value", "Units", "Range", "Description", "Module"])
-    row = 4
+    add_header(ws, 4, ["Terminal", "Name", "Type", "Value", "Units", "Range", "Description", "Module"])
+    row = 5
     max_in = max((p.row for p in merged['inputs']), default=0)
     used_rows = {p.row: p for p in merged['inputs']}
     for r in range(1, max_in + 1):
@@ -193,7 +193,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Outputs")
     ws.cell(1, 1, value="OUTPUTS").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=f"{device_name} — {config_name}")
-    add_header(ws, 3, ["Terminal", "Name", "Type", "Value", "Units", "Range", "Description", "Module"])
+    add_header(ws, 4, ["Terminal", "Name", "Type", "Value", "Units", "Range", "Description", "Module"])
     max_out = max((p.row for p in merged['outputs']), default=0)
     used_out = {p.row: p for p in merged['outputs']}
     for r in range(1, max_out + 1):
@@ -208,7 +208,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Values")
     ws.cell(1, 1, value="VALUES (AV / BV / MV)").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["Instance", "Name", "Type", "Default Value", "Units", "Range / States", "Description", "Module"])
+    add_header(ws, 4, ["Instance", "Name", "Type", "Default Value", "Units", "Range / States", "Description", "Module"])
     for pt in merged['values']:
         states_str = ""
         if pt.states:
@@ -220,7 +220,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Loops")
     ws.cell(1, 1, value="PID LOOPS").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["Loop", "Name", "Input", "Setpoint", "Output", "Action", "P Band",
+    add_header(ws, 4, ["Loop", "Name", "Input", "Setpoint", "Output", "Action", "P Band",
                        "Integral", "D", "Bias", "Description", "Module"])
     for lp in merged['loops']:
         ws.append([f"LOOP{lp.instance}", f"{device_name}-{lp.name}",
@@ -233,7 +233,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Tables")
     ws.cell(1, 1, value="TABLES").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["Table", "Name", "Input Units", "Output Units", "Description", "Module"])
+    add_header(ws, 4, ["Table", "Name", "Input Units", "Output Units", "Description", "Module"])
     for tbl in merged['tables']:
         ws.append([f"TBL{tbl.instance}", f"{device_name}-{tbl.name}",
                   tbl.input_units, tbl.output_units, tbl.description, tbl.module])
@@ -245,13 +245,14 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Arrays")
     ws.cell(1, 1, value="ARRAYS").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    ws.cell(3, 1, value="(No arrays for this configuration)")
+    # Row 3 blank (spacer to match AHU layout)
+    ws.cell(4, 1, value="(No arrays for this configuration)")
 
     # ── Schedules ──
     ws = wb.create_sheet("Schedules")
     ws.cell(1, 1, value="SCHEDULES").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["Schedule", "Name", "Default State", "States", "Priority", "Description", "Module"])
+    add_header(ws, 4, ["Schedule", "Name", "Default State", "States", "Priority", "Description", "Module"])
     for sch in merged['schedules']:
         ws.append([f"SCHED{sch.instance}", sch.name, sch.default_state,
                   " / ".join(sch.states), sch.priority, sch.description, sch.module])
@@ -260,7 +261,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Trends")
     ws.cell(1, 1, value="SINGLE POINT TREND LOGS (STL)").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["STL", "Name", "Monitored Point", "Type", "Interval/COV Delta", "Buffer"])
+    add_header(ws, 4, ["STL", "Name", "Monitored Point", "Type", "Interval/COV Delta", "Buffer"])
     for tr in trends:
         interval = tr.interval if tr.trend_type == "Polled" else str(tr.cov_delta)
         ws.append([f"STL{tr.instance}", tr.name,
@@ -271,7 +272,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("System Groups")
     ws.cell(1, 1, value="SYSTEM GROUPS (Graphic Pages)").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["Group Name", "Description", "Module"])
+    add_header(ws, 4, ["Group Name", "Description", "Module"])
     for sg in merged['system_groups']:
         ws.append([sg.name, sg.description, sg.module])
 
@@ -279,7 +280,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Programs")
     ws.cell(1, 1, value="PROGRAMS").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["PRG#", "Name", "Filename", "Enabled", "Exec Order", "Description", "Module"])
+    add_header(ws, 4, ["PRG#", "Name", "Filename", "Enabled", "Exec Order", "Description", "Module"])
     for prg in merged['programs']:
         ws.append([f"PRG{prg.instance}", f"{device_name}-{prg.name}",
                   prg.filename, "Yes" if prg.enabled else "No",
@@ -292,7 +293,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Custom Units")
     ws.cell(1, 1, value="CUSTOM UNITS").font = Font(bold=True, size=14)
     ws.cell(2, 1, value="SBS Standard Enumerations")
-    add_header(ws, 3, ["Index", "Analog Text", "Digital On", "Digital Off"])
+    add_header(ws, 4, ["Index", "Analog Text", "Digital On", "Digital Off"])
     customs = [
         (64, "", "Occupied", "Unoccupied"),
         (65, "", "Enabled", "Disabled"),
@@ -312,7 +313,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Alarms")
     ws.cell(1, 1, value="ALARM DEFINITIONS").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["Point", "Type", "AlarmType", "Priority", "Delay", "Deadband"])
+    add_header(ws, 4, ["Point", "Type", "AlarmType", "Priority", "Delay", "Deadband"])
     for pt in merged['inputs']:
         if pt.point_type == 'BI':
             ws.append([f"{device_name}-{pt.name}", "BI", "General", "Informational1", 30, ""])
@@ -324,7 +325,7 @@ def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-nam
     ws = wb.create_sheet("Commissioning")
     ws.cell(1, 1, value="COMMISSIONING POINT CHECKLIST").font = Font(bold=True, size=14)
     ws.cell(2, 1, value=device_name)
-    add_header(ws, 3, ["Point", "Object", "Type", "Range", "Description", "Check"])
+    add_header(ws, 4, ["Point", "Object", "Type", "Range", "Description", "Check"])
     for pt in merged['inputs']:
         ws.append([f"{device_name}-{pt.name}", f"{pt.point_type}{pt.row}",
                   pt.point_type, pt.range_code, pt.description, "Verify sensor reading"])
