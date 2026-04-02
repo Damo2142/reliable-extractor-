@@ -53,6 +53,17 @@ def add_line_numbers(code: str) -> str:
     return "\n".join(numbered)
 
 
+def number_programs(programs):
+    """
+    Ensure every ProgramDef in a list has BASIC line numbers.
+    Works on any list of ProgramDef objects — AHU config.programs,
+    HW/CHW merged['programs'], or any other source.
+    """
+    for prg in programs:
+        if prg.code and not _has_line_numbers(prg.code):
+            prg.code = add_line_numbers(prg.code)
+
+
 def inject_program_code(config):
     """
     Load .bas code for all programs in the config.
@@ -61,9 +72,7 @@ def inject_program_code(config):
     for prg in config.programs:
         if not prg.code:
             prg.code = load_program_code(prg.filename)
-        # Add line numbers if the code doesn't have them
-        if prg.code and not _has_line_numbers(prg.code):
-            prg.code = add_line_numbers(prg.code)
+    number_programs(config.programs)
 
 
 def _has_line_numbers(code: str) -> bool:

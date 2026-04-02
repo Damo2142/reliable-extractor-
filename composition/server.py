@@ -22,7 +22,7 @@ from typing import List, Optional
 
 from composition.assembler import assemble, CONTROLLER_SPECS, _select_controller
 from composition.excel_gen import generate_excel
-from composition.program_loader import inject_program_code
+from composition.program_loader import inject_program_code, number_programs
 from composition.module_registry import (
     list_modules, list_by_category, get_module, STANDARD_CONFIGS, EQUIPMENT_FAMILIES,
     hwp_assemble, chwp_assemble
@@ -185,6 +185,7 @@ async def api_hwp_assemble(req: HWPAssembleRequest):
     alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                            "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
     merged['programs'].append(alarm_prg)
+    number_programs(merged['programs'])
 
     # Calculate highest I/O rows
     highest_in = max((p.row for p in merged['inputs']), default=0)
@@ -240,9 +241,21 @@ async def api_hwp_generate(req: HWPAssembleRequest):
     alarm_code = generate_alarm_bas(merged)
 
     config_name = req.params.get('config_name', 'HW-Plant')
-    wb = write_excel(merged, trends, alarm_code, config_name)
 
+    # Load .bas code and add line numbers
     prg_dir = Path(__file__).parent / "programs" / "hw_plant"
+    for prg in merged['programs']:
+        if not prg.code or len(prg.code) <= 50:
+            bas_path = prg_dir / prg.filename
+            if bas_path.exists():
+                prg.code = bas_path.read_text()
+    from composition.models import ProgramDef
+    alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
+                           "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
+    merged['programs'].append(alarm_prg)
+    number_programs(merged['programs'])
+
+    wb = write_excel(merged, trends, alarm_code, config_name)
 
     # Compile .pan via temp dir
     import tempfile, shutil
@@ -257,12 +270,8 @@ async def api_hwp_generate(req: HWPAssembleRequest):
         tmp_prg = os.path.join(tmp, "programs")
         os.makedirs(tmp_prg, exist_ok=True)
         for prg in merged['programs']:
-            bas_path = prg_dir / prg.filename
-            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
             with open(os.path.join(tmp_prg, prg.filename), "w") as f:
-                f.write(code)
-        with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f:
-            f.write(alarm_code)
+                f.write(prg.code or f"10 REM {prg.name}\n")
         try:
             from compile_from_excel import compile_package
             pan_data = compile_package(tmp, verbose=False)
@@ -275,10 +284,8 @@ async def api_hwp_generate(req: HWPAssembleRequest):
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
         for prg in merged['programs']:
-            bas_path = prg_dir / prg.filename
-            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
-            zf.writestr(f"programs/{prg.filename}", code)
-        zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
+            zf.writestr(f"programs/{prg.filename}", prg.code or f"10 REM {prg.name}\n")
+
         if pan_data:
             zf.writestr(f"{config_name}.pan", pan_data)
         soo = '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph)
@@ -326,6 +333,7 @@ async def api_chwp_assemble(req: CHWPAssembleRequest):
     alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                            "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
     merged['programs'].append(alarm_prg)
+    number_programs(merged['programs'])
 
     highest_in = max((p.row for p in merged['inputs']), default=0)
     highest_out = max((p.row for p in merged['outputs']), default=0)
@@ -381,9 +389,21 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
     alarm_code = generate_alarm_bas(merged)
 
     config_name = req.params.get('config_name', 'CHW-Plant')
-    wb = write_excel(merged, trends, alarm_code, config_name)
 
+    # Load .bas code and add line numbers
     prg_dir = Path(__file__).parent / "programs" / "chw_plant"
+    for prg in merged['programs']:
+        if not prg.code or len(prg.code) <= 50:
+            bas_path = prg_dir / prg.filename
+            if bas_path.exists():
+                prg.code = bas_path.read_text()
+    from composition.models import ProgramDef
+    alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
+                           "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
+    merged['programs'].append(alarm_prg)
+    number_programs(merged['programs'])
+
+    wb = write_excel(merged, trends, alarm_code, config_name)
 
     # Compile .pan via temp dir
     import tempfile, shutil
@@ -398,12 +418,8 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
         tmp_prg = os.path.join(tmp, "programs")
         os.makedirs(tmp_prg, exist_ok=True)
         for prg in merged['programs']:
-            bas_path = prg_dir / prg.filename
-            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
             with open(os.path.join(tmp_prg, prg.filename), "w") as f:
-                f.write(code)
-        with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f:
-            f.write(alarm_code)
+                f.write(prg.code or f"10 REM {prg.name}\n")
         try:
             from compile_from_excel import compile_package
             pan_data = compile_package(tmp, verbose=False)
@@ -417,10 +433,7 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
         for prg in merged['programs']:
-            bas_path = prg_dir / prg.filename
-            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
-            zf.writestr(f"programs/{prg.filename}", code)
-        zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
+            zf.writestr(f"programs/{prg.filename}", prg.code or f"10 REM {prg.name}\n")
         if pan_data:
             zf.writestr(f"{config_name}.pan", pan_data)
         soo = '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph)
@@ -450,8 +463,18 @@ async def api_hwp_generate_pan(req: HWPAssembleRequest):
     trends = generate_trends(merged)
     alarm_code = generate_alarm_bas(merged)
     config_name = req.params.get('config_name', 'HW-Plant')
-    wb = write_excel(merged, trends, alarm_code, config_name)
     prg_dir = Path(__file__).parent / "programs" / "hw_plant"
+    for prg in merged['programs']:
+        if not prg.code or len(prg.code) <= 50:
+            bas_path = prg_dir / prg.filename
+            if bas_path.exists():
+                prg.code = bas_path.read_text()
+    from composition.models import ProgramDef
+    alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
+                           "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
+    merged['programs'].append(alarm_prg)
+    number_programs(merged['programs'])
+    wb = write_excel(merged, trends, alarm_code, config_name)
     import tempfile, shutil
     tmp = tempfile.mkdtemp(prefix="sbs-hwp-pan-")
     try:
@@ -460,10 +483,8 @@ async def api_hwp_generate_pan(req: HWPAssembleRequest):
             f.write(excel_buf.getvalue())
         tmp_prg = os.path.join(tmp, "programs"); os.makedirs(tmp_prg, exist_ok=True)
         for prg in merged['programs']:
-            bas_path = prg_dir / prg.filename
-            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
-            with open(os.path.join(tmp_prg, prg.filename), "w") as f: f.write(code)
-        with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f: f.write(alarm_code)
+            with open(os.path.join(tmp_prg, prg.filename), "w") as f:
+                f.write(prg.code or f"10 REM {prg.name}\n")
         from compile_from_excel import compile_package
         pan_data = compile_package(tmp, verbose=False)
     finally:
@@ -485,8 +506,18 @@ async def api_chwp_generate_pan(req: CHWPAssembleRequest):
     trends = generate_trends(merged)
     alarm_code = generate_alarm_bas(merged)
     config_name = req.params.get('config_name', 'CHW-Plant')
-    wb = write_excel(merged, trends, alarm_code, config_name)
     prg_dir = Path(__file__).parent / "programs" / "chw_plant"
+    for prg in merged['programs']:
+        if not prg.code or len(prg.code) <= 50:
+            bas_path = prg_dir / prg.filename
+            if bas_path.exists():
+                prg.code = bas_path.read_text()
+    from composition.models import ProgramDef
+    alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
+                           "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
+    merged['programs'].append(alarm_prg)
+    number_programs(merged['programs'])
+    wb = write_excel(merged, trends, alarm_code, config_name)
     import tempfile, shutil
     tmp = tempfile.mkdtemp(prefix="sbs-chwp-pan-")
     try:
@@ -495,10 +526,8 @@ async def api_chwp_generate_pan(req: CHWPAssembleRequest):
             f.write(excel_buf.getvalue())
         tmp_prg = os.path.join(tmp, "programs"); os.makedirs(tmp_prg, exist_ok=True)
         for prg in merged['programs']:
-            bas_path = prg_dir / prg.filename
-            code = prg.code if (prg.code and len(prg.code) > 50) else (bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
-            with open(os.path.join(tmp_prg, prg.filename), "w") as f: f.write(code)
-        with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f: f.write(alarm_code)
+            with open(os.path.join(tmp_prg, prg.filename), "w") as f:
+                f.write(prg.code or f"10 REM {prg.name}\n")
         from compile_from_excel import compile_package
         pan_data = compile_package(tmp, verbose=False)
     finally:
@@ -1499,6 +1528,18 @@ async def api_generate_from_config(req: GenerateFromConfigRequest):
         trends = generate_trends(merged)
         alarm_code = generate_alarm_bas(merged)
 
+        # Load .bas code and add line numbers
+        for prg in merged['programs']:
+            if not prg.code or len(prg.code) <= 50:
+                bas_path = prg_dir / prg.filename
+                if bas_path.exists():
+                    prg.code = bas_path.read_text()
+        from composition.models import ProgramDef
+        alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
+                               "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
+        merged['programs'].append(alarm_prg)
+        number_programs(merged['programs'])
+
         # Apply terminal overrides
         if overrides:
             apply_terminal_overrides(req.config_id, merged['inputs'], merged['outputs'])
@@ -1518,13 +1559,8 @@ async def api_generate_from_config(req: GenerateFromConfigRequest):
             tmp_prg = os.path.join(tmp, "programs")
             os.makedirs(tmp_prg, exist_ok=True)
             for prg in merged['programs']:
-                bas_path = prg_dir / prg.filename
-                code = prg.code if (prg.code and len(prg.code) > 50) else (
-                    bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
                 with open(os.path.join(tmp_prg, prg.filename), "w") as f:
-                    f.write(code)
-            with open(os.path.join(tmp_prg, "PRG-ALARMS.bas"), "w") as f:
-                f.write(alarm_code)
+                    f.write(prg.code or f"10 REM {prg.name}\n")
             try:
                 from compile_from_excel import compile_package
                 pan_data = compile_package(tmp, verbose=False)
@@ -1537,11 +1573,7 @@ async def api_generate_from_config(req: GenerateFromConfigRequest):
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
             for prg in merged['programs']:
-                bas_path = prg_dir / prg.filename
-                code = prg.code if (prg.code and len(prg.code) > 50) else (
-                    bas_path.read_text() if bas_path.exists() else f"10 REM {prg.name}\n")
-                zf.writestr(f"programs/{prg.filename}", code)
-            zf.writestr("programs/PRG-ALARMS.bas", alarm_code)
+                zf.writestr(f"programs/{prg.filename}", prg.code or f"10 REM {prg.name}\n")
             if pan_data:
                 zf.writestr(f"{config_name}.pan", pan_data)
             zf.writestr("summary.json", json.dumps({
