@@ -170,20 +170,31 @@ def list_by_category():
     return result
 
 
-def get_core_modules(equipment_family=""):
-    """Get core modules scoped to the equipment family.
+_AHU_CORES = ['core', 'safe-freeze', 'safe-smoke', 'safe-filter']
 
-    hw-core and chw-core are plant-family modules — only included when
-    the equipment family is HW-PLANT, CHW-PLANT-AIR, or CHW-PLANT-TOWER.
-    All other core modules (core, safe-freeze, safe-smoke, safe-filter)
-    are included for every AHU family.
+FAMILY_CORES = {
+    'AHU-VAV':          _AHU_CORES,
+    'VAV-AHU':          _AHU_CORES,
+    'CV-AHU':           _AHU_CORES,
+    'RTU':              _AHU_CORES,
+    'DOAS':             _AHU_CORES,
+    'SZ-CV':            _AHU_CORES,
+    'SZ-VAV':           _AHU_CORES,
+    'DD-AHU':           _AHU_CORES,
+    'MZ-AHU':           _AHU_CORES,
+    'HW-PLANT':         ['hw-core'],
+    'CHW-PLANT-AIR':    ['chw-core'],
+    'CHW-PLANT-TOWER':  ['chw-core'],
+}
+
+
+def get_core_modules(equipment_family=""):
+    """Get core modules for an equipment family.
+
+    Each family explicitly declares its own core modules.
+    No inference, no shared groups, no bleed-through.
     """
-    plant_cores = {'hw-core', 'chw-core'}
-    plant_families = {'HW-PLANT', 'CHW-PLANT-AIR', 'CHW-PLANT-TOWER'}
-    include_plant = equipment_family in plant_families
-    return [mid for mid in _BUILDERS
-            if get_module(mid).is_core
-            and (mid not in plant_cores or include_plant)]
+    return list(FAMILY_CORES.get(equipment_family, _AHU_CORES))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
