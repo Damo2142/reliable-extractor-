@@ -11,6 +11,7 @@ Takes a list of module IDs and assembles a complete ControllerConfig:
 7. Assembles SOO document from module paragraphs
 """
 
+import copy
 import json
 from pathlib import Path
 from composition.models import ControllerConfig, TrendDef, ProgramDef
@@ -87,7 +88,18 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     for mid in sorted(all_ids):
         mod = modules[mid]
 
-        for pt in mod.inputs:
+        # Deep-copy all module points before mutating (.row, .module, .instance)
+        # to prevent corrupting the cached module singleton across requests.
+        mod_inputs = copy.deepcopy(mod.inputs)
+        mod_outputs = copy.deepcopy(mod.outputs)
+        mod_values = copy.deepcopy(mod.values)
+        mod_loops = copy.deepcopy(mod.loops)
+        mod_tables = copy.deepcopy(mod.tables)
+        mod_programs = copy.deepcopy(mod.programs)
+        mod_schedules = copy.deepcopy(mod.schedules)
+        mod_system_groups = copy.deepcopy(mod.system_groups)
+
+        for pt in mod_inputs:
             if pt.name in input_names:
                 continue  # same mnemonic already exists — skip entirely
             if pt.row not in input_rows:
@@ -106,7 +118,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                 input_rows[next_row] = pt
                 input_names.add(pt.name)
 
-        for pt in mod.outputs:
+        for pt in mod_outputs:
             if pt.name in output_names:
                 continue  # same mnemonic already exists — skip entirely
             if pt.row not in output_rows:
@@ -125,7 +137,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                 output_rows[next_row] = pt
                 output_names.add(pt.name)
 
-        for pt in mod.values:
+        for pt in mod_values:
             if pt.name in value_names:
                 continue  # same mnemonic already exists — skip entirely
             if pt.instance not in value_instances:
@@ -133,27 +145,27 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                 value_instances[pt.instance] = pt
                 value_names.add(pt.name)
 
-        for lp in mod.loops:
+        for lp in mod_loops:
             if lp.instance not in loop_instances:
                 lp.module = mid
                 loop_instances[lp.instance] = lp
 
-        for tbl in mod.tables:
+        for tbl in mod_tables:
             if tbl.instance not in table_instances:
                 tbl.module = mid
                 table_instances[tbl.instance] = tbl
 
-        for prg in mod.programs:
+        for prg in mod_programs:
             if prg.instance not in program_instances:
                 prg.module = mid
                 program_instances[prg.instance] = prg
 
-        for sch in mod.schedules:
+        for sch in mod_schedules:
             if sch.instance not in schedule_instances:
                 sch.module = mid
                 schedule_instances[sch.instance] = sch
 
-        for sg in mod.system_groups:
+        for sg in mod_system_groups:
             if sg.name not in system_group_names:
                 sg.module = mid
                 system_group_names[sg.name] = sg
