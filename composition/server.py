@@ -2131,8 +2131,10 @@ async function doAssemble(){
       res=await fetch('api/chwp-assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
     }else{
       var mods=Array.from(selected);
+      var plantCoreCats={'hw-core':1,'chw-core':1};
       var cats=Object.keys(modules);
       for(var ci=0;ci<cats.length;ci++){
+        if(plantCoreCats[cats[ci]])continue;
         var ms=modules[cats[ci]];
         for(var mi=0;mi<ms.length;mi++){
           if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
@@ -2291,8 +2293,10 @@ async function doGenerate(){
       res=await fetch('api/chwp-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
     }else{
       var mods=Array.from(selected);
+      var plantCoreCats={'hw-core':1,'chw-core':1};
       var cats=Object.keys(modules);
       for(var ci=0;ci<cats.length;ci++){
+        if(plantCoreCats[cats[ci]])continue;
         var ms=modules[cats[ci]];
         for(var mi=0;mi<ms.length;mi++){
           if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
@@ -2311,8 +2315,10 @@ async function doGenerate(){
 
 function getModList(){
   var mods=Array.from(selected);
+  var plantCoreCats={'hw-core':1,'chw-core':1};
   var cats=Object.keys(modules);
   for(var ci=0;ci<cats.length;ci++){
+    if(plantCoreCats[cats[ci]])continue;
     var ms=modules[cats[ci]];
     for(var mi=0;mi<ms.length;mi++){
       if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);

@@ -15,7 +15,12 @@ import copy
 import json
 from pathlib import Path
 from composition.models import ControllerConfig, TrendDef, ProgramDef
-from composition.module_registry import get_module, get_core_modules
+from composition.module_registry import get_module, get_core_modules, FAMILY_CORES
+
+# All core module IDs across all families — used to strip wrong-family cores
+_ALL_CORES = set()
+for _cores in FAMILY_CORES.values():
+    _ALL_CORES.update(_cores)
 
 
 def assemble(module_ids: list, device_name: str = "{device-name}",
@@ -34,9 +39,16 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
         ControllerConfig with all points merged and controller selected
     """
 
-    # Step 1: Add core modules and resolve dependencies
-    all_ids = set(module_ids)
-    for cid in get_core_modules(equipment_family):
+    # Step 1: Add core modules and enforce family isolation.
+    # Strip any core modules that don't belong to this equipment family
+    # (the frontend or caller may have sent wrong-family cores).
+    allowed_cores = set(get_core_modules(equipment_family))
+    all_ids = set()
+    for mid in module_ids:
+        if mid in _ALL_CORES and mid not in allowed_cores:
+            continue  # wrong-family core — strip it
+        all_ids.add(mid)
+    for cid in allowed_cores:
         all_ids.add(cid)
 
     # Iteratively resolve dependencies
