@@ -6,8 +6,8 @@ REM ======================================================================
 REM ***** Humidifier control *****
 REM Modulate humidifier to maintain zone humidity setpoint
 
-IF- {device-name}-OCC-CMD THEN {device-name}-HUM-O = 0 , END
+IF- {device-name}-OCC-CMD THEN {device-name}-HUM = 0 , END
 
 REM ***** Check humidity below setpoint *****
-IF {device-name}-RAH < {device-name}-HUM-SP - {device-name}-HUM-DB THEN {device-name}-HUM-O = SLIDE( {device-name}-RAH , {device-name}-HUM-SP - {device-name}-HUM-DB , {device-name}-HUM-SP , 100 , 0 )
-IF {device-name}-RAH > {device-name}-HUM-SP THEN {device-name}-HUM-O = 0
+IF {device-name}-RAH < {device-name}-HUM-SP - {device-name}-HUM-DB THEN {device-name}-HUM = SLIDE( {device-name}-RAH , {device-name}-HUM-SP - {device-name}-HUM-DB , {device-name}-HUM-SP , 100 , 0 )
+IF {device-name}-RAH > {device-name}-HUM-SP THEN {device-name}-HUM = 0
