@@ -419,12 +419,12 @@ def write_bo_block(instance: int, name: str, present_value: int = 0,
 
 
 def write_bv_seed(instance: int, name: str, desc: str,
-                  present_value: int = 0) -> bytes:
-    """BV seed: desc + name + present-value + range=0x03."""
+                  present_value: int = 0, range_code: int = 0x00) -> bytes:
+    """BV seed: desc + name + present-value + range. Default 0x00 = Off/On."""
     return _build_block(5, instance, _seed_payload([
         _rec_desc(desc), _rec_mu(name),
         _rec_uint8(0x0000, 0x55, 0x91, present_value),
-        _rec_range(0x03)
+        _rec_range(range_code)
     ]))
 
 
