@@ -6,18 +6,18 @@ REM ======================================================================
 REM ***** Limit initial/OSH/OSC supply air temp setpoints *****
 {device-name}-OSH-SAT-SP = LIMIT( {device-name}-OSH-SAT-SP , {device-name}-OSC-SAT-SP + 10 , 90 )
 {device-name}-OSC-SAT-SP = LIMIT( {device-name}-OSC-SAT-SP , 55 , {device-name}-OSH-SAT-SP - 10 )
-{device-name}-HEAT-INITIAL-SAT-SP = LIMIT( {device-name}-HEAT-INITIAL-SAT-SP , {device-name}-COOL-INITIAL-SAT-SP + 4 , {device-name}-OSH-SAT-SP )
-{device-name}-COOL-INITIAL-SAT-SP = LIMIT( {device-name}-COOL-INITIAL-SAT-SP , {device-name}-OSC-SAT-SP , {device-name}-HEAT-INITIAL-SAT-SP - 4 )
+{device-name}-HTG-INIT-SAT-SP = LIMIT( {device-name}-HTG-INIT-SAT-SP , {device-name}-CLG-INIT-SAT-SP + 4 , {device-name}-OSH-SAT-SP )
+{device-name}-CLG-INIT-SAT-SP = LIMIT( {device-name}-CLG-INIT-SAT-SP , {device-name}-OSC-SAT-SP , {device-name}-HTG-INIT-SAT-SP - 4 )
 
 REM ***** Set initial SAT SP based on HVAC mode *****
-IF {device-name}-HVAC-MODE = 2 THEN {device-name}-INITIAL-SAT-SP = {device-name}-COOL-INITIAL-SAT-SP , GOTO 120
-IF {device-name}-HVAC-MODE = 4 THEN {device-name}-INITIAL-SAT-SP = {device-name}-HEAT-INITIAL-SAT-SP ELSE {device-name}-INITIAL-SAT-SP = ( {device-name}-HEAT-INITIAL-SAT-SP - {device-name}-COOL-INITIAL-SAT-SP ) / 2 + {device-name}-COOL-INITIAL-SAT-SP
+IF {device-name}-HVAC-MODE = 2 THEN {device-name}-INIT-SAT-SP = {device-name}-CLG-INIT-SAT-SP , GOTO 120
+IF {device-name}-HVAC-MODE = 4 THEN {device-name}-INIT-SAT-SP = {device-name}-HTG-INIT-SAT-SP ELSE {device-name}-INIT-SAT-SP = ( {device-name}-HTG-INIT-SAT-SP - {device-name}-CLG-INIT-SAT-SP ) / 2 + {device-name}-CLG-INIT-SAT-SP
 
 REM ***** Reset to initial on fan start *****
-IF+ {device-name}-SF-S THEN {device-name}-ACT-SAT-SP = {device-name}-INITIAL-SAT-SP , END
+IF+ {device-name}-SF-S THEN {device-name}-ACT-SAT-SP = {device-name}-INIT-SAT-SP , END
 
 REM ***** Reset to initial on occupancy mode change *****
-IF+ {device-name}-OCC-MODE < 4 THEN {device-name}-ACT-SAT-SP = {device-name}-INITIAL-SAT-SP , GOTO 310
+IF+ {device-name}-OCC-MODE < 4 THEN {device-name}-ACT-SAT-SP = {device-name}-INIT-SAT-SP , GOTO 310
 IF {device-name}-OCC-MODE = 5 OR {device-name}-OCC-MODE = 7 THEN {device-name}-ACT-SAT-SP = {device-name}-OSH-SAT-SP , GOTO 310
 IF {device-name}-OCC-MODE = 6 OR {device-name}-OCC-MODE = 8 THEN {device-name}-ACT-SAT-SP = {device-name}-OSC-SAT-SP , GOTO 310
 IF {device-name}-OSH-MODE THEN {device-name}-ACT-SAT-SP = {device-name}-OSH-SAT-SP , GOTO 310

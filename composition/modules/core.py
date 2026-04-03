@@ -85,9 +85,9 @@ def build():
             # SAT setpoints
             ValuePoint(76, "OSH-SAT-SP",      "AV", 85.0,   "Optimum Start Heat SAT SP",         "°F"),
             ValuePoint(77, "OSC-SAT-SP",      "AV", 55.0,   "Optimum Start Cool SAT SP",         "°F"),
-            ValuePoint(79, "HEAT-INITIAL-SAT-SP","AV",60.0,  "Heating Initial SAT SP",            "°F"),
-            ValuePoint(80, "COOL-INITIAL-SAT-SP","AV",58.3,  "Cooling Initial SAT SP",            "°F"),
-            ValuePoint(81, "INITIAL-SAT-SP",  "AV", 58.3,   "Current Initial SAT SP",            "°F"),
+            ValuePoint(79, "HTG-INIT-SAT-SP","AV",60.0,  "Heating Initial SAT SP",            "°F"),
+            ValuePoint(80, "CLG-INIT-SAT-SP","AV",58.3,  "Cooling Initial SAT SP",            "°F"),
+            ValuePoint(81, "INIT-SAT-SP",  "AV", 58.3,   "Current Initial SAT SP",            "°F"),
             ValuePoint(82, "SAT-SP-INCR",     "AV", 1.0,    "SAT Reset Increment",               "°F"),
             ValuePoint(83, "SAT-RESET-INTRVL","AV", 5.0,    "SAT Reset Interval",                "Min."),
             ValuePoint(84, "CLG-DMD",         "AV", 0.1,    "Cooling Demand from Zones",         "%"),
