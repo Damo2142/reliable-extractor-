@@ -744,7 +744,7 @@ def write_table_block(instance: int, name: str, xy_pairs: list,
     Always uses enum(0) for description — matches A201 format.
     """
     xy_data = _build_table_xy(xy_pairs, max_slots)
-    num_points = 5
+    num_points = len(xy_pairs)
 
     return _build_block(141, instance, _seed_payload([
         _rec_enum(0x0000, 0x1C, 0x00),
