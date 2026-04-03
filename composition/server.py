@@ -2083,7 +2083,30 @@ function renderModules(){
 }
 
 function toggleMod(id,on){
-  if(on)selected.add(id);else selected.delete(id);
+  if(on){
+    // Enforce mutual exclusion — deselect conflicting modules in same group
+    var thisGroup=null;
+    for(var cat in modules){
+      var mods=modules[cat];if(!mods)continue;
+      for(var i=0;i<mods.length;i++){
+        if(mods[i].id===id){thisGroup=mods[i].mutually_exclusive_group;break;}
+      }
+      if(thisGroup)break;
+    }
+    if(thisGroup){
+      for(var cat in modules){
+        var mods=modules[cat];if(!mods)continue;
+        for(var i=0;i<mods.length;i++){
+          if(mods[i].id!==id && mods[i].mutually_exclusive_group===thisGroup){
+            selected.delete(mods[i].id);
+          }
+        }
+      }
+    }
+    selected.add(id);
+  }else{
+    selected.delete(id);
+  }
   renderModules();
 }
 
