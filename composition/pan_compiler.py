@@ -541,7 +541,7 @@ def write_loop_seed(instance: int, name: str, action: str,
                     out_type: int = 0x3FF, out_inst: int = 0x3FFFFF,
                     desc: str = '') -> bytes:
     """LOOP seed with input/setpoint/output ObjID references."""
-    action_val = 0x01 if action == "-" else 0x00
+    action_val = 0x00 if action == "-" else 0x01  # direct(+)=0x01, reverse(-)=0x00 per RC Studio
     sp_objid = (sp_type << 22) | (sp_inst & 0x3FFFFF)
     sp_ref_data = bytes([0x0C]) + struct.pack('>I', sp_objid) + bytes([0x19, 0x55, 0x0F])
     desc_rec = _rec_desc(desc) if desc else _rec_enum(0x0000, 0x1C, 0x00)

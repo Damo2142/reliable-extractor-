@@ -357,7 +357,7 @@ BV_PROPERTIES = [
 
 LOOP_PROPERTIES = [
     # --- Context 0x0000: Standard ---
-    (0x0000, 0x02, 0x91, "FROM_EXCEL", "uint8",             "action — 0x00=direct, 0x01=reverse"),
+    (0x0000, 0x02, 0x91, "FROM_EXCEL", "uint8",             "action — 0x01=direct(+), 0x00=reverse(-) per RC Studio"),
     (0x0000, 0x0E, 0x44, "FIXED",      "float_be",          "derivative — 0.0"),
     (0x0000, 0x11, 0x21, "FIXED",      "uint8",             "polarity — 0x01"),
     (0x0000, 0x13, 0x0c, "FROM_EXCEL", "objid_be32",        "controlled-variable-ref — input ObjID"),
