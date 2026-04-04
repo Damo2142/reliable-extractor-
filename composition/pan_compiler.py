@@ -170,6 +170,25 @@ def _seed_payload(records: list) -> bytes:
     return bytes(payload)
 
 
+def _controller_payload(records: list) -> bytes:
+    """Build payload for fully-populated controller-format blocks.
+    Same structure as _seed_payload but uses 0x42 0x42 0x00 prefix
+    instead of 0x00 0x00 0x00. RC Studio uses this prefix to distinguish
+    controller blocks from seed blocks and reads all properties.
+    """
+    if not records:
+        return b'\x42\x42\x00'
+    payload = bytearray(b'\x42\x42\x00')
+    for rec in records[:-1]:
+        payload += rec
+    last = records[-1]
+    if last[-1] == 0x00:
+        payload += last[:-1]
+    else:
+        payload += last
+    return bytes(payload)
+
+
 # ============================================================
 # SEED BLOCK WRITERS
 # ============================================================
@@ -552,7 +571,7 @@ def write_loop_block(instance: int, name: str, action: int,
         desc_rec = _rec_desc(desc)
     else:
         desc_rec = _rec_enum(0x0000, 0x1C, 0x00)
-    return _build_block(12, instance, _seed_payload([
+    return _build_block(12, instance, _controller_payload([
         _rec_uint8(0x0000, 0x02, 0x91, action),             # action
         _rec_float(0x0000, 0x0E, derivative),                # derivative
         _rec_uint8(0x0000, 0x11, 0x21, 0x01),
