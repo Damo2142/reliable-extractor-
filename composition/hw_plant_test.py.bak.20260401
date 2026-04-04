@@ -1,0 +1,476 @@
+"""
+HW-PLANT Test Package Generator
+
+Generates 3 test configurations as Excel + .bas packages:
+  Test A: Cascade, 2 boilers, analog SPT, constant speed, 2 pumps
+  Test B: Full control, 3 boilers, VFD, 2 pumps, iso valves + comb damper
+  Test C: Cascade, 2 boilers, BACnet SPT, pri-sec 2+2, heat exchanger 1/3+2/3
+"""
+
+import os, sys, json, zipfile, io
+from pathlib import Path
+from datetime import datetime
+
+# Add parent to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from composition.modules.hw_plant.core import build as build_core
+from composition.modules.hw_plant.boiler import build_blr_cascade, build_blr_full
+from composition.modules.hw_plant.pumps import build_pump_cs, build_pump_vfd, build_pump_pri_sec
+from composition.modules.hw_plant.optional import (
+    build_mixing_valve, build_iso_valves, build_comb_damper,
+    build_heat_exchanger, build_ahu_integration, build_makeup_water
+)
+from composition.models import TrendDef
+
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+except ImportError:
+    print("ERROR: openpyxl not installed. Run: pip install openpyxl")
+    sys.exit(1)
+
+
+def merge_modules(modules):
+    """Merge multiple Module objects into consolidated lists."""
+    inputs = []
+    outputs = []
+    values = []
+    loops = []
+    tables = []
+    programs = []
+    schedules = []
+    system_groups = []
+
+    seen_input_names = set()
+    seen_output_names = set()
+    seen_value_instances = set()
+
+    for mod in modules:
+        for pt in mod.inputs:
+            if pt.name not in seen_input_names:
+                pt.module = mod.id
+                inputs.append(pt)
+                seen_input_names.add(pt.name)
+        for pt in mod.outputs:
+            if pt.name not in seen_output_names:
+                pt.module = mod.id
+                outputs.append(pt)
+                seen_output_names.add(pt.name)
+        for pt in mod.values:
+            if pt.instance not in seen_value_instances:
+                pt.module = mod.id
+                values.append(pt)
+                seen_value_instances.add(pt.instance)
+        for item in mod.loops:
+            item.module = mod.id
+            loops.append(item)
+        for item in mod.tables:
+            item.module = mod.id
+            tables.append(item)
+        for item in mod.programs:
+            programs.append(item)
+        for item in mod.schedules:
+            schedules.append(item)
+        for item in mod.system_groups:
+            if item.name not in [sg.name for sg in system_groups]:
+                system_groups.append(item)
+
+    inputs.sort(key=lambda x: x.row)
+    outputs.sort(key=lambda x: x.row)
+    values.sort(key=lambda x: x.instance)
+    loops.sort(key=lambda x: x.instance)
+    tables.sort(key=lambda x: x.instance)
+    programs.sort(key=lambda x: x.instance)
+    schedules.sort(key=lambda x: x.instance)
+
+    return {
+        'inputs': inputs, 'outputs': outputs, 'values': values,
+        'loops': loops, 'tables': tables, 'programs': programs,
+        'schedules': schedules, 'system_groups': system_groups,
+    }
+
+
+def generate_trends(merged):
+    """Auto-generate trends for all I/O points + key AVs/BVs."""
+    trends = []
+    stl_num = 1
+
+    # AI points — polled trends
+    for pt in merged['inputs']:
+        if pt.point_type == 'AI':
+            trends.append(TrendDef(stl_num, f"{{device-name}}-{pt.name}-T",
+                pt.name, "Polled", "00:15:00", 0.2, 512))
+            stl_num += 1
+
+    # BI points — COV trends
+    for pt in merged['inputs']:
+        if pt.point_type == 'BI':
+            trends.append(TrendDef(stl_num, f"{{device-name}}-{pt.name}-T",
+                pt.name, "Cov", "00:15:00", 0.2, 512))
+            stl_num += 1
+
+    # AO points — COV trends
+    for pt in merged['outputs']:
+        if pt.point_type == 'AO':
+            trends.append(TrendDef(stl_num, f"{{device-name}}-{pt.name}-T",
+                pt.name, "Cov", "00:15:00", 0.2, 512))
+            stl_num += 1
+
+    # BO points — COV trends
+    for pt in merged['outputs']:
+        if pt.point_type == 'BO':
+            trends.append(TrendDef(stl_num, f"{{device-name}}-{pt.name}-T",
+                pt.name, "Cov", "00:15:00", 0.2, 512))
+            stl_num += 1
+
+    # Key AV/BV values — COV trends
+    key_av_names = {'ACT-HWS-TEMP-SP', 'HW-DELTA-T', 'AVG-DP', 'BLRS-SPT',
+                    'BLR-SUPPLY-STPNT', 'LEAD-BLR', 'LEAD-HWP'}
+    key_bv_names = {'HW-SYS-ENAB', 'HW-AVAIL', 'BLR-AVAIL'}
+    for pt in merged['values']:
+        if pt.name in key_av_names or pt.name in key_bv_names:
+            trends.append(TrendDef(stl_num, f"{{device-name}}-{pt.name}-T",
+                pt.name, "Cov", "00:15:00", 0.2, 512))
+            stl_num += 1
+
+    return trends
+
+
+def generate_alarm_bas(merged, device_name="{device-name}"):
+    """Auto-generate alarm program from point definitions."""
+    lines = [
+        "10 REM =======================",
+        f"20 REM  Generated by SBS Composition Engine v2",
+        "30 REM  Alarm Definitions",
+        "40 REM =======================",
+        '50 ALARM-TYPE General Informational1 30',
+    ]
+    line_num = 60
+    for pt in merged['inputs']:
+        if pt.point_type == 'BI':
+            lines.append(f"{line_num} DALARM {device_name}-{pt.name} , General , 30")
+            line_num += 10
+    # BV alarms
+    for pt in merged['values']:
+        if pt.point_type == 'BV' and ('FAIL' in pt.name or 'ALARM' in pt.name):
+            lines.append(f"{line_num} DALARM {device_name}-{pt.name} , Warning , 60")
+            line_num += 10
+    return '\n'.join(lines)
+
+
+def write_excel(merged, trends, alarm_bas, config_name, device_name="{device-name}"):
+    """Generate the 13-tab Excel workbook."""
+    wb = Workbook()
+
+    header_font = Font(bold=True, size=11)
+    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    def add_header(ws, row, headers):
+        for col, h in enumerate(headers, 1):
+            cell = ws.cell(row=row, column=col, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+
+    # ── Inputs ──
+    ws = wb.active
+    ws.title = "Inputs"
+    ws.cell(1, 1, value="INPUTS").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=f"{device_name} — {config_name}")
+    add_header(ws, 3, ["Terminal", "Name", "Type", "Value", "Units", "Range", "Description", "Module"])
+    row = 4
+    max_in = max((p.row for p in merged['inputs']), default=0)
+    used_rows = {p.row: p for p in merged['inputs']}
+    for r in range(1, max_in + 1):
+        if r in used_rows:
+            pt = used_rows[r]
+            ws.append([r, f"{device_name}-{pt.name}", pt.point_type, "", pt.units,
+                      pt.range_code, pt.description, pt.module])
+        else:
+            ws.append([r, f"--- IN{r} unused ---", "", "", "", "", ""])
+
+    # ── Outputs ──
+    ws = wb.create_sheet("Outputs")
+    ws.cell(1, 1, value="OUTPUTS").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=f"{device_name} — {config_name}")
+    add_header(ws, 3, ["Terminal", "Name", "Type", "Value", "Units", "Range", "Description", "Module"])
+    max_out = max((p.row for p in merged['outputs']), default=0)
+    used_out = {p.row: p for p in merged['outputs']}
+    for r in range(1, max_out + 1):
+        if r in used_out:
+            pt = used_out[r]
+            ws.append([r, f"{device_name}-{pt.name}", pt.point_type, "", pt.units,
+                      pt.range_code, pt.description, pt.module])
+        else:
+            ws.append([r, f"--- OUT{r} unused ---", "", "", "", "", ""])
+
+    # ── Values ──
+    ws = wb.create_sheet("Values")
+    ws.cell(1, 1, value="VALUES (AV / BV / MV)").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["Instance", "Name", "Type", "Default Value", "Units", "Range / States", "Description", "Module"])
+    for pt in merged['values']:
+        states_str = ""
+        if pt.states:
+            states_str = "/".join(f"{k}-{v}" for k, v in sorted(pt.states.items()))
+        ws.append([f"{pt.point_type}{pt.instance}", f"{device_name}-{pt.name}",
+                  pt.point_type, pt.default, pt.units, states_str, pt.description, pt.module])
+
+    # ── Loops ──
+    ws = wb.create_sheet("Loops")
+    ws.cell(1, 1, value="PID LOOPS").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["Loop", "Name", "Input", "Setpoint", "Output", "Action", "P Band",
+                       "Integral", "D", "Bias", "Description", "Module"])
+    for lp in merged['loops']:
+        ws.append([f"LOOP{lp.instance}", f"{device_name}-{lp.name}",
+                  f"{device_name}-{lp.input_ref}", f"{device_name}-{lp.setpoint_ref}",
+                  f"{device_name}-{lp.output_ref}" if lp.output_ref else "",
+                  "+" if lp.action == "direct" else "-",
+                  lp.p_band, lp.integral, lp.derivative, lp.bias, lp.description, lp.module])
+
+    # ── Tables ──
+    ws = wb.create_sheet("Tables")
+    ws.cell(1, 1, value="TABLES").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["Table", "Name", "Input Units", "Output Units", "Description", "Module"])
+    for tbl in merged['tables']:
+        ws.append([f"TBL{tbl.instance}", f"{device_name}-{tbl.name}",
+                  tbl.input_units, tbl.output_units, tbl.description, tbl.module])
+        # Add data points below
+        for dp in tbl.data_points:
+            ws.append(["", "", dp[0], dp[1]])
+
+    # ── Arrays ──
+    ws = wb.create_sheet("Arrays")
+    ws.cell(1, 1, value="ARRAYS").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    ws.cell(3, 1, value="(No arrays for this configuration)")
+
+    # ── Schedules ──
+    ws = wb.create_sheet("Schedules")
+    ws.cell(1, 1, value="SCHEDULES").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["Schedule", "Name", "Default State", "States", "Priority", "Description", "Module"])
+    for sch in merged['schedules']:
+        ws.append([f"SCHED{sch.instance}", sch.name, sch.default_state,
+                  " / ".join(sch.states), sch.priority, sch.description, sch.module])
+
+    # ── Trends ──
+    ws = wb.create_sheet("Trends")
+    ws.cell(1, 1, value="SINGLE POINT TREND LOGS (STL)").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["STL", "Name", "Monitored Point", "Type", "Interval/COV Delta", "Buffer"])
+    for tr in trends:
+        interval = tr.interval if tr.trend_type == "Polled" else str(tr.cov_delta)
+        ws.append([f"STL{tr.instance}", tr.name,
+                  f"{device_name}-{tr.monitored_point}",
+                  tr.trend_type, interval, tr.buffer_size])
+
+    # ── System Groups ──
+    ws = wb.create_sheet("System Groups")
+    ws.cell(1, 1, value="SYSTEM GROUPS (Graphic Pages)").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["Group Name", "Description", "Module"])
+    for sg in merged['system_groups']:
+        ws.append([sg.name, sg.description, sg.module])
+
+    # ── Programs ──
+    ws = wb.create_sheet("Programs")
+    ws.cell(1, 1, value="PROGRAMS").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["PRG#", "Name", "Filename", "Enabled", "Exec Order", "Description", "Module"])
+    for prg in merged['programs']:
+        ws.append([f"PRG{prg.instance}", f"{device_name}-{prg.name}",
+                  prg.filename, "Yes" if prg.enabled else "No",
+                  prg.exec_order, prg.description, prg.module])
+    # Add alarm program
+    ws.append([f"PRG50", f"{device_name}-ALARMS-PRG", "PRG-ALARMS.bas",
+              "Yes", 50, "Auto-generated alarm definitions", "alarm-gen"])
+
+    # ── Custom Units ──
+    ws = wb.create_sheet("Custom Units")
+    ws.cell(1, 1, value="CUSTOM UNITS").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value="SBS Standard Enumerations")
+    add_header(ws, 3, ["Index", "Analog Text", "Digital On", "Digital Off"])
+    customs = [
+        (64, "", "Occupied", "Unoccupied"),
+        (65, "", "Enabled", "Disabled"),
+        (66, "", "On", "Off"),
+        (67, "", "Open", "Closed"),
+        (68, "", "Start", "Stop"),
+        (69, "", "Run", "Shutdown"),
+        (70, "", "Alarm", "Normal"),
+        (71, "", "Dirty", "Clean"),
+        (72, "", "Yes", "No"),
+        (73, "", "Active", "Inactive"),
+    ]
+    for idx, analog, on, off in customs:
+        ws.append([idx, analog, on, off])
+
+    # ── Alarms ──
+    ws = wb.create_sheet("Alarms")
+    ws.cell(1, 1, value="ALARM DEFINITIONS").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["Point", "Type", "AlarmType", "Priority", "Delay", "Deadband"])
+    for pt in merged['inputs']:
+        if pt.point_type == 'BI':
+            ws.append([f"{device_name}-{pt.name}", "BI", "General", "Informational1", 30, ""])
+    for pt in merged['values']:
+        if pt.point_type == 'BV' and ('FAIL' in pt.name or 'ALARM' in pt.name):
+            ws.append([f"{device_name}-{pt.name}", "BV", "Critical", "Critical2", 60, ""])
+
+    # ── Commissioning ──
+    ws = wb.create_sheet("Commissioning")
+    ws.cell(1, 1, value="COMMISSIONING POINT CHECKLIST").font = Font(bold=True, size=14)
+    ws.cell(2, 1, value=device_name)
+    add_header(ws, 3, ["Point", "Object", "Type", "Range", "Description", "Check"])
+    for pt in merged['inputs']:
+        ws.append([f"{device_name}-{pt.name}", f"{pt.point_type}{pt.row}",
+                  pt.point_type, pt.range_code, pt.description, "Verify sensor reading"])
+    for pt in merged['outputs']:
+        ws.append([f"{device_name}-{pt.name}", f"{pt.point_type}{pt.row}",
+                  pt.point_type, pt.range_code, pt.description, "Command and verify response"])
+
+    return wb
+
+
+def build_package(config_name, modules, output_dir):
+    """Build a complete test package (zip with Excel + .bas + summary.json)."""
+    merged = merge_modules(modules)
+    trends = generate_trends(merged)
+    alarm_bas = generate_alarm_bas(merged)
+
+    wb = write_excel(merged, trends, alarm_bas, config_name)
+
+    # Load .bas program code from templates
+    prg_dir = Path(__file__).parent / "programs" / "hw_plant"
+    programs_with_code = {}
+    for prg in merged['programs']:
+        bas_path = prg_dir / prg.filename
+        if bas_path.exists():
+            programs_with_code[prg.filename] = bas_path.read_text()
+        else:
+            programs_with_code[prg.filename] = f"10 REM {prg.name} — template not found\n"
+
+    # Summary
+    summary = {
+        "name": config_name,
+        "equipment_family": "HW-PLANT",
+        "controller_model": "MPS",
+        "generated": datetime.now().isoformat(),
+        "generated_by": "SBS Composition Engine v2 — HW Plant Module",
+        "counts": {
+            "inputs": len(merged['inputs']),
+            "outputs": len(merged['outputs']),
+            "values": len(merged['values']),
+            "loops": len(merged['loops']),
+            "tables": len(merged['tables']),
+            "programs": len(merged['programs']) + 1,  # +1 for alarm program
+            "schedules": len(merged['schedules']),
+            "trends": len(trends),
+            "system_groups": len(merged['system_groups']),
+        },
+        "point_counts": {
+            "AI": len([p for p in merged['inputs'] if p.point_type == 'AI']),
+            "BI": len([p for p in merged['inputs'] if p.point_type == 'BI']),
+            "AO": len([p for p in merged['outputs'] if p.point_type == 'AO']),
+            "BO": len([p for p in merged['outputs'] if p.point_type == 'BO']),
+            "AV": len([p for p in merged['values'] if p.point_type == 'AV']),
+            "BV": len([p for p in merged['values'] if p.point_type == 'BV']),
+            "MV": len([p for p in merged['values'] if p.point_type == 'MV']),
+        },
+        "modules": [m.id for m in modules],
+        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename} for p in merged['programs']],
+    }
+
+    # Write zip
+    os.makedirs(output_dir, exist_ok=True)
+    zip_name = f"{config_name}.zip"
+    zip_path = os.path.join(output_dir, zip_name)
+
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # Excel
+        excel_buf = io.BytesIO()
+        wb.save(excel_buf)
+        zf.writestr("RC-Studio-Output.xlsx", excel_buf.getvalue())
+
+        # Programs
+        for filename, code in programs_with_code.items():
+            zf.writestr(f"programs/{filename}", code)
+
+        # Alarm program
+        zf.writestr("programs/PRG-ALARMS.bas", alarm_bas)
+
+        # Summary
+        zf.writestr("summary.json", json.dumps(summary, indent=2, default=str))
+
+        # SOO
+        soo_lines = [f"SEQUENCE OF OPERATIONS\n{config_name}\n{'='*50}\n"]
+        for mod in modules:
+            if mod.soo_paragraph:
+                soo_lines.append(f"\n{mod.name}\n{'-'*40}\n{mod.soo_paragraph}\n")
+        zf.writestr("SOO.txt", '\n'.join(soo_lines))
+
+    return summary, zip_path
+
+
+def main():
+    output_dir = "/srv/dfa/drops/hw-test"
+
+    print("=" * 60)
+    print("SBS HW-PLANT Test Package Generator")
+    print("=" * 60)
+
+    # ── Test A: Cascade, 2 boilers, analog SPT, CS pumps ──
+    print("\nTest A: Cascade, 2 boilers, analog SPT, 2 CS pumps")
+    modules_a = [
+        build_core(),
+        build_blr_cascade(num_boilers=2, analog_spt=True, monitor_hwst=False),
+        build_pump_cs(num_pumps=2),
+    ]
+    summary_a, path_a = build_package("HW-TestA-Cascade-2B-CS", modules_a, output_dir)
+    print(f"  Package: {path_a}")
+    print(f"  Points: AI={summary_a['point_counts']['AI']} AO={summary_a['point_counts']['AO']} "
+          f"AV={summary_a['point_counts']['AV']} BI={summary_a['point_counts']['BI']} "
+          f"BO={summary_a['point_counts']['BO']} BV={summary_a['point_counts']['BV']}")
+    print(f"  Programs: {summary_a['counts']['programs']}")
+
+    # ── Test B: Full control, 3 boilers, VFD, iso + comb ──
+    print("\nTest B: Full control, 3 boilers, VFD 2 pumps, iso valves + comb damper")
+    modules_b = [
+        build_core(),
+        build_blr_full(num_boilers=3, monitor_hwst=True),
+        build_pump_vfd(num_pumps=2),
+        build_iso_valves(num_boilers=3),
+        build_comb_damper(num_boilers=3),
+    ]
+    summary_b, path_b = build_package("HW-TestB-Full-3B-VFD", modules_b, output_dir)
+    print(f"  Package: {path_b}")
+    print(f"  Points: AI={summary_b['point_counts']['AI']} AO={summary_b['point_counts']['AO']} "
+          f"AV={summary_b['point_counts']['AV']} BI={summary_b['point_counts']['BI']} "
+          f"BO={summary_b['point_counts']['BO']} BV={summary_b['point_counts']['BV']}")
+    print(f"  Programs: {summary_b['counts']['programs']}")
+
+    # ── Test C: Cascade, 2 boilers, BACnet SPT, pri-sec 2+2, HX 1/3+2/3 ──
+    print("\nTest C: Cascade, 2 boilers, BACnet SPT, pri-sec 2P+2S, HX 1/3+2/3")
+    modules_c = [
+        build_core(),
+        build_blr_cascade(num_boilers=2, analog_spt=False, monitor_hwst=True),
+        build_pump_pri_sec(num_primary=2, num_secondary=2),
+        build_heat_exchanger(valve_type="third_twothird"),
+    ]
+    summary_c, path_c = build_package("HW-TestC-Cascade-PriSec-HX", modules_c, output_dir)
+    print(f"  Package: {path_c}")
+    print(f"  Points: AI={summary_c['point_counts']['AI']} AO={summary_c['point_counts']['AO']} "
+          f"AV={summary_c['point_counts']['AV']} BI={summary_c['point_counts']['BI']} "
+          f"BO={summary_c['point_counts']['BO']} BV={summary_c['point_counts']['BV']}")
+    print(f"  Programs: {summary_c['counts']['programs']}")
+
+    print("\n" + "=" * 60)
+    print("All 3 test packages saved to /srv/dfa/drops/hw-test/")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
