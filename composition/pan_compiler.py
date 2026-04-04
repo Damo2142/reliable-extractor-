@@ -13,7 +13,7 @@ Seed block format (from ground truth RC Studio reference file):
   BO:        desc + name + range=0x02
   BV:        desc + name + range=0x03
   MV:        states_as_desc + name + range=0x08
-  LOOP:      action + deriv + bias + output + out_units + name + setpoint + p_band
+  LOOP:      fully populated (30 properties matching RC Studio reference files)
   PRG:       desc + name (no bytecode)
   SCHED:     name only
   NC_GROUP:  copy from blank
@@ -530,43 +530,6 @@ def write_mv_block(instance: int, name: str, states_desc: str,
         _rec(0x0004, 0x19, 0x0C,                             # vendor: null obj ref (MV format)
              bytes([0xFF, 0xFF, 0xFF, 0xFF, 0x1B, 0x3F, 0xFF, 0xFF])),
         _rec_uint8(0x0004, 0x1D, 0x91, range_code),
-    ]))
-
-
-def write_loop_seed(instance: int, name: str, action: str,
-                    p_band: float = 0.0, integral: float = 0.0,
-                    derivative: float = 0.0, setpoint: float = 0.0,
-                    input_type: int = 0x3FF, input_inst: int = 0x3FFFFF,
-                    sp_type: int = 0x3FF, sp_inst: int = 0x3FFFFF,
-                    out_type: int = 0x3FF, out_inst: int = 0x3FFFFF,
-                    desc: str = '') -> bytes:
-    """LOOP seed with input/setpoint/output ObjID references.
-    Property mapping confirmed against RC Studio reference files:
-      0x02  = Action       (0x01=direct/+, 0x00=reverse/-)
-      0x0E  = Deriv        (derivative-constant)
-      0x1A  = Bias
-      0x5D  = Prop         (proportional band in seed context)
-      0x6C  = Integral     (integral-constant)
-      0x044D = vendor field (0.0)
-    """
-    action_val = 0x00 if action == "-" else 0x01  # direct(+)=0x01, reverse(-)=0x00 per RC Studio
-    sp_objid = (sp_type << 22) | (sp_inst & 0x3FFFFF)
-    sp_ref_data = bytes([0x0C]) + struct.pack('>I', sp_objid) + bytes([0x19, 0x55, 0x0F])
-    desc_rec = _rec_desc(desc) if desc else _rec_enum(0x0000, 0x1C, 0x00)
-    return _build_block(12, instance, _seed_payload([
-        _rec_uint8(0x0000, 0x02, 0x91, action_val),
-        _rec_float(0x0000, 0x0E, derivative),                 # RC Studio "Deriv" column
-        _rec_objref(0x0000, 0x13, input_type, input_inst),   # input ref
-        desc_rec,                                              # description
-        _rec_float(0x0000, 0x1A, 0.0),                       # RC Studio "Bias" column
-        _rec_float(0x0000, 0x31, 0.0),                       # output
-        _rec_uint8(0x0000, 0x32, 0x91, 0x48),                # output-units
-        _rec_objref(0x0000, 0x3C, out_type, out_inst),        # output/manip-var ref
-        _rec_mu(name),
-        _rec_float(0x0000, 0x5D, p_band),                     # RC Studio "Prop" column
-        _rec_float(0x0000, 0x6C, integral),                    # RC Studio "Integral" column
-        _rec(0x0000, 0x6D, 0x0E, sp_ref_data),                # setpoint ref
-        _rec_float(0x0004, 0x4D, 0.0),                        # vendor field (0.0)
     ]))
 
 

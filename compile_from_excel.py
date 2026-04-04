@@ -20,7 +20,7 @@ from composition.pan_compiler import (
     crc16_kermit,
     write_av_seed, write_av_block, write_ai_seed, write_ao_seed,
     write_bi_seed, write_bo_seed, write_bv_seed,
-    write_mv_seed, write_loop_seed, write_prg_seed,
+    write_mv_seed, write_loop_block, write_prg_seed,
     write_sched_seed, write_sys_group_seed, write_table_block,
     write_stl_block, write_notif_cls_seed, write_empty_block, write_prg_block,
     extract_nc_groups_from_blank, extract_device_block_from_blank,
@@ -231,11 +231,12 @@ def compile_package(pkg_path: str, blank_path: str = DEFAULT_BLANK,
         in_t, in_i = resolve(inp_name)
         sp_t, sp_i = resolve(sp_name)
         out_t, out_i = resolve(out_name) if out_name else (0x3FF, 0x3FFFFF)
-        # Property mapping confirmed against RC Studio reference files:
-        # 0x5D=Prop(p_band), 0x6C=Integral, 0x0E=Deriv, 0x044D=vendor(0.0)
-        loops.append(write_loop_seed(inst, nm, action, p_band=pband, integral=integ,
-            derivative=deriv, input_type=in_t, input_inst=in_i,
-            sp_type=sp_t, sp_inst=sp_i, out_type=0x3FF, out_inst=0x3FFFFF, desc=desc))
+        # Fully populated LOOP block — matches RC Studio reference files exactly
+        action_int = 1 if action == "+" else 0  # direct=1, reverse=0
+        loops.append(write_loop_block(inst, nm, action_int,
+            input_type=in_t, input_inst=in_i,
+            sp_type=sp_t, sp_inst=sp_i,
+            p_band=pband, integral=integ, derivative=deriv, desc=desc))
     if loops: blocks[12] = loops; log(f"  LOOP: {len(loops)}")
 
     # DEVICE from blank
