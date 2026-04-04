@@ -231,7 +231,7 @@ def compile_package(pkg_path: str, blank_path: str = DEFAULT_BLANK,
         in_t, in_i = resolve(inp_name)
         sp_t, sp_i = resolve(sp_name)
         out_t, out_i = resolve(out_name) if out_name else (0x3FF, 0x3FFFFF)
-        # Seed format: 0x5D = p-band, 0x044D = integral
+        # Seed format: 0x5D = p-band, 0x0E = integral, 0x044D = deadband
         loops.append(write_loop_seed(inst, nm, action, p_band=integ, setpoint=pband,
             derivative=deriv, input_type=in_t, input_inst=in_i,
             sp_type=sp_t, sp_inst=sp_i, out_type=0x3FF, out_inst=0x3FFFFF, desc=desc))

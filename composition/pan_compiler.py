@@ -547,7 +547,7 @@ def write_loop_seed(instance: int, name: str, action: str,
     desc_rec = _rec_desc(desc) if desc else _rec_enum(0x0000, 0x1C, 0x00)
     return _build_block(12, instance, _seed_payload([
         _rec_uint8(0x0000, 0x02, 0x91, action_val),
-        _rec_float(0x0000, 0x0E, derivative),
+        _rec_float(0x0000, 0x0E, p_band),                     # integral (0x0E = RC Studio "Integral" field)
         _rec_objref(0x0000, 0x13, input_type, input_inst),   # input ref
         desc_rec,                                              # description
         _rec_float(0x0000, 0x1A, 0.0),                       # bias
@@ -555,9 +555,9 @@ def write_loop_seed(instance: int, name: str, action: str,
         _rec_uint8(0x0000, 0x32, 0x91, 0x48),                # output-units
         _rec_objref(0x0000, 0x3C, out_type, out_inst),        # output/manip-var ref
         _rec_mu(name),
-        _rec_float(0x0000, 0x5D, setpoint),                   # p-band value
+        _rec_float(0x0000, 0x5D, setpoint),                   # p-band (0x5D = RC Studio "Prop" field)
         _rec(0x0000, 0x6D, 0x0E, sp_ref_data),                # setpoint ref
-        _rec_float(0x0004, 0x4D, p_band),                     # integral value
+        _rec_float(0x0004, 0x4D, derivative),                  # deadband (0x044D = RC Studio "Deadband" field)
     ]))
 
 
