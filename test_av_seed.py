@@ -56,8 +56,8 @@ for writer, label, inst, name, desc in [
 dump_block("SCHED1  name='AHU-1.OCC-SCHED'", write_sched_seed(1, "AHU-1.OCC-SCHED"))
 
 # === LOOP — 8 properties ===
-dump_block("LOOP1  name='AHU-1.SAT-LOOP'  action=direct  p_band=5.0  setpoint=55.0",
-           write_loop_seed(1, "AHU-1.SAT-LOOP", action="direct", p_band=5.0, setpoint=55.0, derivative=0.0))
+dump_block("LOOP1  name='AHU-1.SAT-LOOP'  action=direct  p_band=5.0  integral=40.0",
+           write_loop_seed(1, "AHU-1.SAT-LOOP", action="+", p_band=5.0, integral=40.0, derivative=0.0))
 
 # === NC_GROUP — with config (matches reference block 0: NC_0, status=0x04) ===
 NC0_CONFIG = bytes.fromhex('01FEB400000000B4173B3B001E22FFFF601F2101108205E0')
