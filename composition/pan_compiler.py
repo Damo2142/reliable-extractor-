@@ -573,7 +573,7 @@ def write_loop_block(instance: int, name: str, action: int,
         _rec_uint8(0x0000, 0x52, 0x91, 98),                 # output-units-display (%)
         _rec_float(0x0000, 0x55, output),                    # present-value = output
         _rec_uint8(0x0000, 0x58, 0x21, 10),                  # update-interval
-        _rec_float(0x0000, 0x5D, setpoint),                  # setpoint
+        _rec_float(0x0000, 0x5D, p_band),                     # RC Studio "Prop" column
         _rec_uint8(0x0000, 0x5E, 0x91, setpoint_units),     # setpoint-units
         _rec_float(0x0000, 0x6C, integral),                  # integral
         _rec(0x0000, 0x6D, 0x0E,                             # setpoint-ref
