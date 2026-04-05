@@ -280,11 +280,14 @@ def compile_package(pkg_path: str, blank_path: str = DEFAULT_BLANK,
         inst = _pi(r[0]); nm = "{device-name}-" + _s(r[1]) + str(inst)
         u = _uc(r[3] if len(r) > 3 else None)
         xy = []
-        for p in range(3):
+        p = 0
+        while True:
             xi, yi = 6 + p * 2, 7 + p * 2
-            if len(r) > yi and r[xi] is not None and r[yi] is not None:
-                try: xy.append((float(r[xi]), float(r[yi])))
-                except: pass
+            if len(r) <= yi or r[xi] is None or r[yi] is None:
+                break
+            try: xy.append((float(r[xi]), float(r[yi])))
+            except: break
+            p += 1
         tbls.append(write_table_block(inst, nm, xy_pairs=xy, units=u))
     if tbls: blocks[141] = tbls; log(f"  TABLE: {len(tbls)}")
 
