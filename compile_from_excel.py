@@ -29,7 +29,35 @@ from composition.pan_compiler import (
 from composition.cbas_compiler import compile_bas
 
 # ── Constants ──
-DEFAULT_BLANK = "/srv/dfa/shared/files/vendors/reliable/blanks/MACH-ProSys-88/MACH-ProSys-88.panx"
+BLANKS_BASE = "/srv/dfa/shared/files/vendors/reliable/blanks/"
+DEFAULT_BLANK = BLANKS_BASE + "MACH-ProSys-88/MACH-ProSys-88.panx"
+
+# Map controller model IDs to blank file paths (relative to BLANKS_BASE)
+BLANK_FILE_MAP = {
+    'MPS':     'MACH-ProSys-88/MACH-ProSys-88.panx',
+    'MPWS':    'MACH-ProWebSys-88/MACH-ProWebSys-88.panx',
+    'MPV-LCD': 'MACH-ProView LCD/MACH-ProView LCD.panx',
+    'MP2':     'MACH-Pro2-88/MACH-Pro2-88.panx',
+    'MP1':     'MACH-Pro1-88/MACH-Pro1-88.panx',
+    'MPC':     'MACH-ProCom-88/MACH-ProCom-88.panx',
+    'MPWC':    'MACH-ProWebCom-88/MACH-ProWebCom-88.panx',
+    'MPA-36':  'MACH-ProAir-28/MACH-ProAir-28.panx',    # 3in/6out = ProAir-28
+    'MPA-35':  'MACH-ProAir-18/MACH-ProAir-18.panx',    # 3in/5out = ProAir-18
+    'MPA-34':  'MACH-ProAir-18/MACH-ProAir-18.panx',    # 3in/4out = ProAir-18
+    'MPA-33':  'MACH-ProAir-08/MACH-ProAir-08.panx',    # 3in/3out = ProAir-08
+    'MPZ-88':  'MACH-ProZone-88/MACH-ProZone-88.panx',
+    'MPZ-44':  'MACH-ProZone-44/MACH-ProZone-44.panx',
+}
+
+
+def get_blank_path(controller_model: str) -> str:
+    """Get blank .panx file path for a controller model. Falls back to MPS."""
+    relative = BLANK_FILE_MAP.get(controller_model, BLANK_FILE_MAP['MPS'])
+    path = os.path.join(BLANKS_BASE, relative)
+    if not os.path.exists(path):
+        print(f"WARNING: blank not found for {controller_model} at {path}, falling back to MPS")
+        path = DEFAULT_BLANK
+    return path
 
 RANGE_CODES = {
     'Off/On': 0, 'Normal/Alarm': 4, 'Clean/Dirty': 21, 'Close/Open': 1,
@@ -63,19 +91,23 @@ def _rng(range_str):
     return RANGE_CODES.get(_s(range_str), 0)
 
 
-def compile_package(pkg_path: str, blank_path: str = DEFAULT_BLANK,
-                    verbose: bool = False) -> bytes:
+def compile_package(pkg_path: str, controller_model: str = 'MPS',
+                    blank_path: str = None, verbose: bool = False) -> bytes:
     """
     Compile a Composition Engine v2 package into a .pan binary.
 
     Args:
         pkg_path: Path to package directory or zip file
-        blank_path: Path to controller blank .panx file
+        controller_model: Controller model ID (e.g., 'MPS', 'MP2', 'MPA-36')
+        blank_path: Override blank file path (if None, auto-selects from controller_model)
         verbose: Print progress to stdout
 
     Returns:
         bytes: Complete .pan file content
     """
+    if blank_path is None:
+        blank_path = get_blank_path(controller_model)
+
     def log(msg):
         if verbose:
             print(msg)

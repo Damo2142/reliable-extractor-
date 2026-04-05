@@ -274,7 +274,8 @@ async def api_hwp_generate(req: HWPAssembleRequest):
                 f.write(prg.code or f"10 REM {prg.name}\n")
         try:
             from compile_from_excel import compile_package
-            pan_data = compile_package(tmp, verbose=False)
+            model = req.controller_model or "MPS"
+            pan_data = compile_package(tmp, controller_model=model, verbose=False)
         except Exception as e:
             import traceback; traceback.print_exc()
     finally:
@@ -422,7 +423,8 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
                 f.write(prg.code or f"10 REM {prg.name}\n")
         try:
             from compile_from_excel import compile_package
-            pan_data = compile_package(tmp, verbose=False)
+            model = req.controller_model or "MPS"
+            pan_data = compile_package(tmp, controller_model=model, verbose=False)
         except Exception as e:
             import traceback; traceback.print_exc()
     finally:
@@ -486,7 +488,8 @@ async def api_hwp_generate_pan(req: HWPAssembleRequest):
             with open(os.path.join(tmp_prg, prg.filename), "w") as f:
                 f.write(prg.code or f"10 REM {prg.name}\n")
         from compile_from_excel import compile_package
-        pan_data = compile_package(tmp, verbose=False)
+        model = req.controller_model or "MPS"
+        pan_data = compile_package(tmp, controller_model=model, verbose=False)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     buf = io.BytesIO(pan_data)
@@ -529,7 +532,8 @@ async def api_chwp_generate_pan(req: CHWPAssembleRequest):
             with open(os.path.join(tmp_prg, prg.filename), "w") as f:
                 f.write(prg.code or f"10 REM {prg.name}\n")
         from compile_from_excel import compile_package
-        pan_data = compile_package(tmp, verbose=False)
+        model = req.controller_model or "MPS"
+        pan_data = compile_package(tmp, controller_model=model, verbose=False)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     buf = io.BytesIO(pan_data)
@@ -841,8 +845,9 @@ def _compile_pan_from_config(config):
             if prg.code:
                 with open(os.path.join(prg_dir, prg.filename), "w") as f:
                     f.write(prg.code)
-        # Compile
-        pan_data = compile_package(tmp, verbose=False)
+        # Compile with correct blank for selected controller
+        model = config.controller_model or "MPS"
+        pan_data = compile_package(tmp, controller_model=model, verbose=False)
         return pan_data
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1563,7 +1568,8 @@ async def api_generate_from_config(req: GenerateFromConfigRequest):
                     f.write(prg.code or f"10 REM {prg.name}\n")
             try:
                 from compile_from_excel import compile_package
-                pan_data = compile_package(tmp, verbose=False)
+                model = req.controller_model or "MPS"
+                pan_data = compile_package(tmp, controller_model=model, verbose=False)
             except Exception:
                 import traceback; traceback.print_exc()
         finally:
