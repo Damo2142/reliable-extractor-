@@ -217,8 +217,7 @@ def compile_package(pkg_path: str, blank_path: str = DEFAULT_BLANK,
     # LOOPS — with input/setpoint/output refs
     loops = []
     for r in rows("Loops"):
-        if not _s(r[1]):  # filler
-            loops.append(write_empty_block(12, _pi(r[0])))
+        if not _s(r[1]):  # skip unused loop instances — no empty blocks
             continue
         inst = _pi(r[0]); nm = "{device-name}-" + _s(r[1])
         inp_name = _s(r[2]); sp_name = _s(r[3])

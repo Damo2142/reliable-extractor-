@@ -548,10 +548,9 @@ def write_loop_block(instance: int, name: str, action: int,
     sp_type/sp_inst: BACnet type+instance of setpoint point (default=null).
     """
     sp_objid = (sp_type << 22) | (sp_inst & 0x3FFFFF)
-    if desc:
-        desc_rec = _rec_desc(desc)
-    else:
-        desc_rec = _rec_enum(0x0000, 0x1C, 0x00)
+    # LOOP description: always enum=0 (tag 0x71), never string (tag 0x75)
+    # Confirmed from 75 reference library blocks — all use enum=0
+    desc_rec = _rec_enum(0x0000, 0x1C, 0x00)
     return _build_block(12, instance, _seed_payload([
         _rec_uint8(0x0000, 0x02, 0x91, action),             # action
         _rec_float(0x0000, 0x0E, derivative),                # derivative
@@ -584,7 +583,7 @@ def write_loop_block(instance: int, name: str, action: int,
         _rec_bool_true(0x0001, 0x61),
         _rec_bool_false(0x0001, 0x62),
         _rec_uint8(0x0001, 0x64, 0x21, 0x00),
-        _rec_float(0x0004, 0x4D, p_band),                   # vendor p-band
+        _rec_float(0x0004, 0x4D, 0.0),                      # vendor p-band (always 0.0 per reference)
     ]))
 
 
