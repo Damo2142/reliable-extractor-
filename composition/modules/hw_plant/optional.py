@@ -35,8 +35,8 @@ def build_mixing_valve():
                     description="HW Mixing Valve PID Control"),
         ],
         programs=[
-            ProgramDef(30, "HW-MIXING-VLV-PRG", "HW-PRG26-MIXING-VLV.bas", "", True,
-                       "Mixing valve modulation", "hw-mixing-valve", exec_order=30),
+            ProgramDef(26, "HW-MIXING-VLV-PRG", "HW-PRG26-MIXING-VLV.bas", "", True,
+                       "Mixing valve modulation", "hw-mixing-valve", exec_order=26),
         ],
         soo_paragraph="""A 3-way mixing valve shall modulate to maintain the hot water
 header temperature setpoint. The valve PID loop shall control the blend of
