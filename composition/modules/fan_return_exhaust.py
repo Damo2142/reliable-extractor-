@@ -43,7 +43,7 @@ def build_rf_vfd():
 
         tables=[
             TableDef(4, "BLDG-P-TBL", "Volts", "WC",
-                     [[0.0, -0.25], [5.0, 0.0], [10.0, 0.25]],
+                     [[-1.0, -0.25], [0.0, -0.25], [5.0, 0.0], [10.0, 0.25], [11.0, 0.25]],
                      "Building pressure sensor scaling"),
         ],
 
@@ -138,7 +138,7 @@ def build_ef_vfd():
 
         tables=[
             TableDef(5, "EA-VEL-TBL", "Volts", "CFM",
-                     [[0.0, 0.0], [5.0, 1634.0], [10.0, 3269.0]],
+                     [[-1.0, 0.0], [0.0, 0.0], [5.0, 1634.0], [10.0, 3269.0], [11.0, 3269.0]],
                      "Exhaust airflow sensor scaling"),
         ],
 
@@ -229,7 +229,7 @@ def build_rlf_vfd():
 
         tables=[
             TableDef(4, "BLDG-P-TBL", "Volts", "WC",
-                     [[0.0, -0.25], [5.0, 0.0], [10.0, 0.25]],
+                     [[-1.0, -0.25], [0.0, -0.25], [5.0, 0.0], [10.0, 0.25], [11.0, 0.25]],
                      "Building pressure sensor scaling"),
         ],
 

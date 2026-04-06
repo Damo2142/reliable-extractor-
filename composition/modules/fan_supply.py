@@ -1,5 +1,5 @@
 """
-Supply Fan Modules — VFD, Constant Speed, ECM, 2-Speed
+Supply Fan Modules — VFD, Constant Speed, 2-Speed
 
 Based on A201: PRG33 (SF-PRG)
 """
@@ -74,42 +74,8 @@ if commanded on with no status after 30 seconds. The fan shall be stopped
 immediately upon any safety shutdown condition.""",
 
         requires=["core"],
-        conflicts=["fan-sf-vfd", "fan-sf-ecm", "fan-sf-2spd"],
+        conflicts=["fan-sf-vfd", "fan-sf-2spd"],
         mutually_exclusive_group="supply-fan",
     )
 
 
-def build_sf_ecm():
-    """Supply fan with ECM motor — speed output, no separate start/stop"""
-    return Module(
-        id="fan-sf-ecm",
-        name="Supply Fan ECM",
-        category="fan",
-        description="Supply fan with ECM motor — analog speed output (0% = off)",
-
-        outputs=[
-            OutputPoint(10, "SF-VFD-SPD", "AO", "0.0 ->100%", "Supply Fan ECM Speed", 0.0, 10.0),
-        ],
-
-        values=[
-            ValuePoint(137, "SF-MIN-SPEED",  "AV", 30.0,  "SF Minimum Speed", "%"),
-            ValuePoint(138, "SF-MAX-SPEED",  "AV", 100.0, "SF Maximum Speed", "%"),
-            ValuePoint(139, "SF-SPEED-RAMP", "AV", 1.0,   "SF Speed Ramp Time", "Min."),
-            ValuePoint(140, "SF-FAIL",       "BV", False,  "SF Failure Alarm"),
-        ],
-
-        programs=[
-            ProgramDef(33, "SF-PRG", "PRG33-SF-ECM.bas", "", True,
-                       "Supply fan ECM control — speed = 0 is off",
-                       exec_order=33),
-        ],
-
-        soo_paragraph="""The supply fan shall be equipped with an electronically commutated motor (ECM).
-Fan speed shall modulate from 0-100% to maintain duct static pressure setpoint.
-A speed output of 0% shall stop the fan. Speed shall ramp between setpoints
-at a configurable rate.""",
-
-        requires=["core"],
-        conflicts=["fan-sf-vfd", "fan-sf-cs", "fan-sf-2spd"],
-        mutually_exclusive_group="supply-fan",
-    )

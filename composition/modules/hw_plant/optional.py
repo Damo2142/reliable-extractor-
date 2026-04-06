@@ -292,7 +292,7 @@ def build_makeup_water():
         ],
         tables=[
             TableDef(2, "MAKEUP-WTR-TBL", "Volts", "GPM",
-                [[0.0, 0.0], [5.0, 50.0], [10.0, 100.0]],
+                [[-1.0, 0.0], [0.0, 0.0], [5.0, 50.0], [10.0, 100.0], [11.0, 100.0]],
                 "Makeup water flow sensor scaling"),
         ],
         programs=[

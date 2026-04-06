@@ -9,7 +9,7 @@ Per-pump runtime tracking AVs stored in core CONFIG-PRG.
 """
 
 from composition.models import (
-    Module, InputPoint, OutputPoint, ValuePoint, LoopDef,
+    Module, InputPoint, OutputPoint, ValuePoint, LoopDef, TableDef,
     ProgramDef, ScheduleDef, SystemGroupDef
 )
 
@@ -144,11 +144,11 @@ def build_pump_vfd(num_pumps=2):
             _PUMP_SPD_BASE + n - 1, f"HWP{n}-SPEED", "AO", "0.0 ->100%",
             f"HW Pump {n} VFD Speed", 2.0, 10.0))
 
-    # DP sensors
-    inputs.append(InputPoint(_DP_INPUT_1, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
-        "HW Differential Pressure 1", "PSI"))
-    inputs.append(InputPoint(_DP_INPUT_2, "HW-PRESS2", "AI", "0 ->100% (0-5V)",
-        "HW Differential Pressure 2", "PSI"))
+    # DP sensors — scaled via Table3
+    inputs.append(InputPoint(_DP_INPUT_1, "HW-PRESS1", "AI", "Table3",
+        "HW Differential Pressure 1", "WC", "HW-DP-TBL"))
+    inputs.append(InputPoint(_DP_INPUT_2, "HW-PRESS2", "AI", "Table3",
+        "HW Differential Pressure 2", "WC", "HW-DP-TBL"))
 
     values.extend(_common_pump_values(num_pumps))
 
@@ -156,8 +156,8 @@ def build_pump_vfd(num_pumps=2):
     values.extend([
         ValuePoint(101, "HWP-MIN-SPEED",   "AV", 30.0,  "Pump Minimum Speed",    "%"),
         ValuePoint(102, "HWP-MAX-SPEED",   "AV", 100.0, "Pump Maximum Speed",    "%"),
-        ValuePoint(103, "AVG-DP",          "AV", 0.0,   "Average Differential Pressure", "PSI"),
-        ValuePoint(104, "HWS-DP-SP",       "AV", 12.0,  "DP Setpoint",           "PSI"),
+        ValuePoint(103, "AVG-DP",          "AV", 0.0,   "Average Differential Pressure", "WC"),
+        ValuePoint(104, "HWS-DP-SP",       "AV", 12.0,  "DP Setpoint",           "WC"),
     ])
 
     if num_pumps > 1:
@@ -203,13 +203,19 @@ def build_pump_vfd(num_pumps=2):
             [f"Pump {n}" for n in range(1, num_pumps + 1)], 10,
             "Pump lead rotation schedule"))
 
+    tables = [
+        TableDef(3, "HW-DP-TBL", "Volts", "WC",
+                 [[-1.0, 0.0], [0.0, 0.0], [5.0, 12.5], [10.0, 25.0], [11.0, 25.0]],
+                 "HW differential pressure sensor scaling"),
+    ]
+
     return Module(
         id="hw-pump-vfd",
         name=f"VFD Pumps ({num_pumps})",
         category="hw-pump",
         description=f"{num_pumps} VFD HW pump(s) with DP control",
         inputs=inputs, outputs=outputs, values=values,
-        loops=loops, programs=programs, schedules=schedules,
+        loops=loops, tables=tables, programs=programs, schedules=schedules,
         system_groups=[
             SystemGroupDef("{device-name}-PUMP-CTRL", "Pump speed, DP, lead/lag, failures"),
         ],
@@ -277,18 +283,18 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
         values.append(ValuePoint(113 + (n-1)*3, f"SHWP{n}-RUNTIME", "AV", 0.0,
             f"Secondary Pump {n} Runtime", "Hrs"))
 
-    # DP sensor (IN27, after pri-sec loop temps)
-    inputs.append(InputPoint(27, "HW-PRESS1", "AI", "0 ->100% (0-5V)",
-        "HW Differential Pressure", "PSI"))
+    # DP sensor (IN27, after pri-sec loop temps) — scaled via Table3
+    inputs.append(InputPoint(27, "HW-PRESS1", "AI", "Table3",
+        "HW Differential Pressure", "WC", "HW-DP-TBL"))
 
     # System values (121+)
     values.extend([
-        ValuePoint(121, "HWS-DP-SP",       "AV", 12.0,  "Secondary DP Setpoint",  "PSI"),
+        ValuePoint(121, "HWS-DP-SP",       "AV", 12.0,  "Secondary DP Setpoint",  "WC"),
         ValuePoint(122, "HWP-MIN-SPEED",   "AV", 30.0,  "Secondary Min Speed",    "%"),
         ValuePoint(123, "HWP-MAX-SPEED",   "AV", 100.0, "Secondary Max Speed",    "%"),
         ValuePoint(124, "PRI-DELTA-T",     "AV", 0.0,   "Primary Loop Delta T",   "°F"),
         ValuePoint(125, "SEC-DELTA-T",     "AV", 0.0,   "Secondary Loop Delta T", "°F"),
-        ValuePoint(126, "AVG-DP",          "AV", 0.0,   "Average Differential Pressure", "PSI"),
+        ValuePoint(126, "AVG-DP",          "AV", 0.0,   "Average Differential Pressure", "WC"),
         # ANY-HWP-ON is defined in hw-core (BV80) — not duplicated here
     ])
 
@@ -335,13 +341,19 @@ def build_pump_pri_sec(num_primary=2, num_secondary=2):
             [f"Pump {n}" for n in range(1, num_secondary + 1)], 10,
             "Secondary pump lead rotation schedule"))
 
+    tables = [
+        TableDef(3, "HW-DP-TBL", "Volts", "WC",
+                 [[-1.0, 0.0], [0.0, 0.0], [5.0, 12.5], [10.0, 25.0], [11.0, 25.0]],
+                 "HW differential pressure sensor scaling"),
+    ]
+
     return Module(
         id="hw-pump-pri-sec",
         name=f"Primary/Secondary Pumps ({num_primary}P+{num_secondary}S)",
         category="hw-pump",
         description=f"{num_primary} primary + {num_secondary} secondary VFD pumps with DP",
         inputs=inputs, outputs=outputs, values=values,
-        loops=loops, programs=programs, schedules=schedules,
+        loops=loops, tables=tables, programs=programs, schedules=schedules,
         system_groups=[
             SystemGroupDef("{device-name}-PUMP-CTRL", "Primary/secondary pumps, DP, speed"),
         ],

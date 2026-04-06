@@ -5,7 +5,7 @@ Central registry of all available modules. Builds and caches module instances.
 """
 
 from composition.modules import (
-    core, fan_supply, fan_return_exhaust, heating, cooling,
+    core, dsp_ctrl, sz_vav_fan_ctrl, fan_supply, fan_return_exhaust, heating, cooling,
     economizer, erw, ventilation, optimum_start, safety, preheat, humidity, pump,
     dual_duct
 )
@@ -43,11 +43,12 @@ def _register(module_id, builder_fn):
 
 # Core
 _register("core", core.build)
+_register("dsp-ctrl", dsp_ctrl.build)
+_register("sz-vav-fan-ctrl", sz_vav_fan_ctrl.build)
 
 # Supply fan
 _register("fan-sf-vfd", fan_supply.build_sf_vfd)
 _register("fan-sf-cs", fan_supply.build_sf_cs)
-_register("fan-sf-ecm", fan_supply.build_sf_ecm)
 
 # Return / exhaust / relief fan
 _register("fan-rf-vfd", fan_return_exhaust.build_rf_vfd)
@@ -171,15 +172,17 @@ def list_by_category():
 
 
 _AHU_CORES = ['core', 'safe-freeze', 'safe-smoke', 'safe-filter']
+_VAV_AHU_CORES = _AHU_CORES + ['dsp-ctrl']
+_SZ_VAV_CORES = _AHU_CORES + ['sz-vav-fan-ctrl']
 
 FAMILY_CORES = {
-    'AHU-VAV':          _AHU_CORES,
-    'VAV-AHU':          _AHU_CORES,
+    'AHU-VAV':          _VAV_AHU_CORES,
+    'VAV-AHU':          _VAV_AHU_CORES,
     'CV-AHU':           _AHU_CORES,
     'RTU':              _AHU_CORES,
     'DOAS':             _AHU_CORES,
     'SZ-CV':            _AHU_CORES,
-    'SZ-VAV':           _AHU_CORES,
+    'SZ-VAV':           _SZ_VAV_CORES,
     'DD-AHU':           _AHU_CORES,
     'MZ-AHU':           _AHU_CORES,
     'HW-PLANT':         ['hw-core'],
@@ -226,7 +229,7 @@ EQUIPMENT_FAMILIES = {
         "name": "VAV Air Handling Unit",
         "description": "Variable air volume AHU — VFD supply fan, duct static pressure control, serves VAV terminal units",
         "prefix": "SBS-AHU",
-        "required_modules": ["core", "fan-sf-vfd", "opt-start"],
+        "required_modules": ["core", "fan-sf-vfd", "dsp-ctrl", "opt-start"],
         "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
                                  "ventilation", "humidity", "fan", "safety", "pump"],
         "notes": "Supply fan always VFD. Return/exhaust/relief fan optional.",
@@ -253,7 +256,7 @@ EQUIPMENT_FAMILIES = {
         "description": "100% outside air unit — no return air, typically with energy recovery",
         "prefix": "SBS-DOAS",
         "required_modules": ["core", "fan-sf-vfd", "vent-100"],
-        "available_categories": ["cooling", "heating", "preheat", "energy-recovery", "humidity", "safety", "pump"],
+        "available_categories": ["cooling", "heating", "preheat", "energy-recovery", "humidity", "dsp", "safety", "pump"],
         "notes": "Always 100% OA. No economizer (no return air). ERW strongly recommended.",
     },
     "SZ-CV": {
@@ -280,7 +283,7 @@ EQUIPMENT_FAMILIES = {
         "prefix": "SBS-DD",
         "required_modules": ["core"],
         "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
-                                 "ventilation", "humidity", "fan", "safety", "pump"],
+                                 "ventilation", "humidity", "fan", "dsp", "safety", "pump"],
         "notes": "Two parallel decks with independent SAT control. Hot deck SAT reset from heating demand, cold deck SAT reset from cooling demand. Common in retrofit.",
     },
     "MZ-AHU": {
@@ -289,7 +292,7 @@ EQUIPMENT_FAMILIES = {
         "prefix": "SBS-MZ",
         "required_modules": ["core"],
         "available_categories": ["cooling", "heating", "preheat", "economizer", "energy-recovery",
-                                 "ventilation", "safety"],
+                                 "ventilation", "dsp", "safety"],
         "notes": "Zone dampers are outputs on the AHU controller. Limited zone count (4-12 typical). Hot/cold deck SAT control. Common in older buildings / retrofit.",
     },
     "HW-PLANT": {

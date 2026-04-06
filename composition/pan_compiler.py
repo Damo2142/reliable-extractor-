@@ -234,12 +234,13 @@ def write_av_block(instance: int, name: str, present_value: float = 0.0,
     ]))
 
 
-def write_ai_seed(instance: int, name: str, desc: str, units: int = 95) -> bytes:
-    """AI seed: desc + name + units + range=0x03."""
+def write_ai_seed(instance: int, name: str, desc: str, units: int = 95,
+                  range_code: int = 0x03) -> bytes:
+    """AI seed: desc + name + units + range."""
     return _build_block(0, instance, _seed_payload([
         _rec_desc(desc), _rec_mu(name),
         _rec_uint8(0x0000, 0x75, 0x91, units),
-        _rec_range(0x03)
+        _rec_range(range_code)
     ]))
 
 
@@ -280,12 +281,13 @@ def write_ai_block(instance: int, name: str, present_value: float = 0.0,
     ]))
 
 
-def write_ao_seed(instance: int, name: str, desc: str, units: int = 98) -> bytes:
-    """AO seed: desc + name + units + range=0x03."""
+def write_ao_seed(instance: int, name: str, desc: str, units: int = 98,
+                  range_code: int = 0x03) -> bytes:
+    """AO seed: desc + name + units + range."""
     return _build_block(1, instance, _seed_payload([
         _rec_desc(desc), _rec_mu(name),
         _rec_uint8(0x0000, 0x75, 0x91, units),
-        _rec_range(0x03)
+        _rec_range(range_code)
     ]))
 
 
@@ -419,8 +421,8 @@ def write_bo_block(instance: int, name: str, present_value: int = 0,
 
 
 def write_bv_seed(instance: int, name: str, desc: str,
-                  present_value: int = 0, range_code: int = 0x00) -> bytes:
-    """BV seed: desc + name + present-value + range. Default 0x00 = Off/On."""
+                  present_value: int = 0, range_code: int = 0x03) -> bytes:
+    """BV seed: desc + name + present-value + range. Default 0x03 per RC Studio reference."""
     return _build_block(5, instance, _seed_payload([
         _rec_desc(desc), _rec_mu(name),
         _rec_uint8(0x0000, 0x55, 0x91, present_value),
@@ -540,50 +542,32 @@ def write_loop_block(instance: int, name: str, action: int,
                      setpoint: float = 0.0, output: float = 0.0,
                      p_band: float = 2.0, integral: float = 0.0,
                      derivative: float = 0.0, bias: float = 0.0,
-                     output_units: int = 71, input_units: int = 95,
+                     output_units: int = 72, input_units: int = 95,
                      setpoint_units: int = 95, desc: str = '') -> bytes:
-    """Fully populated LOOP block — 30 properties matching A201.pan.
+    """LOOP block — 12 properties matching testr39.pan reference exactly.
     action: 0=reverse(-), 1=direct(+).
     input_type/input_inst: BACnet type+instance of input point.
     sp_type/sp_inst: BACnet type+instance of setpoint point (default=null).
+    p_band: RC Studio "Prop" column → property 0x5D.
+    integral: RC Studio "Integral" column → property 0x044D.
     """
     sp_objid = (sp_type << 22) | (sp_inst & 0x3FFFFF)
-    # LOOP description: always enum=0 (tag 0x71), never string (tag 0x75)
-    # Confirmed from 75 reference library blocks — all use enum=0
-    desc_rec = _rec_enum(0x0000, 0x1C, 0x00)
+    desc_rec = _rec_desc(desc) if desc else _rec_enum(0x0000, 0x1C, 0x00)
     return _build_block(12, instance, _seed_payload([
-        _rec_uint8(0x0000, 0x02, 0x91, action),             # action
-        _rec_float(0x0000, 0x0E, derivative),                # derivative
-        _rec_uint8(0x0000, 0x11, 0x21, 0x01),
-        _rec_objref(0x0000, 0x13, input_type, input_inst),   # controlled-var-ref (input)
-        _rec_float(0x0000, 0x16, 0.0),                      # increment
-        _rec_float(0x0000, 0x19, 0.0),                      # deadband
-        _rec_float(0x0000, 0x1A, bias),                      # bias
-        _rec_uint8(0x0000, 0x1B, 0x91, input_units),         # input-units
-        desc_rec,
-        _rec_float(0x0000, 0x22, 1000.0),                   # max-output
-        _rec_complex(0x0000, 0x23, bytes([0x05, 0x00])),
-        _rec_float(0x0000, 0x31, output),                    # output
-        _rec_uint8(0x0000, 0x32, 0x91, output_units),        # output-units
-        _rec_objref(0x0000, 0x3C, out_type, out_inst),        # manipulated-var-ref (output)
-        _rec_uint8(0x0000, 0x48, 0x91, 0x00),
-        _rec_mu(name),
-        _rec_bool_false(0x0000, 0x51),
-        _rec_uint8(0x0000, 0x52, 0x91, 98),                 # output-units-display (%)
-        _rec_float(0x0000, 0x55, output),                    # present-value = output
-        _rec_uint8(0x0000, 0x58, 0x21, 10),                  # update-interval
-        _rec_float(0x0000, 0x5D, p_band),                     # RC Studio "Prop" column
-        _rec_uint8(0x0000, 0x5E, 0x91, setpoint_units),     # setpoint-units
-        _rec_float(0x0000, 0x6C, integral),                  # integral
-        _rec(0x0000, 0x6D, 0x0E,                             # setpoint-ref
+        _rec_uint8(0x0000, 0x02, 0x91, action),             # 1  action
+        _rec_float(0x0000, 0x0E, derivative),                # 2  derivative
+        _rec_objref(0x0000, 0x13, input_type, input_inst),   # 3  controlled-var-ref
+        desc_rec,                                             # 4  description (string 0x75 or enum 0x71)
+        _rec_float(0x0000, 0x1A, bias),                      # 5  bias
+        _rec_float(0x0000, 0x31, output),                    # 6  output
+        _rec_uint8(0x0000, 0x32, 0x91, output_units),        # 7  output-units
+        _rec_objref(0x0000, 0x3C, out_type, out_inst),        # 8  manipulated-var-ref
+        _rec_mu(name),                                        # 9  object-name
+        _rec_float(0x0000, 0x5D, p_band),                    # 10 prop-band (RC Studio "Prop")
+        _rec(0x0000, 0x6D, 0x0E,                             # 11 setpoint-ref
              bytes([0x0C]) + struct.pack('>I', sp_objid) +
              bytes([0x19, 0x55, 0x0F])),
-        _rec_uint8(0x0000, 0x71, 0x21, 0x00),
-        _rec(0x0001, 0x60, 0x71, bytes([0x00, 0x71, 0x00, 0x71, 0x00])),
-        _rec_bool_true(0x0001, 0x61),
-        _rec_bool_false(0x0001, 0x62),
-        _rec_uint8(0x0001, 0x64, 0x21, 0x00),
-        _rec_float(0x0004, 0x4D, 0.0),                      # vendor p-band (always 0.0 per reference)
+        _rec_float(0x0004, 0x4D, integral),                  # 12 integral (RC Studio "Integral")
     ]))
 
 

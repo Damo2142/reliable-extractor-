@@ -14,3 +14,6 @@ IF MAX( {device-name}-NSF-MODE , {device-name}-OSC-MODE , {device-name}-HTG-LOCK
 
 REM ***** Force heating in NSB, OSH, or freeze protection *****
 IF MAX( {device-name}-NSB-MODE , {device-name}-OSH-MODE , {device-name}-FRZ-PRTC-MODE ) THEN {device-name}-HVAC-MODE = 4 ELSE {device-name}-HVAC-MODE = 2
+
+REM ***** Set warm-up mode flag for VAV network *****
+IF {device-name}-OSH-MODE THEN START {device-name}-WU-MODE ELSE STOP {device-name}-WU-MODE

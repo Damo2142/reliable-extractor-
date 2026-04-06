@@ -135,19 +135,19 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
         values.append(ValuePoint(base + 3, f"SCHWP{n}-S", "BV", False,
             f"Secondary Pump {n} Status (from .bas)"))
 
-    # DP sensors
+    # DP sensors — scaled via Table3
     inputs.append(InputPoint(
-        _DP_SENSOR_BASE, "CHW-PRESS1", "AI", "0 ->100% (0-5V)",
-        "CHW Differential Pressure 1", "PSI"))
+        _DP_SENSOR_BASE, "CHW-PRESS1", "AI", "Table3",
+        "CHW Differential Pressure 1", "WC", "CHW-DP-TBL"))
     if num_dp_sensors >= 2:
         inputs.append(InputPoint(
-            _DP_SENSOR_BASE + 1, "CHW-PRESS2", "AI", "0 ->100% (0-5V)",
-            "CHW Differential Pressure 2", "PSI"))
+            _DP_SENSOR_BASE + 1, "CHW-PRESS2", "AI", "Table3",
+            "CHW Differential Pressure 2", "WC", "CHW-DP-TBL"))
 
     # System values starting at 185
     values.append(ValuePoint(185, "ANY-SCHWP-ON", "BV", False, "Any Secondary Pump Running"))
-    values.append(ValuePoint(186, "AVG-DP", "AV", 0.0, "Average Differential Pressure", "PSI"))
-    values.append(ValuePoint(187, "CHWS-DP-SP", "AV", 12.0, "CHW DP Setpoint", "PSI"))
+    values.append(ValuePoint(186, "AVG-DP", "AV", 0.0, "Average Differential Pressure", "WC"))
+    values.append(ValuePoint(187, "CHWS-DP-SP", "AV", 12.0, "CHW DP Setpoint", "WC"))
     values.append(ValuePoint(188, "SCHWP-MIN-SPEED", "AV", 30.0, "Secondary Pump Min Speed", "%"))
     values.append(ValuePoint(189, "SCHWP-MAX-SPEED", "AV", 100.0, "Secondary Pump Max Speed", "%"))
     values.append(ValuePoint(192, "SCHWP-STOP-DELAY", "AV", 30.0,
@@ -157,9 +157,9 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
 
     if num_pumps > 1:
         values.append(ValuePoint(190, "SCHWP-LAG-START-SP", "AV", 8.0,
-            "Lag Pump Start DP Threshold", "PSI"))
+            "Lag Pump Start DP Threshold", "WC"))
         values.append(ValuePoint(191, "SCHWP-LAG-STOP-SP", "AV", 14.0,
-            "Lag Pump Stop DP Threshold", "PSI"))
+            "Lag Pump Stop DP Threshold", "WC"))
         values.append(ValuePoint(194, "SCHWP-ROTATION-HOLD", "AV", 168.0,
             "Min Hours Before Secondary Pump Rotation", "Hrs"))
         values.append(ValuePoint(195, "SCHWP-LAG-START-DLY", "AV", 5.0,
@@ -213,7 +213,12 @@ def build_pump_sec(num_pumps=2, num_dp_sensors=2):
         requires=["chw-core"],
         mutually_exclusive_group="chw-pump-sec",
         inputs=inputs, outputs=outputs, values=values,
-        loops=loops, tables=[], programs=programs, schedules=schedules,
+        loops=loops, programs=programs, schedules=schedules,
+        tables=[
+            TableDef(3, "CHW-DP-TBL", "Volts", "WC",
+                     [[-1.0, 0.0], [0.0, 0.0], [5.0, 12.5], [10.0, 25.0], [11.0, 25.0]],
+                     "CHW differential pressure sensor scaling"),
+        ],
         system_groups=[
             SystemGroupDef("{device-name}-SECONDARY-PUMP-CTRL",
                 "Secondary pump speed, DP, lead/lag, lag staging"),

@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from openpyxl import load_workbook
 from composition.pan_compiler import (
     crc16_kermit,
-    write_av_seed, write_av_block, write_ai_seed, write_ao_seed,
+    write_av_seed, write_av_block, write_ai_seed, write_ao_seed, write_ao_block,
     write_bi_seed, write_bo_seed, write_bv_seed,
     write_mv_seed, write_loop_block, write_prg_seed,
     write_sched_seed, write_sys_group_seed, write_table_block,
@@ -60,9 +60,10 @@ def get_blank_path(controller_model: str) -> str:
     return path
 
 RANGE_CODES = {
-    'Off/On': 0, 'Normal/Alarm': 4, 'Clean/Dirty': 21, 'Close/Open': 1,
-    'Stop/Start': 2, '0.0 ->100%': 3, '10K -40 ->250': 3,
-    '0 ->100% (0-5V)': 22,
+    'Off/On': 0, 'Close/Open': 1, 'Stop/Start': 2,
+    '0.0 ->100%': 3, '10K -40 ->250': 3,
+    'Normal/Alarm': 4, 'WC': 7, 'CFM': 15, 'min': 17,
+    'Clean/Dirty': 21, '0 ->100% (0-5V)': 22, 'ppm': 43, 'BTU/lb': 58,
 }
 
 UNIT_CODES = {
@@ -184,8 +185,9 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
             continue
         desc = _s(r[6] if len(r) > 6 else '')
         u = _uc(r[4] if len(r) > 4 else None)
+        rc = _rng(r[5] if len(r) > 5 else '')
         if typ == 'AI':
-            ai.append(write_ai_seed(inst, nm, desc, units=u))
+            ai.append(write_ai_seed(inst, nm, desc, units=u, range_code=rc))
         elif typ == 'BI':
             bi.append(write_bi_seed(inst, nm, desc))
     if ai: blocks[0] = ai; log(f"  AI: {len(ai)}")
@@ -200,8 +202,12 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
             continue
         desc = _s(r[8] if len(r) > 8 else '')
         u = _uc(r[4] if len(r) > 4 else None)
+        rc = _rng(r[5] if len(r) > 5 else '')
         if typ == 'AO':
-            ao.append(write_ao_seed(inst, nm, desc, units=u))
+            min_v = float(r[6] or 2.0) if len(r) > 6 and r[6] is not None else 2.0
+            max_v = float(r[7] or 10.0) if len(r) > 7 and r[7] is not None else 10.0
+            ao.append(write_ao_block(inst, nm, units=u, range_code=rc,
+                                     min_v=min_v, max_v=max_v, desc=desc))
         elif typ == 'BO':
             bo.append(write_bo_seed(inst, nm, desc))
     if ao: blocks[1] = ao; log(f"  AO: {len(ao)}")
@@ -251,7 +257,9 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
     for r in rows("Loops"):
         if not _s(r[1]):  # skip unused loop instances — no empty blocks
             continue
-        inst = _pi(r[0]); nm = "{device-name}-" + _s(r[1])
+        inst = _pi(r[0])
+        raw_name = _s(r[1])
+        nm = raw_name if raw_name.startswith("{device-name}-") else "{device-name}-" + raw_name
         inp_name = _s(r[2]); sp_name = _s(r[3])
         out_name = _s(r[4]) if len(r) > 4 else ''
         action = _s(r[5]) if len(r) > 5 else '+'
@@ -309,7 +317,9 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
     tbls = []
     for r in rows("Tables"):
         if not _s(r[1]): continue  # skip blank rows
-        inst = _pi(r[0]); nm = "{device-name}-" + _s(r[1]) + str(inst)
+        inst = _pi(r[0])
+        raw_tname = _s(r[1])
+        nm = (raw_tname if raw_tname.startswith("{device-name}-") else "{device-name}-" + raw_tname) + str(inst)
         u = _uc(r[3] if len(r) > 3 else None)
         xy = []
         p = 0

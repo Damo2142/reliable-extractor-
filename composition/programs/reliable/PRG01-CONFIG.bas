@@ -44,3 +44,10 @@ REM ***** Determine first occupancy for local schedule *****
 
 REM ***** Report AHU OK status to parent *****
 {parent}BV10 = {device-name}-AHU-OK
+
+REM ***** Publish SAT for VAV network *****
+{device-name}-SAT-PUB = {device-name}-SAT
+
+REM **** BV151 — Link to HW plant OK status at commissioning
+REM **** BV152 — Link to CHW plant OK status at commissioning
+REM **** AV155 — Link to HW plant supply temp at commissioning

@@ -51,6 +51,11 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     for cid in allowed_cores:
         all_ids.add(cid)
 
+    # Auto-add dsp-ctrl when fan-sf-vfd is selected on families that need DSP
+    _DSP_WITH_VFD_FAMILIES = {'DOAS', 'DD-AHU', 'MZ-AHU'}
+    if 'fan-sf-vfd' in all_ids and equipment_family in _DSP_WITH_VFD_FAMILIES:
+        all_ids.add('dsp-ctrl')
+
     # Iteratively resolve dependencies
     resolved = set()
     to_resolve = list(all_ids)
@@ -428,7 +433,7 @@ def _assemble_soo(modules: dict, module_ids: set) -> str:
     # Define section order
     section_order = [
         ("GENERAL", ["core"]),
-        ("SUPPLY FAN", ["fan-sf-vfd", "fan-sf-cs", "fan-sf-ecm", "fan-sf-2spd"]),
+        ("SUPPLY FAN", ["fan-sf-vfd", "fan-sf-cs", "fan-sf-2spd"]),
         ("RETURN/EXHAUST FAN", ["fan-rf-vfd", "fan-rf-cs", "fan-ef-vfd", "fan-ef-cs",
                                  "fan-rlf-vfd", "fan-rlf-cs"]),
         ("ECONOMIZER", ["econ-db", "econ-enth", "econ-diff", "econ-diff-db"]),

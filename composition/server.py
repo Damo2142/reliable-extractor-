@@ -49,11 +49,13 @@ app.add_middleware(
 class AssembleRequest(BaseModel):
     modules: List[str]
     controller_model: str = "auto"
+    equipment_family: str = "VAV-AHU"
 
 
 class GenerateRequest(BaseModel):
     modules: List[str]
     controller_model: str = "auto"
+    equipment_family: str = "VAV-AHU"
 
 
 # --- API Endpoints ---
@@ -110,7 +112,8 @@ async def api_list_controllers():
 @app.post("/api/assemble")
 async def api_assemble(req: AssembleRequest):
     try:
-        config = assemble(req.modules, controller_model=req.controller_model)
+        config = assemble(req.modules, controller_model=req.controller_model,
+                          equipment_family=req.equipment_family)
         inject_program_code(config)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -146,6 +149,10 @@ async def api_assemble(req: AssembleRequest):
         "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in config.values],
         "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in config.loops],
         "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50), "code": p.code or ""} for p in sorted(config.programs, key=lambda x: x.exec_order)],
+        "tables": [{"instance": t.instance, "name": t.name, "in_units": t.input_units, "out_units": t.output_units, "points": len(t.data_points), "desc": t.description} for t in config.tables],
+        "trends": [{"instance": t.instance, "name": t.name, "monitored": t.monitored_point, "type": t.trend_type, "interval": t.interval, "cov_delta": t.cov_delta, "buffer": t.buffer_size} for t in config.trends],
+        "schedules": [{"instance": s.instance, "name": s.name, "default": s.default_state, "states": "/".join(s.states), "priority": s.priority, "desc": s.description} for s in config.schedules],
+        "system_groups": [{"name": g.name, "desc": g.description} for g in config.system_groups],
         "soo": config.soo_document,
         "warnings": getattr(config, 'warnings', []),
     }
@@ -221,6 +228,10 @@ async def api_hwp_assemble(req: HWPAssembleRequest):
         "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in merged['values']],
         "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in merged['loops']],
         "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50), "code": p.code or ""} for p in sorted(merged['programs'], key=lambda x: x.exec_order)],
+        "tables": [{"instance": t.instance, "name": t.name, "in_units": t.input_units, "out_units": t.output_units, "points": len(t.data_points), "desc": t.description} for t in merged.get('tables', [])],
+        "trends": [{"instance": t.instance, "name": t.name, "monitored": t.monitored_point, "type": t.trend_type, "interval": t.interval, "cov_delta": t.cov_delta, "buffer": t.buffer_size} for t in trends],
+        "schedules": [{"instance": s.instance, "name": s.name, "default": s.default_state, "states": "/".join(s.states), "priority": s.priority, "desc": s.description} for s in merged.get('schedules', [])],
+        "system_groups": [{"name": g.name, "desc": g.description} for g in merged.get('system_groups', [])],
         "soo": '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph),
         "warnings": [],
         "hwp_params": req.params,
@@ -281,9 +292,15 @@ async def api_hwp_generate(req: HWPAssembleRequest):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    merged['trends'] = trends
+    hw_config = _config_from_merged(merged, modules, family="HW-PLANT",
+                                     model=req.controller_model or "MPS")
+    report = _build_validation_report(hw_config)
+
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
+        zf.writestr("SBS-Validation-Report.md", report)
         for prg in merged['programs']:
             zf.writestr(f"programs/{prg.filename}", prg.code or f"10 REM {prg.name}\n")
 
@@ -370,6 +387,10 @@ async def api_chwp_assemble(req: CHWPAssembleRequest):
         "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description, "module": v.module} for v in merged['values']],
         "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "p": l.p_band, "i": l.integral, "action": l.action, "desc": l.description} for l in merged['loops']],
         "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "enabled": p.enabled, "desc": p.description, "has_code": bool(p.code and len(p.code) > 50), "code": p.code or ""} for p in sorted(merged['programs'], key=lambda x: x.exec_order)],
+        "tables": [{"instance": t.instance, "name": t.name, "in_units": t.input_units, "out_units": t.output_units, "points": len(t.data_points), "desc": t.description} for t in merged.get('tables', [])],
+        "trends": [{"instance": t.instance, "name": t.name, "monitored": t.monitored_point, "type": t.trend_type, "interval": t.interval, "cov_delta": t.cov_delta, "buffer": t.buffer_size} for t in trends],
+        "schedules": [{"instance": s.instance, "name": s.name, "default": s.default_state, "states": "/".join(s.states), "priority": s.priority, "desc": s.description} for s in merged.get('schedules', [])],
+        "system_groups": [{"name": g.name, "desc": g.description} for g in merged.get('system_groups', [])],
         "soo": '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph),
         "warnings": [],
         "chwp_params": req.params,
@@ -431,9 +452,15 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
         shutil.rmtree(tmp, ignore_errors=True)
 
     family = "CHW-PLANT-TOWER" if req.params.get('num_towers') else "CHW-PLANT-AIR"
+    merged['trends'] = trends
+    chw_config = _config_from_merged(merged, modules, family=family,
+                                      model=req.controller_model or "MPS")
+    report = _build_validation_report(chw_config)
+
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("RC-Studio-Output.xlsx", excel_bytes)
+        zf.writestr("SBS-Validation-Report.md", report)
         for prg in merged['programs']:
             zf.writestr(f"programs/{prg.filename}", prg.code or f"10 REM {prg.name}\n")
         if pan_data:
@@ -544,7 +571,8 @@ async def api_chwp_generate_pan(req: CHWPAssembleRequest):
 @app.post("/api/generate")
 async def api_generate(req: GenerateRequest):
     try:
-        config = assemble(req.modules, controller_model=req.controller_model)
+        config = assemble(req.modules, controller_model=req.controller_model,
+                          equipment_family=req.equipment_family)
         inject_program_code(config)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -571,6 +599,28 @@ async def api_generate(req: GenerateRequest):
     zip_buf.seek(0)
     return StreamingResponse(zip_buf, media_type="application/zip",
                              headers={"Content-Disposition": "attachment; filename=composition-package.zip"})
+
+
+def _config_from_merged(merged, modules, family="HW-PLANT", model="MPS"):
+    """Build a minimal ControllerConfig from a merged dict for validation report."""
+    from composition.models import ControllerConfig
+    config = ControllerConfig()
+    config.equipment_family = family
+    config.controller_model = model
+    config.selected_modules = [m.id for m in modules]
+    config.inputs = merged.get('inputs', [])
+    config.outputs = merged.get('outputs', [])
+    config.values = merged.get('values', [])
+    config.loops = merged.get('loops', [])
+    config.tables = merged.get('tables', [])
+    config.programs = merged.get('programs', [])
+    config.schedules = merged.get('schedules', [])
+    config.trends = merged.get('trends', [])
+    config.system_groups = merged.get('system_groups', [])
+    config.highest_input_row = max((p.row for p in config.inputs), default=0)
+    config.highest_output_row = max((p.row for p in config.outputs), default=0)
+    config.soo_document = '\n\n'.join(m.soo_paragraph for m in modules if m.soo_paragraph)
+    return config
 
 
 def _build_validation_report(config) -> str:
@@ -859,7 +909,8 @@ async def api_generate_pan(req: GenerateRequest):
     _last_config["modules"] = req.modules
     _last_config["controller_model"] = req.controller_model
     try:
-        config = assemble(req.modules, controller_model=req.controller_model)
+        config = assemble(req.modules, controller_model=req.controller_model,
+                          equipment_family=req.equipment_family)
         inject_program_code(config)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -877,7 +928,8 @@ async def api_generate_pan(req: GenerateRequest):
 async def api_generate_full(req: GenerateRequest):
     """Generate complete package: Excel + .bas + .pan + SOO."""
     try:
-        config = assemble(req.modules, controller_model=req.controller_model)
+        config = assemble(req.modules, controller_model=req.controller_model,
+                          equipment_family=req.equipment_family)
         inject_program_code(config)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -2201,7 +2253,7 @@ async function doAssemble(){
           if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
         }
       }
-      res=await fetch('api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value})});
+      res=await fetch('api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value,equipment_family:activeFamily})});
     }
     if(!res.ok){var e=await res.json();throw new Error(e.detail);}
     var r=await res.json();
@@ -2250,7 +2302,7 @@ function renderResults(r){
     '<div class="stat"><div class="v">'+c.programs+'</div><div class="l">Programs</div></div>'+
     '<div class="stat"><div class="v">'+c.trends+'</div><div class="l">Trends</div></div>';
 
-  const tabs=['Inputs','Outputs','Values','Loops','Programs','SOO'];
+  const tabs=['Inputs','Outputs','Values','Loops','Programs','Tables','Trends','Schedules','Sys Groups','SOO'];
   document.getElementById('tabBar').innerHTML=tabs.map((t,i)=>'<div class="tab'+(i===0?' act':'')+'" onclick="showTab('+i+')">'+t+'</div>').join('');
 
   let tc='';
@@ -2321,8 +2373,28 @@ function renderResults(r){
   }
   tc+='</table><div id="prgViewer" style="display:none;margin-top:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h4 id="prgViewerTitle" style="color:#60a5fa;font-size:0.9em"></h4><button class="btn btn-o" style="padding:3px 10px;font-size:0.75em" onclick="document.getElementById(\\x27prgViewer\\x27).style.display=\\x27none\\x27">Close</button></div><pre class="soo" id="prgViewerCode" style="max-height:400px"></pre></div></div>';
 
+  // Tables
+  tc+='<div class="tp" id="t5"><table><tr><th>Instance</th><th>Name</th><th>Input Units</th><th>Output Units</th><th>Data Points</th><th>Description</th></tr>';
+  (r.tables||[]).forEach(function(t){tc+='<tr><td>TBL'+t.instance+'</td><td>{device-name}-'+t.name+'</td><td>'+t.in_units+'</td><td>'+t.out_units+'</td><td>'+t.points+'</td><td>'+t.desc+'</td></tr>';});
+  tc+='</table></div>';
+
+  // Trends
+  tc+='<div class="tp" id="t6"><table><tr><th>Instance</th><th>Name</th><th>Monitored Point</th><th>Type</th><th>Interval</th><th>COV Delta</th><th>Buffer</th></tr>';
+  (r.trends||[]).forEach(function(t){tc+='<tr><td>STL'+t.instance+'</td><td>{device-name}-'+t.name+'</td><td>{device-name}-'+t.monitored+'</td><td>'+t.type+'</td><td>'+t.interval+'</td><td>'+t.cov_delta+'</td><td>'+t.buffer+'</td></tr>';});
+  tc+='</table></div>';
+
+  // Schedules
+  tc+='<div class="tp" id="t7"><table><tr><th>Instance</th><th>Name</th><th>Default State</th><th>States</th><th>Priority</th><th>Description</th></tr>';
+  (r.schedules||[]).forEach(function(s){tc+='<tr><td>SCHED'+s.instance+'</td><td>{device-name}-'+s.name+'</td><td>'+s.default+'</td><td>'+s.states+'</td><td>'+s.priority+'</td><td>'+s.desc+'</td></tr>';});
+  tc+='</table></div>';
+
+  // System Groups
+  tc+='<div class="tp" id="t8"><table><tr><th>Name</th><th>Description</th></tr>';
+  (r.system_groups||[]).forEach(function(g){tc+='<tr><td>'+g.name+'</td><td>'+g.desc+'</td></tr>';});
+  tc+='</table></div>';
+
   // SOO
-  tc+='<div class="tp" id="t5"><div class="soo">'+r.soo.replace(/</g,'&lt;')+'</div></div>';
+  tc+='<div class="tp" id="t9"><div class="soo">'+r.soo.replace(/</g,'&lt;')+'</div></div>';
 
   document.getElementById('tabContents').innerHTML=tc;
 }
@@ -2363,7 +2435,7 @@ async function doGenerate(){
           if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
         }
       }
-      res=await fetch('api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value})});
+      res=await fetch('api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value,equipment_family:activeFamily})});
     }
     if(!res.ok){document.getElementById('status').textContent='Error generating';return;}
     var blob=await res.blob();
@@ -2415,7 +2487,7 @@ async function doGeneratePan(){
   }
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
-  var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value});
+  var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value,equipment_family:activeFamily});
   document.getElementById('status').textContent='Generating .pan...';
   try{
     var res=await fetch('api/generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
@@ -2447,7 +2519,7 @@ async function doGenerateFull(){
   }
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
-  var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value});
+  var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value,equipment_family:activeFamily});
   document.getElementById('status').textContent='Generating full package...';
   try{
     var res=await fetch('api/generate-full',{method:'POST',headers:{'Content-Type':'application/json'},body:body});

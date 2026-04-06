@@ -489,17 +489,6 @@
       "reverse": false
     },
     {
-      "row": 10,
-      "name": "SF-VFD-SPD",
-      "type": "AO",
-      "range": "0.0 ->100%",
-      "description": "Supply Fan ECM Speed",
-      "module": "fan-sf-ecm",
-      "min_v": 0.0,
-      "max_v": 10.0,
-      "reverse": false
-    },
-    {
       "row": 11,
       "name": "EF",
       "type": "BO",

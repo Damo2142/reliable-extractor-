@@ -1,11 +1,13 @@
 """
 Core AHU Module — Always present in every AHU build.
 
-Provides: occupancy modes, HVAC modes, SAT/DSP setpoint reset, config program,
+Provides: occupancy modes, HVAC modes, SAT setpoint reset, config program,
           AHU-OK status, safety shutdown aggregation, schedule, base I/O.
 
+DSP control moved to dsp-ctrl module (only for multi-zone VAV AHUs).
+
 Based on A201 reference: PRG1 (CONFIG), PRG3 (OCC-MODES), PRG9 (HVAC-MODE),
-PRG12 (SAT-SP), PRG13 (DSP-SP), PRG26 (SAFETY-SD), PRG50 (AHU-OK)
+PRG12 (SAT-SP), PRG26 (SAFETY-SD), PRG50 (AHU-OK)
 """
 
 from composition.models import (
@@ -27,7 +29,6 @@ def build():
             InputPoint(5, "MAT",     "AI", "10K -40 ->250",  "Mixed Air Temperature",     "°F"),
             InputPoint(6, "SAT",     "AI", "10K -40 ->250",  "Supply Air Temperature",    "°F"),
             InputPoint(7, "RAT",     "AI", "10K -40 ->250",  "Return Air Temperature",    "°F"),
-            InputPoint(12,"SA-DSP",  "AI", "Table2",  "Duct Static Pressure",      "WC", "SA-DSP-TBL"),
         ],
 
         outputs=[
@@ -95,18 +96,6 @@ def build():
             ValuePoint(86, "CLG-DMD-DEC-SP",  "AV", 90.0,   "Cooling Demand Decrease SP",        "%"),
             ValuePoint(87, "ACT-SAT-SP",      "AV", 55.0,   "Active SAT Setpoint",               "°F"),
 
-            # DSP setpoints
-            ValuePoint(89, "INITIAL-DSP-SP",  "AV", 1.5,    "Initial DSP Setpoint",              "WC"),
-            ValuePoint(90, "DSP-SP-INCR",     "AV", 0.1,    "DSP Reset Increment",               "WC"),
-            ValuePoint(91, "DSP-RESET-INTRVL","AV", 10.0,   "DSP Reset Interval",                "Min."),
-            ValuePoint(92, "ZONE-DMP-POS",    "AV", 100.0,  "Zone Damper Position (highest)",    "%"),
-            ValuePoint(93, "ZONE-DMP-INC-SP", "AV", 95.0,   "Zone Damper Increase SP",           "%"),
-            ValuePoint(94, "ZONE-DMP-DEC-SP", "AV", 90.0,   "Zone Damper Decrease SP",           "%"),
-            ValuePoint(95, "DSP-MIN-SP",      "AV", 1.3,    "DSP Minimum Setpoint",              "WC"),
-            ValuePoint(96, "DSP-MAX-SP",      "AV", 1.8,    "DSP Maximum Setpoint",              "WC"),
-            ValuePoint(97, "ACT-DSP-SP",      "AV", 0.0,    "Active DSP Setpoint",               "WC"),
-            ValuePoint(98, "ACT-DSP",         "AV", 0.0,    "Active DSP Reading",                "WC"),
-
             # MAT / damper control
             ValuePoint(142,"MAT-SP-OFFSET",   "AV", 3.0,    "MAT SP Offset from SAT SP",         "°F"),
             ValuePoint(143,"ACT-MAT-SP",      "AV", 52.0,   "Active MAT Setpoint",               "°F"),
@@ -132,6 +121,11 @@ def build():
             # AHU status
             ValuePoint(178,"AHU-OK",          "BV", False,  "AHU Running OK Status"),
 
+            # VAV network publish points
+            ValuePoint(13, "WU-MODE",         "BV", False,  "Warm-Up Mode Active"),
+            ValuePoint(21, "SAT-PUB",         "AV", 0.0,    "Supply Air Temp Publish",           "°F"),
+            ValuePoint(155,"HWST",            "AV", 0.0,    "HW Supply Temp from Network",       "°F"),
+
             # SAT OAT reset
             ValuePoint(181,"MIN-HTG-OAT-RST", "AV", 0.0,    "Min OAT for Heating Reset",         "°F"),
             ValuePoint(182,"MAX-HTG-OAT-RST", "AV", 60.0,   "Max OAT for Heating Reset",         "°F"),
@@ -144,18 +138,10 @@ def build():
         ],
 
         loops=[
-            LoopDef(1, "ACT-DSP-LOOP", "ACT-DSP", "ACT-DSP-SP", "SF-VFD-SPD",
-                    p_band=2.0, integral=50.0, action="reverse", description="Duct Static Pressure"),
             LoopDef(2, "MAT-LL-LOOP", "MAT", "MAT-LL-SP", "OAD",
                     p_band=12.0, integral=40.0, action="direct", description="Mixed Air Low Limit"),
             LoopDef(3, "MAT-LOOP", "MAT", "ACT-MAT-SP", "OAD",
                     p_band=12.0, integral=60.0, action="direct", description="Mixed Air Temperature"),
-        ],
-
-        tables=[
-            TableDef(2, "SA-DSP-TBL", "Volts", "WC",
-                     [[0.0, 0.0], [5.0, 2.5], [10.0, 5.0]],
-                     "Duct static pressure sensor scaling"),
         ],
 
         programs=[
@@ -167,8 +153,6 @@ def build():
                        "HVAC mode determination (Vent/Cool/Reheat/Heat/Init)", exec_order=9),
             ProgramDef(12, "SAT-SP-PRG", "PRG12-SAT-SP.bas", "", True,
                         "Supply air temperature setpoint reset", exec_order=12),
-            ProgramDef(13, "DSP-SP-PRG", "PRG13-DSP-SP.bas", "", True,
-                        "Duct static pressure setpoint reset", exec_order=13),
             ProgramDef(26, "SAFETY-SD-PRG", "PRG26-SAFETY-SD.bas", "", True,
                         "Safety shutdown aggregation and reset", exec_order=26),
             ProgramDef(50, "AHU-OK-PRG", "PRG50-AHU-OK.bas", "", True,
