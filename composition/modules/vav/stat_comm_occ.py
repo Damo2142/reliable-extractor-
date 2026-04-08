@@ -18,6 +18,7 @@ IF OCC-MODE <> 4 THEN GOTO 999
 REM
 REM --- Unoccupied + Motion Detected ---
 IF SS3-OCC THEN BYPASS = 1
+IF NOT SS3-OCC THEN BYPASS = 0
 REM
 999 REM End
 """
