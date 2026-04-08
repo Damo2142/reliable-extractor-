@@ -31,6 +31,21 @@ from composition.modules.chw_plant import (
     build_makeup_water as chwp_build_makeup_water,
     build_ahu_integration as chwp_build_ahu_integration,
 )
+from composition.modules.vav import build_core as vav_build_core
+from composition.modules.vav import build_rh_hw_mod as vav_build_rh_hw_mod
+from composition.modules.vav import build_rh_hw_flt as vav_build_rh_hw_flt
+from composition.modules.vav import build_rh_elec_1 as vav_build_rh_elec_1
+from composition.modules.vav import build_rh_elec_2 as vav_build_rh_elec_2
+from composition.modules.vav import build_rh_elec_scr as vav_build_rh_elec_scr
+from composition.modules.vav import build_fan_parallel as vav_build_fan_parallel
+from composition.modules.vav import build_fan_series as vav_build_fan_series
+from composition.modules.vav import build_dd_hot_deck as vav_build_dd_hot_deck
+from composition.modules.vav import build_stat_hardwired as vav_build_stat_hardwired
+from composition.modules.vav import build_stat_hardwired_ud as vav_build_stat_hardwired_ud
+from composition.modules.vav import build_stat_comm as vav_build_stat_comm
+from composition.modules.vav import build_stat_comm_co2 as vav_build_stat_comm_co2
+from composition.modules.vav import build_stat_comm_hum as vav_build_stat_comm_hum
+from composition.modules.vav import build_stat_comm_occ as vav_build_stat_comm_occ
 
 
 # Registry: module_id -> builder function
@@ -133,6 +148,23 @@ _register("hw-core", hwp_build_core)
 # CHW Plant — static core registration (dynamic modules built via chwp_assemble)
 _register("chw-core", chwp_build_core)
 
+# VAV Terminal Units
+_register("vav-core", vav_build_core)
+_register("vav-rh-hw-mod", vav_build_rh_hw_mod)
+_register("vav-rh-hw-flt", vav_build_rh_hw_flt)
+_register("vav-rh-elec-1", vav_build_rh_elec_1)
+_register("vav-rh-elec-2", vav_build_rh_elec_2)
+_register("vav-rh-elec-scr", vav_build_rh_elec_scr)
+_register("vav-fan-parallel", vav_build_fan_parallel)
+_register("vav-fan-series", vav_build_fan_series)
+_register("vav-dd-hot-deck", vav_build_dd_hot_deck)
+_register("vav-stat-hardwired", vav_build_stat_hardwired)
+_register("vav-stat-hardwired-ud", vav_build_stat_hardwired_ud)
+_register("vav-stat-comm", vav_build_stat_comm)
+_register("vav-stat-comm-co2", vav_build_stat_comm_co2)
+_register("vav-stat-comm-hum", vav_build_stat_comm_hum)
+_register("vav-stat-comm-occ", vav_build_stat_comm_occ)
+
 
 # Cache built modules
 _CACHE = {}
@@ -188,6 +220,27 @@ FAMILY_CORES = {
     'HW-PLANT':         ['hw-core'],
     'CHW-PLANT-AIR':    ['chw-core'],
     'CHW-PLANT-TOWER':  ['chw-core'],
+    # VAV Terminal Units
+    'VAV-SD-CLG':       ['vav-core'],
+    'VAV-SD-HW-MOD':    ['vav-core'],
+    'VAV-SD-HW-FLT':    ['vav-core'],
+    'VAV-SD-ELEC-1':    ['vav-core'],
+    'VAV-SD-ELEC-2':    ['vav-core'],
+    'VAV-SD-ELEC-SCR':  ['vav-core'],
+    # Parallel fan-powered
+    'VAV-PF-HW-MOD':    ['vav-core'],
+    'VAV-PF-HW-FLT':    ['vav-core'],
+    'VAV-PF-ELEC-2':    ['vav-core'],
+    'VAV-PF-ELEC-SCR':  ['vav-core'],
+    # Series fan-powered
+    'VAV-SF-HW-MOD':    ['vav-core'],
+    'VAV-SF-HW-FLT':    ['vav-core'],
+    'VAV-SF-ELEC-2':    ['vav-core'],
+    'VAV-SF-ELEC-SCR':  ['vav-core'],
+    # Dual duct
+    'VAV-DD-CLG':       ['vav-core'],
+    'VAV-DD-HW-MOD':    ['vav-core'],
+    'VAV-DD-HW-FLT':    ['vav-core'],
 }
 
 
@@ -312,6 +365,142 @@ EQUIPMENT_FAMILIES = {
         "available_categories": ["chw-core", "chw-chiller", "chw-pump-pri", "chw-pump-sec", "chw-optional"],
         "notes": "Wizard-based. Air cooled chillers — no condenser water system. Primary pumps CS, secondary pumps VFD with DP.",
         "wizard": True,
+    },
+    "VAV-SD-CLG": {
+        "name": "VAV Single Duct — Cooling Only",
+        "description": "Single duct VAV cooling only — RC-FLEXair with factory actuator and VP sensor, no reheat",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Simplest VAV: cooling only, no reheat, no fan. Factory damper and VP sensor. RC-FLEXair-12-A-F.",
+    },
+    "VAV-SD-HW-MOD": {
+        "name": "VAV Single Duct — Modulating HW Reheat",
+        "description": "Single duct VAV with modulating hot water reheat valve (AO 0-10V), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-hw-mod"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "HW reheat with modulating valve. DAT control loop. RC-FLEXair-34-A-F.",
+    },
+    "VAV-SD-HW-FLT": {
+        "name": "VAV Single Duct — Floating HW Reheat",
+        "description": "Single duct VAV with floating hot water reheat valve (BO open/close), DAT sensor, FLOAT()",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-hw-flt"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "HW reheat with floating valve. No PID loop — FLOAT() function. RC-FLEXair-34-A-F.",
+    },
+    "VAV-SD-ELEC-1": {
+        "name": "VAV Single Duct — 1-Stage Electric Reheat",
+        "description": "Single duct VAV with single stage electric reheat (BO), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-elec-1"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "1-stage electric reheat. On/off with DAT limit. RC-FLEXair-34-A-F.",
+    },
+    "VAV-SD-ELEC-2": {
+        "name": "VAV Single Duct — 2-Stage Electric Reheat",
+        "description": "Single duct VAV with two stage electric reheat (BO x2), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-elec-2"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "2-stage electric reheat. Staged on/off with DAT limit. RC-FLEXair-34-A-F.",
+    },
+    "VAV-SD-ELEC-SCR": {
+        "name": "VAV Single Duct — SCR Modulating Electric Reheat",
+        "description": "Single duct VAV with SCR modulating electric reheat (AO 0-10V), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-elec-scr"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "SCR modulating electric reheat. PID loop on DAT. RC-FLEXair-34-A-F.",
+    },
+    "VAV-PF-HW-MOD": {
+        "name": "VAV Parallel Fan — Modulating HW Reheat",
+        "description": "Parallel fan-powered VAV with modulating HW reheat valve (AO), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-hw-mod", "vav-fan-parallel"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Parallel fan + mod HW valve. RC-FLEXair-34-A-F.",
+    },
+    "VAV-PF-HW-FLT": {
+        "name": "VAV Parallel Fan — Floating HW Reheat",
+        "description": "Parallel fan-powered VAV with floating HW reheat valve (BO open/close), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-hw-flt", "vav-fan-parallel"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Parallel fan + floating HW valve + FLOAT(). RC-FLEXair-36-A-F.",
+    },
+    "VAV-PF-ELEC-2": {
+        "name": "VAV Parallel Fan — 2-Stage Electric Reheat",
+        "description": "Parallel fan-powered VAV with 2-stage electric reheat (BO x2), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-elec-2", "vav-fan-parallel"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Parallel fan + 2-stage electric. RC-FLEXair-36-A-F.",
+    },
+    "VAV-PF-ELEC-SCR": {
+        "name": "VAV Parallel Fan — SCR Modulating Electric Reheat",
+        "description": "Parallel fan-powered VAV with SCR modulating electric reheat (AO), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-elec-scr", "vav-fan-parallel"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Parallel fan + SCR electric. RC-FLEXair-34-A-F.",
+    },
+    "VAV-SF-HW-MOD": {
+        "name": "VAV Series Fan — Modulating HW Reheat",
+        "description": "Series fan-powered VAV with modulating HW reheat valve (AO), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-hw-mod", "vav-fan-series"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Series fan (continuous when occ) + mod HW valve. RC-FLEXair-34-A-F.",
+    },
+    "VAV-SF-HW-FLT": {
+        "name": "VAV Series Fan — Floating HW Reheat",
+        "description": "Series fan-powered VAV with floating HW reheat valve (BO open/close), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-hw-flt", "vav-fan-series"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Series fan (continuous when occ) + floating HW valve. RC-FLEXair-34-A-F.",
+    },
+    "VAV-SF-ELEC-2": {
+        "name": "VAV Series Fan — 2-Stage Electric Reheat",
+        "description": "Series fan-powered VAV with 2-stage electric reheat (BO x2), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-elec-2", "vav-fan-series"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Series fan (continuous when occ) + 2-stage electric. RC-FLEXair-34-A-F.",
+    },
+    "VAV-SF-ELEC-SCR": {
+        "name": "VAV Series Fan — SCR Modulating Electric Reheat",
+        "description": "Series fan-powered VAV with SCR modulating electric reheat (AO), DAT sensor",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-rh-elec-scr", "vav-fan-series"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Series fan (continuous when occ) + SCR electric. RC-FLEXair-34-A-F.",
+    },
+    "VAV-DD-CLG": {
+        "name": "VAV Dual Duct — Cooling Only",
+        "description": "Dual duct VAV with hot and cold deck dampers, no reheat",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-dd-hot-deck"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Dual duct cooling only. Hot deck AO + cold deck firmware. RC-FLEXair-34-A-F.",
+    },
+    "VAV-DD-HW-MOD": {
+        "name": "VAV Dual Duct — Modulating HW Reheat",
+        "description": "Dual duct VAV with hot deck damper + modulating HW reheat valve",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-dd-hot-deck", "vav-rh-hw-mod"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Dual duct + mod HW valve on hot deck. RC-FLEXair-34-A-F.",
+    },
+    "VAV-DD-HW-FLT": {
+        "name": "VAV Dual Duct — Floating HW Reheat",
+        "description": "Dual duct VAV with hot deck damper + floating HW reheat valve",
+        "prefix": "SBS-VAV",
+        "required_modules": ["vav-core", "vav-dd-hot-deck", "vav-rh-hw-flt"],
+        "available_categories": ["thermostat", "thermostat-addon"],
+        "notes": "Dual duct + floating HW valve on hot deck. RC-FLEXair-36-A-F.",
     },
     "CHW-PLANT-TOWER": {
         "name": "Water Cooled Chiller Plant",
@@ -1002,6 +1191,114 @@ STANDARD_CONFIGS = {
             "num_cw_pumps": 3, "num_towers": 3, "tower_bypass": True,
             "iso_valves": True, "bypass_valve": True,
         },
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  VAV Terminal Units — SBS-VAV-501 to 520
+    #  RC-FLEXair controllers with factory actuator + VP sensor
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-VAV-501": {
+        "family": "VAV-SD-CLG",
+        "name": "Single Duct — Cooling Only",
+        "description": "Simplest VAV: cooling only, no reheat, no fan. RC-FLEXair-12.",
+        "modules": ["vav-core", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-502": {
+        "family": "VAV-SD-HW-MOD",
+        "name": "Single Duct — Modulating HW Reheat",
+        "description": "HW reheat with modulating valve + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-hw-mod", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-503": {
+        "family": "VAV-SD-HW-FLT",
+        "name": "Single Duct — Floating HW Reheat",
+        "description": "HW reheat with floating valve + DAT sensor + FLOAT(). RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-hw-flt", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-504": {
+        "family": "VAV-SD-ELEC-1",
+        "name": "Single Duct — 1-Stage Electric Reheat",
+        "description": "1-stage electric reheat + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-elec-1", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-505": {
+        "family": "VAV-SD-ELEC-2",
+        "name": "Single Duct — 2-Stage Electric Reheat",
+        "description": "2-stage electric reheat + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-elec-2", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-506": {
+        "family": "VAV-SD-ELEC-SCR",
+        "name": "Single Duct — SCR Modulating Electric Reheat",
+        "description": "SCR modulating electric + DAT sensor + RH-LOOP. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-elec-scr", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-507": {
+        "family": "VAV-PF-HW-MOD",
+        "name": "Parallel Fan — Modulating HW Reheat",
+        "description": "Parallel fan + mod HW valve + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-hw-mod", "vav-fan-parallel", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-508": {
+        "family": "VAV-PF-HW-FLT",
+        "name": "Parallel Fan — Floating HW Reheat",
+        "description": "Parallel fan + floating HW valve + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-hw-flt", "vav-fan-parallel", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-509": {
+        "family": "VAV-PF-ELEC-2",
+        "name": "Parallel Fan — 2-Stage Electric Reheat",
+        "description": "Parallel fan + 2-stage electric + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-elec-2", "vav-fan-parallel", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-510": {
+        "family": "VAV-PF-ELEC-SCR",
+        "name": "Parallel Fan — SCR Modulating Electric Reheat",
+        "description": "Parallel fan + SCR electric + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-elec-scr", "vav-fan-parallel", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-511": {
+        "family": "VAV-SF-HW-MOD",
+        "name": "Series Fan — Modulating HW Reheat",
+        "description": "Series fan + mod HW valve + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-hw-mod", "vav-fan-series", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-512": {
+        "family": "VAV-SF-HW-FLT",
+        "name": "Series Fan — Floating HW Reheat",
+        "description": "Series fan + floating HW valve + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-hw-flt", "vav-fan-series", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-513": {
+        "family": "VAV-SF-ELEC-2",
+        "name": "Series Fan — 2-Stage Electric Reheat",
+        "description": "Series fan + 2-stage electric + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-elec-2", "vav-fan-series", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-514": {
+        "family": "VAV-SF-ELEC-SCR",
+        "name": "Series Fan — SCR Modulating Electric Reheat",
+        "description": "Series fan + SCR electric + DAT sensor. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-rh-elec-scr", "vav-fan-series", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-515": {
+        "family": "VAV-DD-CLG",
+        "name": "Dual Duct — Cooling Only",
+        "description": "Dual duct hot+cold deck dampers. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-dd-hot-deck", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-516": {
+        "family": "VAV-DD-HW-MOD",
+        "name": "Dual Duct — Modulating HW Reheat",
+        "description": "Dual duct + mod HW valve on hot deck. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-dd-hot-deck", "vav-rh-hw-mod", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-517": {
+        "family": "VAV-DD-HW-FLT",
+        "name": "Dual Duct — Floating HW Reheat",
+        "description": "Dual duct + floating HW valve on hot deck. RC-FLEXair-34.",
+        "modules": ["vav-core", "vav-dd-hot-deck", "vav-rh-hw-flt", "vav-stat-hardwired"],
     },
 }
 

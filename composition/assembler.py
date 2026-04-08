@@ -120,7 +120,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
             if pt.name in input_names:
                 continue  # same mnemonic already exists — skip entirely
             if pt.row not in input_rows:
-                pt.module = mid
+                if pt.module != "FACTORY": pt.module = mid
                 input_rows[pt.row] = pt
                 input_names.add(pt.name)
             else:
@@ -131,7 +131,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                     f"and '{pt.name}' ({mid}). Moved '{pt.name}' to row {next_row}."
                 )
                 pt.row = next_row
-                pt.module = mid
+                if pt.module != "FACTORY": pt.module = mid
                 input_rows[next_row] = pt
                 input_names.add(pt.name)
 
@@ -139,7 +139,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
             if pt.name in output_names:
                 continue  # same mnemonic already exists — skip entirely
             if pt.row not in output_rows:
-                pt.module = mid
+                if pt.module != "FACTORY": pt.module = mid
                 output_rows[pt.row] = pt
                 output_names.add(pt.name)
             else:
@@ -150,7 +150,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                     f"and '{pt.name}' ({mid}). Moved '{pt.name}' to row {next_row}."
                 )
                 pt.row = next_row
-                pt.module = mid
+                if pt.module != "FACTORY": pt.module = mid
                 output_rows[next_row] = pt
                 output_names.add(pt.name)
 
@@ -158,7 +158,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
             if pt.name in value_names:
                 continue  # same mnemonic already exists — skip entirely
             if pt.instance not in value_instances:
-                pt.module = mid
+                if pt.module != "FACTORY": pt.module = mid
                 value_instances[pt.instance] = pt
                 value_names.add(pt.name)
 
@@ -249,8 +249,14 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     config.trends = _generate_trends(config)
 
     # Step 5: Controller selection
-    config.highest_input_row = max(input_rows.keys()) if input_rows else 0
-    config.highest_output_row = max(output_rows.keys()) if output_rows else 0
+    # Exclude factory reserved points from controller selection — they come from blank
+    user_input_rows = {r: p for r, p in input_rows.items() if p.module != "FACTORY"}
+    user_output_rows = {r: p for r, p in output_rows.items() if p.module != "FACTORY"}
+    config.highest_input_row = max(user_input_rows.keys()) if user_input_rows else 0
+    config.highest_output_row = max(user_output_rows.keys()) if user_output_rows else 0
+    # Display max includes factory points so UI shows all rows
+    config.display_max_input_row = max(input_rows.keys()) if input_rows else 0
+    config.display_max_output_row = max(output_rows.keys()) if output_rows else 0
     _select_controller(config, controller_model)
 
     # Step 6: Assemble SOO document
@@ -368,6 +374,11 @@ CONTROLLER_SPECS = {
     "MPA-33":  {"base_in": 3,  "base_out": 3,  "max_exp": 0, "family": "MACH-ProAir"},
     "MPZ-88":  {"base_in": 8,  "base_out": 8,  "max_exp": 0, "family": "MACH-ProZone"},
     "MPZ-44":  {"base_in": 4,  "base_out": 4,  "max_exp": 0, "family": "MACH-ProZone"},
+    # RC-FLEXair VAV controllers — factory AI4/AI5/BI6/BO8 reserved
+    "RCFA-12": {"base_in": 1,  "base_out": 1,  "max_exp": 0, "family": "RC-FLEXair"},
+    "RCFA-34": {"base_in": 3,  "base_out": 4,  "max_exp": 0, "family": "RC-FLEXair"},
+    "RCFA-35": {"base_in": 3,  "base_out": 5,  "max_exp": 0, "family": "RC-FLEXair"},
+    "RCFA-36": {"base_in": 3,  "base_out": 6,  "max_exp": 0, "family": "RC-FLEXair"},
 }
 
 
@@ -402,6 +413,32 @@ def _select_controller(config: ControllerConfig, model_override: str = "auto"):
         config.controller_model = model_override
         config.expansion_count = expansion_count
         config.expansion_model = "MPP-IO-U" if expansion_count > 0 else ""
+        return
+
+    # Auto-select: VAV terminal unit families use RC-FLEXair
+    # VAV-AHU is an AHU family (not a terminal unit) — exclude it
+    _VAV_TERMINAL_FAMILIES = ("VAV-SD-", "VAV-PF-", "VAV-SF-", "VAV-DD-")
+    if config.equipment_family.startswith(_VAV_TERMINAL_FAMILIES):
+        # Check if any AO outputs exist — RCFA-12 has no AO
+        has_ao = any(o.point_type == "AO" for o in config.outputs)
+        # Check if any reheat module present — force RCFA-34 minimum
+        # Reheat variants almost always get upgraded, need room for expansion
+        has_reheat = any(m for m in config.selected_modules if 'rh-' in m)
+        # Pick smallest RCFA that fits the IO count
+        for model in ["RCFA-12", "RCFA-34", "RCFA-35", "RCFA-36"]:
+            # RCFA-12 has 1 AI + 1 BO only — skip if AO needed or reheat present
+            if model == "RCFA-12" and (has_ao or has_reheat):
+                continue
+            spec = CONTROLLER_SPECS[model]
+            if hi_in <= spec["base_in"] and hi_out <= spec["base_out"]:
+                config.controller_model = model
+                config.expansion_count = 0
+                config.expansion_model = ""
+                return
+        # Fallback to largest RCFA
+        config.controller_model = "RCFA-36"
+        config.expansion_count = 0
+        config.expansion_model = ""
         return
 
     # Auto-select: prefer MPS family for AHU

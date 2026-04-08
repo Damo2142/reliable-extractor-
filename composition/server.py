@@ -133,6 +133,8 @@ async def api_assemble(req: AssembleRequest):
             "expansion_model": config.expansion_model,
             "highest_input_row": config.highest_input_row,
             "highest_output_row": config.highest_output_row,
+            "display_max_input_row": getattr(config, 'display_max_input_row', config.highest_input_row),
+            "display_max_output_row": getattr(config, 'display_max_output_row', config.highest_output_row),
         },
         "counts": {
             "inputs": len(config.inputs), "outputs": len(config.outputs),
@@ -1707,6 +1709,7 @@ table{width:100%;border-collapse:collapse;font-size:0.8em}
 th{background:#1e293b;padding:6px 8px;text-align:left;color:#94a3b8;font-weight:500;position:sticky;top:0}
 td{padding:5px 8px;border-bottom:1px solid #1e293b}
 tr.unused td{color:#475569;font-style:italic}
+tr.factory td{color:#64748b;font-style:italic;opacity:0.7}
 tr.io-changed{background:#1a2e1a}
 tr.io-changed td{color:#4ade80}
 tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:0.85em;margin-left:6px}
@@ -1979,14 +1982,34 @@ function onFamilyChange(){
   const isHWP=activeFamily==='HW-PLANT';
   const isCHWP=activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER';
   const isPlant=isHWP||isCHWP;
+  const isVAV=activeFamily.startsWith('VAV-SD-')||activeFamily.startsWith('VAV-PF-')||activeFamily.startsWith('VAV-SF-')||activeFamily.startsWith('VAV-DD-');
   document.getElementById('modToggles').style.display=isPlant?'none':'';
   document.getElementById('hwpWizard').style.display=isHWP?'':'none';
   document.getElementById('chwpWizard').style.display=isCHWP?'':'none';
   if(isCHWP)chwpUpdate();
+  // VAV families: pre-select recommended controller
+  if(isVAV){
+    var reqMods=f?f.required_modules:[];
+    var hasAO=false;
+    for(var i=0;i<reqMods.length;i++){var mm=reqMods[i];if(mm==='vav-rh-hw-mod'||mm==='vav-rh-elec-scr')hasAO=true;}
+    var hasFan=false;
+    for(var i=0;i<reqMods.length;i++){if(reqMods[i].indexOf('fan')!==-1)hasFan=true;}
+    var hasDD=false;
+    for(var i=0;i<reqMods.length;i++){if(reqMods[i].indexOf('dd-')!==-1)hasDD=true;}
+    var hasRH=false;
+    for(var i=0;i<reqMods.length;i++){if(reqMods[i].indexOf('rh-')!==-1)hasRH=true;}
+    var rec='RCFA-12';
+    if(hasAO||hasRH||hasFan||hasDD)rec='RCFA-34';
+    document.getElementById('selCtrl').value=rec;
+  }else{
+    document.getElementById('selCtrl').value='auto';
+  }
   renderConfigs();
   if(!isPlant)renderModules();
   document.getElementById('results').style.display='none';
-  document.getElementById('status').textContent=f?(isPlant?'Configure plant options, then click Assemble.':'Select a standard configuration, then click Assemble.'):'Select an equipment family.';
+  var statusMsg=f?(isPlant?'Configure plant options, then click Assemble.':'Select a standard configuration, then click Assemble.'):'Select an equipment family.';
+  if(isVAV)statusMsg='Confirm controller model, then click Assemble.';
+  document.getElementById('status').textContent=statusMsg;
 }
 
 function hwpUpdate(){
@@ -2119,12 +2142,32 @@ function selectCfg(id){
 
 function renderModules(){
   var el=document.getElementById('modList');
-  if(!activeFamily){el.innerHTML='';return;}
+  if(!activeFamily){el.innerHTML='';return;} var f=families[activeFamily];
   var html='';
-  var catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','optimum-start','boiler','plant'];
+  var catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','optimum-start','boiler','plant','reheat','dual-duct','thermostat','thermostat-addon'];
+  var allowedCats=f&&f.available_categories?f.available_categories:[];
+  var reqMods=f&&f.required_modules?f.required_modules:[];
+  // Show required modules as locked section first (for families with limited categories)
+  if(allowedCats.length>0&&reqMods.length>0){
+    var reqItems=[];
+    for(var cat in modules){var ms=modules[cat];if(!ms)continue;for(var i=0;i<ms.length;i++){if(reqMods.indexOf(ms[i].id)!==-1)reqItems.push(ms[i]);}}
+    if(reqItems.length>0){
+      html+='<div class="mod-grp"><div class="mod-grp-t">SELECTED ('+reqItems.length+')</div>';
+      for(var ri=0;ri<reqItems.length;ri++){
+        var m=reqItems[ri];
+        html+='<div class="mod-item core" style="display:flex;align-items:center;gap:6px"><input type="checkbox" checked disabled>';
+        html+='<span style="flex:1;cursor:pointer" onclick="showModuleDetail(\\x27'+m.id+'\\x27)">'+m.name+'</span>';
+        html+='<span style="font-size:0.7em;color:#64748b">'+m.programs+'P</span></div>';
+      }
+      html+='</div>';
+    }
+  }
+  var noOptionals=(allowedCats.length===0);
   for(var ci=0;ci<catOrder.length;ci++){
     var cat=catOrder[ci];
     var mods=modules[cat];if(!mods)continue;
+    if(noOptionals){mods=mods.filter(function(m){return reqMods.indexOf(m.id)!==-1;});if(!mods.length)continue;}
+    else if(allowedCats.indexOf(cat)===-1)continue;
     html+='<div class="mod-grp"><div class="mod-grp-t">'+cat.toUpperCase()+' ('+mods.length+')</div>';
     for(var mi=0;mi<mods.length;mi++){
       var m=mods[mi];
@@ -2229,6 +2272,11 @@ function openBasFromModule(filename){
 }
 
 async function doAssemble(){
+  // VAV families require explicit controller selection
+  var isVAV=activeFamily.startsWith('VAV-SD-')||activeFamily.startsWith('VAV-PF-')||activeFamily.startsWith('VAV-SF-')||activeFamily.startsWith('VAV-DD-');
+  if(isVAV&&document.getElementById('selCtrl').value==='auto'){
+    document.getElementById('status').textContent='⚠ Select a controller model before assembling VAV families.';return;
+  }
   hasOverrides=false;
   currentConfigId='';
   document.getElementById('btnGenFromConfig').style.display='none';
@@ -2279,6 +2327,8 @@ function renderResults(r){
   if(r.terminal_changes&&r.terminal_changes.length>0){
     r.terminal_changes.forEach(function(c){changedPoints[c.name]={old:c.old,new_term:c.new};});
   }
+  // Clear previous banners before rendering new ones
+  document.querySelectorAll('.override-banner,.warning-banner').forEach(function(el){el.remove();});
   // Override banner
   if(r.has_overrides&&r.terminal_changes&&r.terminal_changes.length>0){
     var bhtml='<div class="override-banner"><b>'+r.terminal_changes.length+' terminal override(s) active</b> — green rows below show moved points. Use <b>Generate (with overrides)</b> to download.';
@@ -2286,7 +2336,7 @@ function renderResults(r){
     document.getElementById('stats').insertAdjacentHTML('afterend',bhtml);
   }
   if(r.warnings&&r.warnings.length>0){
-    var whtml='<div style="background:#78350f;border:1px solid #f59e0b;border-radius:6px;padding:12px;margin:8px 0;color:#fef3c7;font-size:13px"><b>⚠ Warnings ('+r.warnings.length+'):</b><ul style="margin:6px 0 0 16px;padding:0">';
+    var whtml='<div class="warning-banner" style="background:#78350f;border:1px solid #f59e0b;border-radius:6px;padding:12px;margin:8px 0;color:#fef3c7;font-size:13px"><b>⚠ Warnings ('+r.warnings.length+'):</b><ul style="margin:6px 0 0 16px;padding:0">';
     r.warnings.forEach(function(w){whtml+='<li style="margin:2px 0">'+w+'</li>';});
     whtml+='</ul></div>';
     document.getElementById('stats').insertAdjacentHTML('afterend',whtml);
@@ -2306,30 +2356,34 @@ function renderResults(r){
   document.getElementById('tabBar').innerHTML=tabs.map((t,i)=>'<div class="tab'+(i===0?' act':'')+'" onclick="showTab('+i+')">'+t+'</div>').join('');
 
   let tc='';
-  // Inputs
+  // Inputs — use display_max to include factory reserved rows
+  var dispMaxIn=ctrl.display_max_input_row||ctrl.highest_input_row;
   tc+='<div class="tp act" id="t0"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Range</th><th>Units</th><th>Description</th><th>Module</th></tr>';
-  for(let row=1;row<=ctrl.highest_input_row;row++){
+  for(let row=1;row<=dispMaxIn;row++){
     const pt=r.inputs.find(p=>p.row===row);
     if(pt){
       var ch=changedPoints[pt.name];
-      var cls=ch?'io-changed':'';
+      var isFact=pt.module==='FACTORY';
+      var cls=isFact?'factory':(ch?'io-changed':'');
       var oldTag=ch?'<span class="old-term">was '+ch.old+'</span>':'';
-      tc+='<tr class="'+cls+'"><td>IN'+row+oldTag+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+'</td><td>'+(pt.range||'')+'</td><td>'+(pt.units||'')+'</td><td>'+pt.desc+'</td><td>'+pt.module+'</td></tr>';
+      tc+='<tr class="'+cls+'"><td>IN'+row+oldTag+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+'</td><td>'+(pt.range||'')+'</td><td>'+(pt.units||'')+'</td><td>'+pt.desc+'</td><td>'+(isFact?'Factory Reserved':pt.module)+'</td></tr>';
     }else{
       tc+='<tr class="unused"><td>IN'+row+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
     }
   }
   tc+='</table></div>';
 
-  // Outputs
+  // Outputs — use display_max to include factory reserved rows
+  var dispMaxOut=ctrl.display_max_output_row||ctrl.highest_output_row;
   tc+='<div class="tp" id="t1"><table><tr><th>Row</th><th>Type</th><th>Name</th><th>Min V</th><th>Max V</th><th>Description</th><th>Module</th></tr>';
-  for(let row=1;row<=ctrl.highest_output_row;row++){
+  for(let row=1;row<=dispMaxOut;row++){
     const pt=r.outputs.find(p=>p.row===row);
     if(pt){
       var ch=changedPoints[pt.name];
-      var cls=ch?'io-changed':'';
+      var isFact=pt.module==='FACTORY';
+      var cls=isFact?'factory':(ch?'io-changed':'');
       var oldTag=ch?'<span class="old-term">was '+ch.old+'</span>':'';
-      tc+='<tr class="'+cls+'"><td>OUT'+row+oldTag+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+(pt.reverse?' (REV)':'')+'</td><td>'+(pt.min_v||'')+'</td><td>'+(pt.max_v||'')+'</td><td>'+(pt.desc||'')+'</td><td>'+pt.module+'</td></tr>';
+      tc+='<tr class="'+cls+'"><td>OUT'+row+oldTag+'</td><td><span class="tag tag-'+pt.type.toLowerCase()+'">'+pt.type+'</span></td><td>{device-name}-'+pt.name+(pt.reverse?' (REV)':'')+'</td><td>'+(pt.min_v||'')+'</td><td>'+(pt.max_v||'')+'</td><td>'+(pt.desc||'')+'</td><td>'+(isFact?'Factory Reserved':pt.module)+'</td></tr>';
     }else{
       tc+='<tr class="unused"><td>OUT'+row+'</td><td></td><td colspan="5">--- unused ---</td></tr>';
     }
@@ -2343,7 +2397,8 @@ function renderResults(r){
     var v=valMap[vi];
     if(v){
       var pre={AV:'AV',BV:'BV',MV:'MV'}[v.type]||'AV';
-      tc+='<tr><td>'+pre+vi+'</td><td><span class="tag tag-'+v.type.toLowerCase()+'">'+v.type+'</span></td><td>{device-name}-'+v.name+'</td><td>'+v.default+'</td><td>'+(v.units||'')+'</td><td>'+v.desc+'</td><td>'+v.module+'</td></tr>';
+      var isFact=v.module==='FACTORY';
+      tc+='<tr class="'+(isFact?'factory':'')+'"><td>'+pre+vi+'</td><td><span class="tag tag-'+v.type.toLowerCase()+'">'+v.type+'</span></td><td>{device-name}-'+v.name+'</td><td>'+v.default+'</td><td>'+(v.units||'')+'</td><td>'+v.desc+'</td><td>'+(isFact?'Factory Reserved':v.module)+'</td></tr>';
     }
   }
   tc+='</table></div>';
