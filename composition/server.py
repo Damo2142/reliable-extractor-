@@ -1936,9 +1936,13 @@ tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:
     <div class="sec-t">Standard Configuration</div>
     <div id="cfgList"></div>
   </div>
-  <div class="sec">
+  <div class="sec" id="ctrlSection">
     <div class="sec-t">Controller Model</div>
     <select id="selCtrl"><option value="auto">Auto-Select (recommended)</option></select>
+  </div>
+  <div class="sec" id="vvtCtrlFixed" style="display:none">
+    <div class="sec-t">RTU Controller</div>
+    <div style="color:#94a3b8;font-size:0.85em;padding:4px 0">MACH-ProView LCD (fixed)</div>
   </div>
   <div class="sec" id="modToggles">
     <div class="sec-t">Module Toggles <span style="font-size:0.85em;color:#475569">(on/off from standard)</span></div>
@@ -2177,6 +2181,8 @@ function onFamilyChange(){
   const isWizard=isPlant||isVVT;
   const isVAV=activeFamily.startsWith('VAV-SD-')||activeFamily.startsWith('VAV-PF-')||activeFamily.startsWith('VAV-SF-')||activeFamily.startsWith('VAV-DD-');
   document.getElementById('modToggles').style.display=isWizard?'none':'';
+  document.getElementById('ctrlSection').style.display=isVVT?'none':'';
+  document.getElementById('vvtCtrlFixed').style.display=isVVT?'':'none';
   document.getElementById('hwpWizard').style.display=isHWP?'':'none';
   document.getElementById('chwpWizard').style.display=isCHWP?'':'none';
   document.getElementById('vvtWizard').style.display=isVVT?'':'none';
