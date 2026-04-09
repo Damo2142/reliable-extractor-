@@ -525,31 +525,13 @@ EQUIPMENT_FAMILIES = {
         "notes": "Dual duct + floating HW valve on hot deck. RC-FLEXair-36-A-F.",
     },
     # ── VVT System ──
-    "VVT-MPV": {
-        "name": "VVT Master RTU (MPV)",
-        "description": "VVT master RTU controller — MACH-ProView LCD, fan/heat/cool staging, zone aggregation via arrays",
+    "VVT-SYSTEM": {
+        "name": "VVT System",
+        "description": "Variable Volume Temperature system — MPV master RTU + zone dampers + bypass. Generates all controllers in one package.",
         "prefix": "SBS-VVT",
         "required_modules": ["vvt-mpv-core"],
         "available_categories": [],
-        "notes": "Generated via VVT System builder. Not configured individually.",
-        "wizard": True,
-    },
-    "VVT-ZONE": {
-        "name": "VVT Zone Controller",
-        "description": "VVT zone damper controller — RC-FLEXair, room temp control, HVAC voting, array writes to MPV",
-        "prefix": "SBS-VVT",
-        "required_modules": ["vvt-zone-core"],
-        "available_categories": ["reheat", "thermostat", "thermostat-addon"],
-        "notes": "Generated via VVT System builder. AI1=DAT always present. Reheat and stat modules selectable per zone.",
-        "wizard": True,
-    },
-    "VVT-BYPASS": {
-        "name": "VVT Bypass Controller",
-        "description": "VVT bypass damper controller — RC-FLEXair, duct static pressure relief, DAT lockouts",
-        "prefix": "SBS-VVT",
-        "required_modules": ["vvt-bypass-core"],
-        "available_categories": [],
-        "notes": "Generated via VVT System builder. RCFA-34 minimum (AI1 + AI2).",
+        "notes": "Wizard-based. Generates MPV (ProView LCD), zone controllers (RC-FLEXair), and optional bypass controller.",
         "wizard": True,
     },
     "CHW-PLANT-TOWER": {
