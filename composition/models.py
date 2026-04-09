@@ -102,6 +102,16 @@ class TableDef:
 
 
 @dataclass
+class ArrayDef:
+    """BACnet array object (type 142) — sequential float slots"""
+    instance: int
+    name: str
+    size: int                       # Number of float elements
+    description: str = ""
+    module: str = ""
+
+
+@dataclass
 class ProgramDef:
     """Control program (.bas file)"""
     instance: int
@@ -162,6 +172,7 @@ class Module:
     values: list = field(default_factory=list)         # List of ValuePoint
     loops: list = field(default_factory=list)          # List of LoopDef
     tables: list = field(default_factory=list)         # List of TableDef
+    arrays: list = field(default_factory=list)         # List of ArrayDef
     programs: list = field(default_factory=list)       # List of ProgramDef
     schedules: list = field(default_factory=list)      # List of ScheduleDef
     trends: list = field(default_factory=list)         # List of TrendDef
@@ -195,6 +206,7 @@ class ControllerConfig:
     values: list = field(default_factory=list)
     loops: list = field(default_factory=list)
     tables: list = field(default_factory=list)
+    arrays: list = field(default_factory=list)
     programs: list = field(default_factory=list)
     schedules: list = field(default_factory=list)
     trends: list = field(default_factory=list)

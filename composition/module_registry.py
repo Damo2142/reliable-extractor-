@@ -46,6 +46,15 @@ from composition.modules.vav import build_stat_comm as vav_build_stat_comm
 from composition.modules.vav import build_stat_comm_co2 as vav_build_stat_comm_co2
 from composition.modules.vav import build_stat_comm_hum as vav_build_stat_comm_hum
 from composition.modules.vav import build_stat_comm_occ as vav_build_stat_comm_occ
+from composition.modules.vvt import (
+    build_zone_core as vvt_build_zone_core,
+    build_bypass_core as vvt_build_bypass_core,
+    build_mpv_core as vvt_build_mpv_core,
+    build_rh_hw_mod as vvt_build_rh_hw_mod,
+    build_rh_hw_flt as vvt_build_rh_hw_flt,
+    build_rh_elec_1 as vvt_build_rh_elec_1,
+    build_rh_elec_2 as vvt_build_rh_elec_2,
+)
 
 
 # Registry: module_id -> builder function
@@ -165,6 +174,15 @@ _register("vav-stat-comm-co2", vav_build_stat_comm_co2)
 _register("vav-stat-comm-hum", vav_build_stat_comm_hum)
 _register("vav-stat-comm-occ", vav_build_stat_comm_occ)
 
+# VVT Terminal Units
+_register("vvt-zone-core", vvt_build_zone_core)
+_register("vvt-bypass-core", vvt_build_bypass_core)
+_register("vvt-mpv-core", vvt_build_mpv_core)
+_register("vvt-rh-hw-mod", vvt_build_rh_hw_mod)
+_register("vvt-rh-hw-flt", vvt_build_rh_hw_flt)
+_register("vvt-rh-elec-1", vvt_build_rh_elec_1)
+_register("vvt-rh-elec-2", vvt_build_rh_elec_2)
+
 
 # Cache built modules
 _CACHE = {}
@@ -241,6 +259,10 @@ FAMILY_CORES = {
     'VAV-DD-CLG':       ['vav-core'],
     'VAV-DD-HW-MOD':    ['vav-core'],
     'VAV-DD-HW-FLT':    ['vav-core'],
+    # VVT System controllers
+    'VVT-MPV':          ['vvt-mpv-core'],
+    'VVT-ZONE':         ['vvt-zone-core'],
+    'VVT-BYPASS':       ['vvt-bypass-core'],
 }
 
 
@@ -501,6 +523,34 @@ EQUIPMENT_FAMILIES = {
         "required_modules": ["vav-core", "vav-dd-hot-deck", "vav-rh-hw-flt"],
         "available_categories": ["thermostat", "thermostat-addon"],
         "notes": "Dual duct + floating HW valve on hot deck. RC-FLEXair-36-A-F.",
+    },
+    # ── VVT System ──
+    "VVT-MPV": {
+        "name": "VVT Master RTU (MPV)",
+        "description": "VVT master RTU controller — MACH-ProView LCD, fan/heat/cool staging, zone aggregation via arrays",
+        "prefix": "SBS-VVT",
+        "required_modules": ["vvt-mpv-core"],
+        "available_categories": [],
+        "notes": "Generated via VVT System builder. Not configured individually.",
+        "wizard": True,
+    },
+    "VVT-ZONE": {
+        "name": "VVT Zone Controller",
+        "description": "VVT zone damper controller — RC-FLEXair, room temp control, HVAC voting, array writes to MPV",
+        "prefix": "SBS-VVT",
+        "required_modules": ["vvt-zone-core"],
+        "available_categories": ["reheat", "thermostat", "thermostat-addon"],
+        "notes": "Generated via VVT System builder. AI1=DAT always present. Reheat and stat modules selectable per zone.",
+        "wizard": True,
+    },
+    "VVT-BYPASS": {
+        "name": "VVT Bypass Controller",
+        "description": "VVT bypass damper controller — RC-FLEXair, duct static pressure relief, DAT lockouts",
+        "prefix": "SBS-VVT",
+        "required_modules": ["vvt-bypass-core"],
+        "available_categories": [],
+        "notes": "Generated via VVT System builder. RCFA-34 minimum (AI1 + AI2).",
+        "wizard": True,
     },
     "CHW-PLANT-TOWER": {
         "name": "Water Cooled Chiller Plant",

@@ -570,6 +570,169 @@ async def api_chwp_generate_pan(req: CHWPAssembleRequest):
         headers={"Content-Disposition": f"attachment; filename={config_name}.pan"})
 
 
+class VVTZoneDef(BaseModel):
+    address: int
+    tag: str
+    reheat: str = "none"
+    stat: str = "hardwired"
+
+
+class VVTAssembleRequest(BaseModel):
+    system_tag: str = "RTU-1"
+    htg_stages: int = 2
+    clg_stages: int = 2
+    has_bypass: bool = True
+    zones: List[VVTZoneDef] = []
+
+
+@app.post("/api/assemble-vvt")
+async def api_assemble_vvt(req: VVTAssembleRequest):
+    """Assemble a complete VVT system — MPV + bypass + all zone controllers."""
+    import copy
+
+    if len(req.zones) > 20:
+        raise HTTPException(400, "Maximum 20 zones per VVT system.")
+    if len(req.zones) < 1:
+        raise HTTPException(400, "At least 1 zone is required.")
+
+    zone_count = len(req.zones)
+    warnings = []
+
+    if not req.has_bypass:
+        warnings.append("VVT system without bypass damper. Staged heating may cause duct overpressure.")
+
+    # --- Build MPV controller ---
+    from composition.modules.vvt.mpv_core import build as build_mpv
+    mpv_mod = build_mpv(htg_stages=req.htg_stages, clg_stages=req.clg_stages, zone_count=zone_count)
+    mpv_config = assemble(["vvt-mpv-core"], controller_model="auto", equipment_family="VVT-MPV")
+    # Override with parameterized module (the registry has default params)
+    mpv_config.inputs = copy.deepcopy(mpv_mod.inputs)
+    mpv_config.outputs = copy.deepcopy(mpv_mod.outputs)
+    mpv_config.values = copy.deepcopy(mpv_mod.values)
+    mpv_config.loops = copy.deepcopy(mpv_mod.loops)
+    mpv_config.arrays = copy.deepcopy(mpv_mod.arrays)
+    mpv_config.programs = copy.deepcopy(mpv_mod.programs)
+    mpv_config.schedules = copy.deepcopy(mpv_mod.schedules)
+    mpv_config.system_groups = copy.deepcopy(mpv_mod.system_groups)
+    mpv_config.soo_document = mpv_mod.soo_paragraph
+    mpv_config.controller_model = "MACH-ProView LCD"
+    number_programs(mpv_config.programs)
+
+    result = {
+        "system_tag": req.system_tag,
+        "zone_count": zone_count,
+        "htg_stages": req.htg_stages,
+        "clg_stages": req.clg_stages,
+        "has_bypass": req.has_bypass,
+        "warnings": warnings,
+        "controllers": {},
+    }
+
+    # MPV summary
+    result["controllers"]["mpv"] = {
+        "tag": f"{req.system_tag}-MPV",
+        "controller": "MACH-ProView LCD",
+        "family": "VVT-MPV",
+        "counts": {
+            "inputs": len(mpv_config.inputs),
+            "outputs": len(mpv_config.outputs),
+            "values": len(mpv_config.values),
+            "arrays": len(mpv_config.arrays),
+            "programs": len(mpv_config.programs),
+        },
+        "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in mpv_config.inputs],
+        "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in mpv_config.outputs],
+        "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description} for v in mpv_config.values],
+        "arrays": [{"instance": a.instance, "name": a.name, "size": a.size, "desc": a.description} for a in mpv_config.arrays],
+        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "desc": p.description, "code": p.code or ""} for p in sorted(mpv_config.programs, key=lambda x: x.exec_order)],
+    }
+
+    # --- Build bypass controller (optional) ---
+    if req.has_bypass:
+        byp_config = assemble(["vvt-bypass-core"], controller_model="auto", equipment_family="VVT-BYPASS")
+        inject_program_code(byp_config)
+        result["controllers"]["bypass"] = {
+            "tag": f"{req.system_tag}-BYP",
+            "controller": byp_config.controller_model,
+            "family": "VVT-BYPASS",
+            "counts": {
+                "inputs": len(byp_config.inputs),
+                "outputs": len(byp_config.outputs),
+                "values": len(byp_config.values),
+                "loops": len(byp_config.loops),
+                "programs": len(byp_config.programs),
+            },
+            "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in byp_config.inputs],
+            "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in byp_config.outputs],
+            "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description} for v in byp_config.values],
+            "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "action": l.action, "desc": l.description} for l in byp_config.loops],
+            "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "desc": p.description, "code": p.code or ""} for p in sorted(byp_config.programs, key=lambda x: x.exec_order)],
+        }
+
+    # --- Build each zone controller ---
+    # Reheat module mapping
+    REHEAT_MODULES = {
+        "none": [],
+        "hw-mod": ["vvt-rh-hw-mod"],
+        "hw-flt": ["vvt-rh-hw-flt"],
+        "elec-1": ["vvt-rh-elec-1"],
+        "elec-2": ["vvt-rh-elec-2"],
+    }
+    # Stat module mapping (reuse VAV stat modules)
+    STAT_MODULES = {
+        "hardwired": ["vav-stat-hardwired"],
+        "comm": ["vav-stat-comm"],
+    }
+
+    zones_result = []
+    has_electric_reheat = False
+    for zone in req.zones:
+        zone_modules = ["vvt-zone-core"]
+        rh_mods = REHEAT_MODULES.get(zone.reheat, [])
+        stat_mods = STAT_MODULES.get(zone.stat, ["vav-stat-hardwired"])
+        zone_modules.extend(rh_mods)
+        zone_modules.extend(stat_mods)
+
+        if zone.reheat in ("elec-1", "elec-2"):
+            has_electric_reheat = True
+
+        zn_config = assemble(zone_modules, controller_model="auto", equipment_family="VVT-ZONE")
+        inject_program_code(zn_config)
+
+        # Set zone address default
+        for v in zn_config.values:
+            if v.name == "CFG-ZONE-ADDR":
+                v.default = float(zone.address)
+
+        zones_result.append({
+            "address": zone.address,
+            "tag": zone.tag,
+            "controller": zn_config.controller_model,
+            "family": "VVT-ZONE",
+            "reheat": zone.reheat,
+            "stat": zone.stat,
+            "counts": {
+                "inputs": len(zn_config.inputs),
+                "outputs": len(zn_config.outputs),
+                "values": len(zn_config.values),
+                "loops": len(zn_config.loops),
+                "programs": len(zn_config.programs),
+            },
+            "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in zn_config.inputs],
+            "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in zn_config.outputs],
+            "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description} for v in zn_config.values],
+            "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "action": l.action, "desc": l.description} for l in zn_config.loops],
+            "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "desc": p.description, "code": p.code or ""} for p in sorted(zn_config.programs, key=lambda x: x.exec_order)],
+        })
+
+    result["controllers"]["zones"] = zones_result
+
+    if has_electric_reheat:
+        warnings.append("Electric reheat present. Verify DAT high limit interlock (87F) and SAT lockout (75F) at commissioning.")
+
+    return result
+
+
 @app.post("/api/generate")
 async def api_generate(req: GenerateRequest):
     try:
@@ -1717,7 +1880,7 @@ tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:
 .override-banner b{color:#a5b4fc}
 .tag{display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.75em;font-weight:600}
 .tag-ai{background:#1e3a5f;color:#60a5fa}.tag-bi{background:#1a3636;color:#5eead4}
-.tag-ao{background:#3b1f1f;color:#fca5a5}.tag-bo{background:#3b2f1f;color:#fbbf24}
+.tag-ao{background:#3b1f1f;color:#fca5a5}.tag-bo{background:#3b2f1f;color:#fbbf24}.tag-mo{background:#2d1f3b;color:#c084fc}
 .tag-av{background:#1e293b;color:#a78bfa}.tag-bv{background:#1e293b;color:#34d399}.tag-mv{background:#1e293b;color:#fb923c}
 .soo{white-space:pre-wrap;font-family:'Courier New',monospace;font-size:0.78em;line-height:1.4;background:#0f172a;padding:14px;border-radius:5px;max-height:500px;overflow-y:auto}
 #status{padding:6px 10px;background:#1e293b;border-radius:4px;font-size:0.8em;color:#94a3b8;margin-bottom:10px}
@@ -1922,6 +2085,34 @@ tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:
       <input type="checkbox" id="chwp_makeup_water" onchange="chwpUpdate()"> Makeup Water Monitoring
     </label>
   </div>
+  <div class="sec" id="vvtWizard" style="display:none">
+    <div class="sec-t">VVT System Configuration</div>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">System Tag</label>
+    <input type="text" id="vvt_system_tag" value="RTU-1" style="width:100%;padding:4px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;margin-bottom:6px">
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Heating Stages</label>
+    <select id="vvt_htg_stages">
+      <option value="1">1</option><option value="2" selected>2</option>
+    </select>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Cooling Stages</label>
+    <select id="vvt_clg_stages">
+      <option value="1">1</option><option value="2" selected>2</option>
+    </select>
+    <label style="font-size:0.75em;color:#94a3b8;display:flex;align-items:center;gap:6px;margin:6px 0">
+      <input type="checkbox" id="vvt_has_bypass" checked> Include Bypass Damper
+    </label>
+    <div class="sec-t" style="margin-top:10px">Zone Table</div>
+    <div id="vvtZoneTable" style="font-size:0.8em">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="color:#94a3b8;text-align:left;border-bottom:1px solid #334155">
+          <th style="padding:2px 4px">#</th><th style="padding:2px 4px">Tag</th>
+          <th style="padding:2px 4px">Reheat</th><th style="padding:2px 4px">Stat</th>
+          <th style="padding:2px 4px"></th>
+        </tr></thead>
+        <tbody id="vvtZoneRows"></tbody>
+      </table>
+    </div>
+    <button onclick="vvtAddZone()" style="margin-top:6px;font-size:0.8em;padding:3px 10px;background:#334155;color:#e2e8f0;border:1px solid #475569;border-radius:4px;cursor:pointer">+ Add Zone</button>
+  </div>
 </div>
 <div class="main">
   <div id="status">Select an equipment family to begin.</div>
@@ -1981,12 +2172,16 @@ function onFamilyChange(){
   selected.clear();
   const isHWP=activeFamily==='HW-PLANT';
   const isCHWP=activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER';
+  const isVVT=activeFamily.startsWith('VVT-');
   const isPlant=isHWP||isCHWP;
+  const isWizard=isPlant||isVVT;
   const isVAV=activeFamily.startsWith('VAV-SD-')||activeFamily.startsWith('VAV-PF-')||activeFamily.startsWith('VAV-SF-')||activeFamily.startsWith('VAV-DD-');
-  document.getElementById('modToggles').style.display=isPlant?'none':'';
+  document.getElementById('modToggles').style.display=isWizard?'none':'';
   document.getElementById('hwpWizard').style.display=isHWP?'':'none';
   document.getElementById('chwpWizard').style.display=isCHWP?'':'none';
+  document.getElementById('vvtWizard').style.display=isVVT?'':'none';
   if(isCHWP)chwpUpdate();
+  if(isVVT&&document.getElementById('vvtZoneRows').children.length===0){vvtAddZone();vvtAddZone();vvtAddZone();}
   // VAV families: pre-select recommended controller
   if(isVAV){
     var reqMods=f?f.required_modules:[];
@@ -2290,6 +2485,13 @@ async function doAssemble(){
     }else if(activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER'){
       var params=chwpGetParams();
       res=await fetch('api/chwp-assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params,controller_model:document.getElementById('selCtrl').value})});
+    }else if(activeFamily.startsWith('VVT-')){
+      var vvtData=vvtGetParams();
+      res=await fetch('api/assemble-vvt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(vvtData)});
+      if(!res.ok){var e=await res.json();throw new Error(e.detail);}
+      var r=await res.json();
+      vvtRenderResults(r);
+      return;
     }else{
       var mods=Array.from(selected);
       var plantCoreCats={'hw-core':1,'chw-core':1};
@@ -2314,8 +2516,18 @@ function renderResults(r){
   // Store config_id for IO schedule export/import
   if(r.config_id){
     currentConfigId=r.config_id;
-    document.getElementById('btnExportIOSched').style.display='';
-    document.getElementById('btnImportIOSched').style.display='';
+    var isTerminal=activeFamily.startsWith('VAV-SD-')||activeFamily.startsWith('VAV-PF-')||activeFamily.startsWith('VAV-SF-')||activeFamily.startsWith('VAV-DD-')||activeFamily.startsWith('VVT-');
+    var btnExp=document.getElementById('btnExportIOSched');
+    var btnImp=document.getElementById('btnImportIOSched');
+    btnExp.style.display='';
+    btnImp.style.display='';
+    if(isTerminal){
+      btnExp.disabled=true;btnExp.style.opacity='0.4';btnExp.title='IO import/export not available for VAV terminal units \u2014 factory points are firmware-controlled.';
+      btnImp.disabled=true;btnImp.style.opacity='0.4';btnImp.title='IO import/export not available for VAV terminal units \u2014 factory points are firmware-controlled.';
+    }else{
+      btnExp.disabled=false;btnExp.style.opacity='1';btnExp.title='';
+      btnImp.disabled=false;btnImp.style.opacity='1';btnImp.title='';
+    }
   }
   const c=r.counts,ctrl=r.controller;
   const exp=ctrl.expansion_count?ctrl.expansion_count+'x '+ctrl.expansion_model:'none';
@@ -2848,6 +3060,75 @@ async function saveBasFile(){
   document.getElementById('edStatus').textContent='Saved: '+editorFile;
 }
 
+// VVT Builder Functions
+var vvtZoneCounter=0;
+function vvtAddZone(){
+  vvtZoneCounter++;
+  var tbody=document.getElementById('vvtZoneRows');
+  var tr=document.createElement('tr');
+  tr.id='vvtZone_'+vvtZoneCounter;
+  tr.style.borderBottom='1px solid #1e293b';
+  tr.innerHTML='<td style="padding:2px 4px">'+vvtZoneCounter+'</td>'+
+    '<td style="padding:2px 4px"><input type="text" value="VAV-'+vvtZoneCounter+'" style="width:60px;padding:2px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:3px" class="vvt-tag"></td>'+
+    '<td style="padding:2px 4px"><select class="vvt-rh" style="font-size:0.85em;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:3px">'+
+    '<option value="none">None</option><option value="hw-mod">HW Mod</option><option value="hw-flt">HW Float</option>'+
+    '<option value="elec-1">Elec 1</option><option value="elec-2">Elec 2</option></select></td>'+
+    '<td style="padding:2px 4px"><select class="vvt-stat" style="font-size:0.85em;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:3px">'+
+    '<option value="hardwired">HW</option><option value="comm">Comm</option></select></td>'+
+    '<td style="padding:2px 4px;cursor:pointer;color:#ef4444" onclick="this.parentElement.remove()">x</td>';
+  tbody.appendChild(tr);
+}
+function vvtGetParams(){
+  var zones=[];
+  var rows=document.getElementById('vvtZoneRows').children;
+  for(var i=0;i<rows.length;i++){
+    zones.push({
+      address:i+1,
+      tag:rows[i].querySelector('.vvt-tag').value,
+      reheat:rows[i].querySelector('.vvt-rh').value,
+      stat:rows[i].querySelector('.vvt-stat').value
+    });
+  }
+  return {
+    system_tag:document.getElementById('vvt_system_tag').value,
+    htg_stages:parseInt(document.getElementById('vvt_htg_stages').value),
+    clg_stages:parseInt(document.getElementById('vvt_clg_stages').value),
+    has_bypass:document.getElementById('vvt_has_bypass').checked,
+    zones:zones
+  };
+}
+function vvtRenderResults(r){
+  document.getElementById('results').style.display='block';
+  var html='<div style="color:#94a3b8;font-size:0.9em">';
+  html+='<h3 style="color:#e2e8f0">VVT System: '+r.system_tag+' ('+r.zone_count+' zones, '+r.htg_stages+'H/'+r.clg_stages+'C)</h3>';
+  if(r.warnings&&r.warnings.length>0){
+    r.warnings.forEach(function(w){html+='<div style="color:#fbbf24;margin:4px 0">&#9888; '+w+'</div>';});
+  }
+  // MPV
+  var mpv=r.controllers.mpv;
+  html+='<h4 style="color:#38bdf8;margin-top:12px">MPV: '+mpv.tag+' ('+mpv.controller+')</h4>';
+  html+='<div>I:'+mpv.counts.inputs+' O:'+mpv.counts.outputs+' V:'+mpv.counts.values+' ARR:'+mpv.counts.arrays+' PRG:'+mpv.counts.programs+'</div>';
+  html+='<details><summary style="cursor:pointer;color:#94a3b8">Programs ('+mpv.programs.length+')</summary><table style="width:100%;font-size:0.85em;border-collapse:collapse">';
+  mpv.programs.forEach(function(p){html+='<tr style="border-bottom:1px solid #1e293b"><td style="padding:2px">'+p.instance+'</td><td>'+p.name+'</td><td style="color:#64748b">'+p.desc+'</td></tr>';});
+  html+='</table></details>';
+  // Bypass
+  if(r.controllers.bypass){
+    var byp=r.controllers.bypass;
+    html+='<h4 style="color:#38bdf8;margin-top:12px">Bypass: '+byp.tag+' ('+byp.controller+')</h4>';
+    html+='<div>I:'+byp.counts.inputs+' O:'+byp.counts.outputs+' V:'+byp.counts.values+' L:'+byp.counts.loops+' PRG:'+byp.counts.programs+'</div>';
+  }
+  // Zones
+  html+='<h4 style="color:#38bdf8;margin-top:12px">Zone Controllers</h4>';
+  html+='<table style="width:100%;font-size:0.85em;border-collapse:collapse"><tr style="color:#94a3b8;border-bottom:1px solid #334155"><th style="text-align:left;padding:2px 4px">#</th><th style="text-align:left;padding:2px 4px">Tag</th><th style="text-align:left;padding:2px 4px">Controller</th><th style="text-align:left;padding:2px 4px">Reheat</th><th style="text-align:left;padding:2px 4px">Stat</th><th style="text-align:left;padding:2px 4px">I/O/V/PRG</th></tr>';
+  r.controllers.zones.forEach(function(z){
+    html+='<tr style="border-bottom:1px solid #1e293b"><td style="padding:2px 4px">'+z.address+'</td><td style="padding:2px 4px">'+z.tag+'</td><td style="padding:2px 4px">'+z.controller+'</td><td style="padding:2px 4px">'+z.reheat+'</td><td style="padding:2px 4px">'+z.stat+'</td><td style="padding:2px 4px">'+z.counts.inputs+'/'+z.counts.outputs+'/'+z.counts.values+'/'+z.counts.programs+'</td></tr>';
+  });
+  html+='</table></div>';
+  document.getElementById('tabContents').innerHTML=html;
+  document.getElementById('tabBar').innerHTML='';
+  document.getElementById('stats').innerHTML='';
+  document.getElementById('status').textContent='VVT System assembled: '+r.zone_count+' zones + MPV'+(r.has_bypass?' + bypass':'');
+}
 init();
 </script>
 <div class="modal-bg" id="intakeModal">

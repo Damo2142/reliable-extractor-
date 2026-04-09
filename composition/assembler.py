@@ -98,6 +98,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     value_names = set()
     loop_instances = {}
     table_instances = {}
+    array_instances = {}
     program_instances = {}
     schedule_instances = {}
     system_group_names = {}
@@ -112,6 +113,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
         mod_values = copy.deepcopy(mod.values)
         mod_loops = copy.deepcopy(mod.loops)
         mod_tables = copy.deepcopy(mod.tables)
+        mod_arrays = copy.deepcopy(mod.arrays)
         mod_programs = copy.deepcopy(mod.programs)
         mod_schedules = copy.deepcopy(mod.schedules)
         mod_system_groups = copy.deepcopy(mod.system_groups)
@@ -172,6 +174,11 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                 tbl.module = mid
                 table_instances[tbl.instance] = tbl
 
+        for arr in mod_arrays:
+            if arr.instance not in array_instances:
+                arr.module = mid
+                array_instances[arr.instance] = arr
+
         for prg in mod_programs:
             if prg.instance not in program_instances:
                 prg.module = mid
@@ -193,6 +200,7 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     config.values = [value_instances[i] for i in sorted(value_instances.keys())]
     config.loops = [loop_instances[i] for i in sorted(loop_instances.keys())]
     config.tables = [table_instances[i] for i in sorted(table_instances.keys())]
+    config.arrays = [array_instances[i] for i in sorted(array_instances.keys())]
     config.programs = [program_instances[i] for i in sorted(program_instances.keys())]
     config.schedules = [schedule_instances[i] for i in sorted(schedule_instances.keys())]
     config.system_groups = list(system_group_names.values())
@@ -417,7 +425,7 @@ def _select_controller(config: ControllerConfig, model_override: str = "auto"):
 
     # Auto-select: VAV terminal unit families use RC-FLEXair
     # VAV-AHU is an AHU family (not a terminal unit) — exclude it
-    _VAV_TERMINAL_FAMILIES = ("VAV-SD-", "VAV-PF-", "VAV-SF-", "VAV-DD-")
+    _VAV_TERMINAL_FAMILIES = ("VAV-SD-", "VAV-PF-", "VAV-SF-", "VAV-DD-", "VVT-ZONE", "VVT-BYPASS")
     if config.equipment_family.startswith(_VAV_TERMINAL_FAMILIES):
         # Check if any AO outputs exist — RCFA-12 has no AO
         has_ao = any(o.point_type == "AO" for o in config.outputs)
@@ -437,6 +445,13 @@ def _select_controller(config: ControllerConfig, model_override: str = "auto"):
                 return
         # Fallback to largest RCFA
         config.controller_model = "RCFA-36"
+        config.expansion_count = 0
+        config.expansion_model = ""
+        return
+
+    # Auto-select: VVT-MPV uses MACH-ProView LCD (or MPZ-88)
+    if config.equipment_family == "VVT-MPV":
+        config.controller_model = "MPV-LCD"
         config.expansion_count = 0
         config.expansion_model = ""
         return
