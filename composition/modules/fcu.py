@@ -8,7 +8,7 @@ Families: 2-pipe switchover, 2-pipe CHW only, 4-pipe CHW+HW,
 Standard I/O:
   AI1 = DAT (discharge air temp, 10K type III, mandatory)
   AI3 = RMT (room temp, 10K type III)
-  BI2 = FAN-STS (fan status feedback)
+  BI2 = SF-STS (fan status feedback)
 
 Control Architecture — Cascaded PID:
   PRG01 MODE-CTRL: occupancy, setpoint selection
@@ -76,7 +76,7 @@ REM CHW modulating valve driven by CLG-DAT-LOOP
 REM CLG-DAT-LOOP: input=ACT-DAT vs setpoint=CLG-DAT-SP, direct acting
 REM
 CHW-VLV = CLG-DAT-LOOP
-IF ACT-DAT < CFG-DAT-CLG-MIN THEN CHW-VLV = 0
+IF ACT-DAT < CFG-DAT-LL THEN CHW-VLV = 0
 IF FREEZE-TRIP = 1 THEN CHW-VLV = 0
 IF OCC-MODE = 0 AND ACT-RMT < CFG-UNOCC-CLG-SP THEN CHW-VLV = 0
 """
@@ -91,7 +91,7 @@ IF CHW-VLV-C = 1 THEN CHW-VLV-POS = CHW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
 CHW-VLV-POS = LIMIT( CHW-VLV-POS, 0.0, 100.0 )
 IF CLG-DAT-LOOP > ( CHW-VLV-POS + CFG-FLT-DB ) THEN CHW-VLV-O = 1 ELSE CHW-VLV-O = 0
 IF CLG-DAT-LOOP < ( CHW-VLV-POS - CFG-FLT-DB ) THEN CHW-VLV-C = 1 ELSE CHW-VLV-C = 0
-IF ACT-DAT < CFG-DAT-CLG-MIN THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
+IF ACT-DAT < CFG-DAT-LL THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
 IF FREEZE-TRIP = 1 THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
 IF OCC-MODE = 0 AND ACT-RMT < CFG-UNOCC-CLG-SP THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
 """
@@ -181,7 +181,7 @@ REM HW modulating valve driven by HTG-DAT-LOOP
 REM HTG-DAT-LOOP: input=ACT-DAT vs setpoint=HTG-DAT-SP, reverse acting
 REM
 HW-VLV = HTG-DAT-LOOP
-IF ACT-DAT > CFG-DAT-HTG-MAX THEN HW-VLV = 0
+IF ACT-DAT > CFG-DAT-HL THEN HW-VLV = 0
 IF FREEZE-TRIP = 1 THEN HW-VLV = 0
 IF OCC-MODE = 0 AND ACT-RMT > CFG-UNOCC-HTG-SP THEN HW-VLV = 0
 """
@@ -195,7 +195,7 @@ IF HW-VLV-C = 1 THEN HW-VLV-POS = HW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
 HW-VLV-POS = LIMIT( HW-VLV-POS, 0.0, 100.0 )
 IF HTG-DAT-LOOP > ( HW-VLV-POS + CFG-FLT-DB ) THEN HW-VLV-O = 1 ELSE HW-VLV-O = 0
 IF HTG-DAT-LOOP < ( HW-VLV-POS - CFG-FLT-DB ) THEN HW-VLV-C = 1 ELSE HW-VLV-C = 0
-IF ACT-DAT > CFG-DAT-HTG-MAX THEN HW-VLV-O = 0 : HW-VLV-C = 1
+IF ACT-DAT > CFG-DAT-HL THEN HW-VLV-O = 0 : HW-VLV-C = 1
 IF FREEZE-TRIP = 1 THEN HW-VLV-O = 0 : HW-VLV-C = 1
 IF OCC-MODE = 0 AND ACT-RMT > CFG-UNOCC-HTG-SP THEN HW-VLV-O = 0 : HW-VLV-C = 1
 """
@@ -342,7 +342,7 @@ def build_fcu_core():
 
         inputs=[
             InputPoint(1, "DAT", "AI", "10K -40 ->250", "Discharge Air Temperature", "°F"),
-            InputPoint(2, "FAN-STS", "BI", "Off/On", "Fan Status Feedback"),
+            InputPoint(2, "SF-STS", "BI", "Off/On", "Fan Status Feedback"),
             InputPoint(3, "RMT", "AI", "10K -40 ->250", "Room Temperature", "°F"),
         ],
 
@@ -369,8 +369,8 @@ def build_fcu_core():
             ValuePoint(35, "CFG-HTG-DAT-MIN", "AV", 85.0,  "Min Heating DAT SP",          "°F"),
             ValuePoint(36, "CFG-HTG-DAT-MAX", "AV", 110.0, "Max Heating DAT SP",          "°F"),
             # DAT safety limits
-            ValuePoint(37, "CFG-DAT-CLG-MIN", "AV", 45.0,  "DAT Cooling Low Limit",       "°F"),
-            ValuePoint(38, "CFG-DAT-HTG-MAX", "AV", 110.0, "DAT Heating High Limit",      "°F"),
+            ValuePoint(37, "CFG-DAT-LL",      "AV", 45.0,  "DAT Low Limit (safety)",      "°F"),
+            ValuePoint(38, "CFG-DAT-HL",      "AV", 110.0, "DAT High Limit (safety)",     "°F"),
             ValuePoint(39, "CFG-DAT-FREEZE",  "AV", 38.0,  "DAT Freeze Protection",       "°F"),
             # Stage thresholds
             ValuePoint(40, "CFG-STG1-T",      "AV", 50.0,  "Stage 1 Threshold",           "%"),

@@ -297,8 +297,11 @@ def build():
         description="Base VAV: occupancy modes, HVAC modes, flow control, network vars, array populate, faults",
         is_core=True,
 
-        # Factory reserved inputs — display only, come from RC-FLEXair blank
+        # DAT mandatory on ALL VAV families (SBS standard)
+        # Reheat modules also define DAT — assembler deduplicates by name
         inputs=[
+            InputPoint(1, "DAT",     "AI", "10K -40 ->250",
+                       "Discharge Air Temperature", "°F"),
             InputPoint(4, "VP",      "AI", "0.0 ->1.0 in.wc.",
                        "Velocity Pressure (factory)", "in.wc.", module="FACTORY"),
             InputPoint(5, "DMP-POS", "AI", "0 ->100%",

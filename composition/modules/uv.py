@@ -8,7 +8,7 @@ Standard I/O:
   AI1 = DAT (discharge air temp, 10K type III, mandatory)
   AI2 = OAT (outdoor air temp, 10K type III)
   AI3 = RMT (room temp, 10K type III)
-  BI1 = FAN-STS (fan status feedback)
+  BI = SF-STS (fan status feedback)
 
 Control Architecture — Cascaded PID:
   PRG01 MODE-CTRL: occupancy, setpoint selection
@@ -107,7 +107,7 @@ REM --- HTG-OUTPUT ---
 REM HW modulating valve from HTG-DAT-LOOP
 REM
 IF FREEZE-PROT = 0 THEN HW-VLV = HTG-DAT-LOOP
-IF ACT-DAT > CFG-DAT-HTG-MAX THEN HW-VLV = 0
+IF ACT-DAT > CFG-DAT-HL THEN HW-VLV = 0
 IF FREEZE-PROT = 1 THEN HW-VLV = CFG-UV-FREEZE-VLV
 """
 
@@ -120,7 +120,7 @@ IF HW-VLV-C = 1 THEN HW-VLV-POS = HW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
 HW-VLV-POS = LIMIT( HW-VLV-POS, 0.0, 100.0 )
 IF FREEZE-PROT = 0 AND HTG-DAT-LOOP > ( HW-VLV-POS + CFG-FLT-DB ) THEN HW-VLV-O = 1 ELSE HW-VLV-O = 0
 IF FREEZE-PROT = 0 AND HTG-DAT-LOOP < ( HW-VLV-POS - CFG-FLT-DB ) THEN HW-VLV-C = 1 ELSE HW-VLV-C = 0
-IF ACT-DAT > CFG-DAT-HTG-MAX THEN HW-VLV-O = 0 : HW-VLV-C = 1
+IF ACT-DAT > CFG-DAT-HL THEN HW-VLV-O = 0 : HW-VLV-C = 1
 IF FREEZE-PROT = 1 THEN HW-VLV-O = 1 : HW-VLV-C = 0
 """
 
@@ -129,7 +129,7 @@ REM --- HTG-OUTPUT ---
 REM Steam modulating valve from HTG-DAT-LOOP
 REM
 IF FREEZE-PROT = 0 THEN STM-VLV = HTG-DAT-LOOP
-IF ACT-DAT > CFG-DAT-HTG-MAX THEN STM-VLV = 0
+IF ACT-DAT > CFG-DAT-HL THEN STM-VLV = 0
 IF FREEZE-PROT = 1 THEN STM-VLV = CFG-UV-FREEZE-VLV
 """
 
@@ -139,7 +139,7 @@ REM Steam on/off valve from HTG-DAT-LOOP threshold
 REM
 IF HTG-DAT-LOOP > 50 THEN STM-VLV = 1
 IF HTG-DAT-LOOP < 40 THEN STM-VLV = 0
-IF ACT-DAT > CFG-DAT-HTG-MAX THEN STM-VLV = 0
+IF ACT-DAT > CFG-DAT-HL THEN STM-VLV = 0
 IF FREEZE-PROT = 1 THEN STM-VLV = 1
 """
 
@@ -150,7 +150,7 @@ REM In cold mode: valve = HW-DEMAND (100%)
 REM In mild mode: valve = HW-DEMAND (from loop)
 REM
 HW-VLV = HW-DEMAND
-IF ACT-DAT > CFG-DAT-HTG-MAX THEN HW-VLV = 0
+IF ACT-DAT > CFG-DAT-HL THEN HW-VLV = 0
 """
 
 _PRG06_CHW_MOD = """\
@@ -158,7 +158,7 @@ REM --- CLG-OUTPUT ---
 REM CHW modulating valve from CLG-DAT-LOOP
 REM
 CHW-VLV = CLG-DAT-LOOP
-IF ACT-DAT < CFG-DAT-CLG-MIN THEN CHW-VLV = 0
+IF ACT-DAT < CFG-DAT-LL THEN CHW-VLV = 0
 IF FREEZE-PROT = 1 THEN CHW-VLV = 0
 """
 
@@ -171,7 +171,7 @@ IF CHW-VLV-C = 1 THEN CHW-VLV-POS = CHW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
 CHW-VLV-POS = LIMIT( CHW-VLV-POS, 0.0, 100.0 )
 IF CLG-DAT-LOOP > ( CHW-VLV-POS + CFG-FLT-DB ) THEN CHW-VLV-O = 1 ELSE CHW-VLV-O = 0
 IF CLG-DAT-LOOP < ( CHW-VLV-POS - CFG-FLT-DB ) THEN CHW-VLV-C = 1 ELSE CHW-VLV-C = 0
-IF ACT-DAT < CFG-DAT-CLG-MIN THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
+IF ACT-DAT < CFG-DAT-LL THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
 IF FREEZE-PROT = 1 THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
 """
 
@@ -297,7 +297,7 @@ def build_uv_core():
             InputPoint(1, "DAT", "AI", "10K -40 ->250", "Discharge Air Temperature", "°F"),
             InputPoint(2, "OAT", "AI", "10K -40 ->250", "Outdoor Air Temperature", "°F"),
             InputPoint(3, "RMT", "AI", "10K -40 ->250", "Room Temperature", "°F"),
-            InputPoint(4, "FAN-STS", "BI", "Off/On", "Fan Status Feedback"),
+            InputPoint(4, "SF-STS", "BI", "Off/On", "Fan Status Feedback"),
         ],
 
         values=[
@@ -320,8 +320,8 @@ def build_uv_core():
             ValuePoint(35, "CFG-HTG-DAT-MIN",  "AV", 85.0,  "Min Heating DAT SP",          "°F"),
             ValuePoint(36, "CFG-HTG-DAT-MAX",  "AV", 110.0, "Max Heating DAT SP",          "°F"),
             # Safety/config
-            ValuePoint(37, "CFG-DAT-CLG-MIN",  "AV", 45.0,  "DAT Cooling Low Limit",       "°F"),
-            ValuePoint(38, "CFG-DAT-HTG-MAX",  "AV", 110.0, "DAT Heating High Limit",      "°F"),
+            ValuePoint(37, "CFG-DAT-LL",  "AV", 45.0,  "DAT Low Limit (safety)",      "°F"),
+            ValuePoint(38, "CFG-DAT-HL",  "AV", 110.0, "DAT High Limit (safety)",     "°F"),
             ValuePoint(39, "CFG-DAT-FREEZE",   "AV", 38.0,  "DAT Freeze Protection",       "°F"),
             ValuePoint(40, "CFG-UV-FREEZE-OAT","AV", 35.0,  "Freeze Enable OAT",           "°F"),
             ValuePoint(41, "CFG-UV-FREEZE-VLV","AV", 20.0,  "Freeze Valve Position",       "%"),
