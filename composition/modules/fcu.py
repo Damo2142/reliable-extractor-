@@ -10,7 +10,11 @@ Standard I/O:
   AI3 = RMT (room temp, 10K type III)
   BI2 = FAN-STS (fan status feedback)
 
-Controller: MACH-ProZone 88 standard
+Control Architecture — Cascaded PID:
+  Primary loops: space temp vs setpoint → resets DAT setpoint
+  Secondary loops: DAT vs DAT-SP → drives valve/stage output
+
+Controller: MACH-ProZone 88 standard, MACH-ProView LCD optional
 """
 
 from composition.models import (
@@ -25,7 +29,7 @@ from composition.models import (
 
 _PRG_FCU_CFG = """\
 REM --- FCU-CFG-PRG ---
-REM Configuration — reads sensors, network data, mode determination
+REM Configuration — sensors, network data, occupancy, mode
 REM {parent} = parent AHU or plant device for network variables
 REM
 REM --- Read Sensors ---
@@ -35,6 +39,7 @@ REM
 REM --- Network Reads ---
 NET-OCC-CMD = {parent}BV21
 HWS-OK = {parent}BV22
+NET-OAT = {parent}AV20
 REM
 REM --- Occupancy ---
 IF USE-LOC-SCHD THEN OCC-CMD = LOCAL-SCHEDULE ELSE OCC-CMD = NET-OCC-CMD
@@ -46,9 +51,20 @@ IF OCC-CMD AND ACT-RMT > CLG-SP THEN HVAC-MODE = 2
 IF OCC-CMD AND ACT-RMT < HTG-SP THEN HVAC-MODE = 3
 IF OCC-CMD AND ACT-RMT >= HTG-SP AND ACT-RMT <= CLG-SP THEN HVAC-MODE = 4
 REM
-REM --- DAT Limits ---
+REM --- Unoccupied Override ---
+IF NOT OCC-CMD AND ACT-RMT > ( CLG-SP + CFG-UNOCC-DB ) THEN HVAC-MODE = 2
+IF NOT OCC-CMD AND ACT-RMT < ( HTG-SP - CFG-UNOCC-DB ) THEN HVAC-MODE = 3
+REM
+REM --- DAT Safety Limits ---
 DAT-LL-ALARM = ACT-DAT < CFG-DAT-LL
 DAT-HL-ALARM = ACT-DAT > CFG-DAT-HL
+IF DAT-LL-ALARM THEN HVAC-MODE = 1
+REM
+REM --- Loop Demand Calc ---
+REM Primary loops generate DAT setpoints, secondary loops generate demand
+IF HVAC-MODE = 2 THEN LOOP-DEMAND = CLG-DAT-DEMAND
+IF HVAC-MODE = 3 THEN LOOP-DEMAND = HTG-DAT-DEMAND
+IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN LOOP-DEMAND = 0.0
 REM
 999 REM End
 """
@@ -56,16 +72,13 @@ REM
 _PRG_FAN_CV = """\
 REM --- FCU-FAN-PRG ---
 REM Fan control — constant volume on/off
+REM Fan runs when any loop demand present or unoccupied override
 REM
-REM Fan runs when occupied or unoccupied deviation exceeds deadband
-IF HVAC-MODE > 1 THEN FAN-CMD = 1
-IF HVAC-MODE = 1 AND ACT-RMT > ( CLG-SP + CFG-UNOCC-DB ) THEN FAN-CMD = 1
-IF HVAC-MODE = 1 AND ACT-RMT < ( HTG-SP - CFG-UNOCC-DB ) THEN FAN-CMD = 1
-IF HVAC-MODE = 1 AND ACT-RMT <= ( CLG-SP + CFG-UNOCC-DB ) AND ACT-RMT >= ( HTG-SP - CFG-UNOCC-DB ) THEN FAN-CMD = 0
+IF LOOP-DEMAND > 0.0 THEN FAN-CMD = 1
+IF HVAC-MODE <= 1 AND LOOP-DEMAND = 0.0 THEN FAN-CMD = 0
+IF HVAC-MODE = 4 THEN FAN-CMD = 1
 REM
 FAN-S/S = FAN-CMD
-REM
-REM --- Fan Status / Fail ---
 FAN-FAIL = FAN-CMD AND NOT FAN-STS
 REM
 999 REM End
@@ -73,19 +86,19 @@ REM
 
 _PRG_FAN_MS = """\
 REM --- FCU-FAN-PRG ---
-REM Fan control — multi-speed (low/med/high)
+REM Fan control — multi-speed from loop demand
+REM Low < 33%, Med 33-66%, High > 66%
 REM
-REM Determine speed from demand
-IF HVAC-MODE = 1 THEN FAN-CMD = 0
+IF HVAC-MODE <= 1 THEN FAN-CMD = 0
 IF HVAC-MODE = 4 THEN FAN-CMD = 1
-IF HVAC-MODE = 2 THEN FAN-CMD = LIMIT( 1 + ( ACT-RMT - CLG-SP ) / 3.0, 1, 3 )
-IF HVAC-MODE = 3 THEN FAN-CMD = LIMIT( 1 + ( HTG-SP - ACT-RMT ) / 3.0, 1, 3 )
+IF HVAC-MODE = 2 OR HVAC-MODE = 3 THEN FAN-CMD = 1
+IF LOOP-DEMAND > 66.0 THEN FAN-CMD = 3
+IF LOOP-DEMAND > 33.0 AND LOOP-DEMAND <= 66.0 THEN FAN-CMD = 2
+IF LOOP-DEMAND > 0.0 AND LOOP-DEMAND <= 33.0 THEN FAN-CMD = 1
 REM
-REM --- Stage to relays ---
 FAN-LO = FAN-CMD >= 1
 FAN-MED = FAN-CMD >= 2
 FAN-HI = FAN-CMD >= 3
-REM
 FAN-FAIL = ( FAN-CMD > 0 ) AND NOT FAN-STS
 REM
 999 REM End
@@ -93,26 +106,25 @@ REM
 
 _PRG_FAN_VFD = """\
 REM --- FCU-FAN-PRG ---
-REM Fan control — VFD speed
+REM Fan control — VFD speed tracks loop demand
 REM
-IF HVAC-MODE = 1 THEN FAN-SPD = 0.0
+IF HVAC-MODE <= 1 THEN FAN-SPD = 0.0
 IF HVAC-MODE = 4 THEN FAN-SPD = CFG-FAN-MIN-SPD
-IF HVAC-MODE = 2 THEN FAN-SPD = SLIDE( ACT-RMT - CLG-SP, 0.0, 5.0, CFG-FAN-MIN-SPD, 100.0 )
-IF HVAC-MODE = 3 THEN FAN-SPD = SLIDE( HTG-SP - ACT-RMT, 0.0, 5.0, CFG-FAN-MIN-SPD, 100.0 )
+IF HVAC-MODE = 2 OR HVAC-MODE = 3 THEN FAN-SPD = SLIDE( LOOP-DEMAND, 0.0, 100.0, CFG-FAN-MIN-SPD, 100.0 )
 REM
-FAN-FAIL = ( FAN-SPD > 0 ) AND NOT FAN-STS
+FAN-FAIL = ( FAN-SPD > 0.0 ) AND NOT FAN-STS
 REM
 999 REM End
 """
 
 _PRG_CHW_MOD = """\
 REM --- FCU-CLG-PRG ---
-REM Cooling control — CHW modulating valve
+REM Cooling — CHW modulating valve from CLG-DAT-LOOP output
 REM
-IF HVAC-MODE = 2 THEN CHW-VLV = SLIDE( ACT-RMT - CLG-SP, 0.0, 3.0, 0.0, 100.0 )
+IF HVAC-MODE = 2 THEN CHW-VLV = CLG-DAT-DEMAND
 IF HVAC-MODE <> 2 THEN CHW-VLV = 0.0
 REM
-REM --- DAT low limit override ---
+REM --- Safety override ---
 IF DAT-LL-ALARM THEN CHW-VLV = 0.0
 REM
 999 REM End
@@ -120,11 +132,12 @@ REM
 
 _PRG_CHW_FLT = """\
 REM --- FCU-CLG-PRG ---
-REM Cooling control — CHW floating point valve
+REM Cooling — CHW floating point valve from loop demand
 REM
-IF HVAC-MODE = 2 AND ACT-RMT > ( CLG-SP + 0.5 ) THEN CHW-VLV-O = 1 ELSE CHW-VLV-O = 0
-IF HVAC-MODE = 2 AND ACT-RMT < ( CLG-SP - 0.5 ) THEN CHW-VLV-C = 1 ELSE CHW-VLV-C = 0
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > ( CHW-VLV-POS + 3.0 ) THEN CHW-VLV-O = 1 ELSE CHW-VLV-O = 0
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND < ( CHW-VLV-POS - 3.0 ) THEN CHW-VLV-C = 1 ELSE CHW-VLV-C = 0
 IF HVAC-MODE <> 2 THEN CHW-VLV-C = 1
+IF HVAC-MODE <> 2 THEN CHW-VLV-O = 0
 REM
 IF DAT-LL-ALARM THEN CHW-VLV-O = 0
 IF DAT-LL-ALARM THEN CHW-VLV-C = 1
@@ -134,12 +147,12 @@ REM
 
 _PRG_HW_MOD = """\
 REM --- FCU-HTG-PRG ---
-REM Heating control — HW modulating valve
+REM Heating — HW modulating valve from HTG-DAT-LOOP output
 REM
-IF HVAC-MODE = 3 THEN HW-VLV = SLIDE( HTG-SP - ACT-RMT, 0.0, 3.0, 0.0, 100.0 )
+IF HVAC-MODE = 3 THEN HW-VLV = HTG-DAT-DEMAND
 IF HVAC-MODE <> 3 THEN HW-VLV = 0.0
 REM
-REM --- DAT high limit override ---
+REM --- Safety override ---
 IF DAT-HL-ALARM THEN HW-VLV = 0.0
 REM
 999 REM End
@@ -147,11 +160,12 @@ REM
 
 _PRG_HW_FLT = """\
 REM --- FCU-HTG-PRG ---
-REM Heating control — HW floating point valve
+REM Heating — HW floating point valve from loop demand
 REM
-IF HVAC-MODE = 3 AND ACT-RMT < ( HTG-SP - 0.5 ) THEN HW-VLV-O = 1 ELSE HW-VLV-O = 0
-IF HVAC-MODE = 3 AND ACT-RMT > ( HTG-SP + 0.5 ) THEN HW-VLV-C = 1 ELSE HW-VLV-C = 0
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > ( HW-VLV-POS + 3.0 ) THEN HW-VLV-O = 1 ELSE HW-VLV-O = 0
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND < ( HW-VLV-POS - 3.0 ) THEN HW-VLV-C = 1 ELSE HW-VLV-C = 0
 IF HVAC-MODE <> 3 THEN HW-VLV-C = 1
+IF HVAC-MODE <> 3 THEN HW-VLV-O = 0
 REM
 IF DAT-HL-ALARM THEN HW-VLV-O = 0
 IF DAT-HL-ALARM THEN HW-VLV-C = 1
@@ -160,27 +174,29 @@ REM
 """
 
 _PRG_ELEC_1 = """\
-REM --- FCU-HTG-PRG ---
-REM Heating control — 1 stage electric
+REM --- FCU-ELEC-PRG ---
+REM Heating — 1 stage electric from loop demand
+REM Stage enables when demand > CFG-STG1-T (default 50%)
 REM
-REM Electric lockout at DAT > 87F
-IF HVAC-MODE = 3 AND ACT-DAT < 87.0 AND FAN-CMD THEN ELEC-HTR-S/S = 1 ELSE ELEC-HTR-S/S = 0
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-STG1-T AND FAN-CMD THEN ELEC-HTR-S/S = 1 ELSE ELEC-HTR-S/S = 0
 REM
-REM --- DAT high limit override ---
+REM --- Safety: DAT > 87F lockout ---
+IF ACT-DAT > 87.0 THEN ELEC-HTR-S/S = 0
 IF DAT-HL-ALARM THEN ELEC-HTR-S/S = 0
 REM
 999 REM End
 """
 
 _PRG_ELEC_2 = """\
-REM --- FCU-HTG-PRG ---
-REM Heating control — 2 stage electric
+REM --- FCU-ELEC-PRG ---
+REM Heating — 2 stage electric from loop demand
+REM Stage 1 > CFG-STG1-T, Stage 2 > CFG-STG2-T
 REM
-REM Stage 1: enable on heating demand with fan proven
-IF HVAC-MODE = 3 AND ACT-DAT < 87.0 AND FAN-CMD THEN ELEC-HTR1-S/S = 1 ELSE ELEC-HTR1-S/S = 0
-REM Stage 2: enable when temp still below SP after stage 1
-IF ELEC-HTR1-S/S AND ( HTG-SP - ACT-RMT ) > 3.0 AND ACT-DAT < 87.0 THEN ELEC-HTR2-S/S = 1 ELSE ELEC-HTR2-S/S = 0
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-STG1-T AND FAN-CMD THEN ELEC-HTR1-S/S = 1 ELSE ELEC-HTR1-S/S = 0
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-STG2-T AND FAN-CMD THEN ELEC-HTR2-S/S = 1 ELSE ELEC-HTR2-S/S = 0
 REM
+IF ACT-DAT > 87.0 THEN ELEC-HTR1-S/S = 0
+IF ACT-DAT > 87.0 THEN ELEC-HTR2-S/S = 0
 IF DAT-HL-ALARM THEN ELEC-HTR1-S/S = 0
 IF DAT-HL-ALARM THEN ELEC-HTR2-S/S = 0
 REM
@@ -189,19 +205,18 @@ REM
 
 _PRG_2PIPE_MOD = """\
 REM --- FCU-2PIPE-PRG ---
-REM 2-pipe switchover — single modulating valve
+REM 2-pipe switchover — modulating valve controlled by active DAT loop
 REM {parent} for HWS-OK network variable
 REM
 REM --- Switchover Logic ---
-REM Heating mode when HW available OR OAT below switchover temp
 IF HWS-OK OR ( NET-OAT < CFG-SWITCHOVER-T ) THEN HTG-MODE = 1 ELSE HTG-MODE = 0
 REM
-REM --- Valve Control ---
-IF HTG-MODE AND HVAC-MODE = 3 THEN VLV = SLIDE( HTG-SP - ACT-RMT, 0.0, 3.0, 0.0, 100.0 )
-IF NOT HTG-MODE AND HVAC-MODE = 2 THEN VLV = SLIDE( ACT-RMT - CLG-SP, 0.0, 3.0, 0.0, 100.0 )
+REM --- Valve from active loop demand ---
+IF HTG-MODE AND HVAC-MODE = 3 THEN VLV = HTG-DAT-DEMAND
+IF NOT HTG-MODE AND HVAC-MODE = 2 THEN VLV = CLG-DAT-DEMAND
 IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN VLV = 0.0
 REM
-REM --- DAT Limits ---
+REM --- Safety ---
 IF DAT-LL-ALARM AND NOT HTG-MODE THEN VLV = 0.0
 IF DAT-HL-ALARM AND HTG-MODE THEN VLV = 0.0
 REM
@@ -210,19 +225,19 @@ REM
 
 _PRG_2PIPE_FLT = """\
 REM --- FCU-2PIPE-PRG ---
-REM 2-pipe switchover — floating point valve
+REM 2-pipe switchover — floating point valve from loop demand
 REM {parent} for HWS-OK network variable
 REM
-REM --- Switchover Logic ---
 IF HWS-OK OR ( NET-OAT < CFG-SWITCHOVER-T ) THEN HTG-MODE = 1 ELSE HTG-MODE = 0
 REM
-REM --- Valve Control (heating mode) ---
-IF HTG-MODE AND HVAC-MODE = 3 AND ACT-RMT < ( HTG-SP - 0.5 ) THEN VLV-O = 1 ELSE VLV-O = 0
-IF HTG-MODE AND HVAC-MODE = 3 AND ACT-RMT > ( HTG-SP + 0.5 ) THEN VLV-C = 1 ELSE VLV-C = 0
-REM --- Valve Control (cooling mode) ---
-IF NOT HTG-MODE AND HVAC-MODE = 2 AND ACT-RMT > ( CLG-SP + 0.5 ) THEN VLV-O = 1
-IF NOT HTG-MODE AND HVAC-MODE = 2 AND ACT-RMT < ( CLG-SP - 0.5 ) THEN VLV-C = 1
-REM --- Off ---
+REM --- Determine active demand ---
+IF HTG-MODE AND HVAC-MODE = 3 THEN ACTIVE-DMD = HTG-DAT-DEMAND
+IF NOT HTG-MODE AND HVAC-MODE = 2 THEN ACTIVE-DMD = CLG-DAT-DEMAND
+IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN ACTIVE-DMD = 0.0
+REM
+REM --- Float valve from demand ---
+IF ACTIVE-DMD > ( VLV-POS + 3.0 ) THEN VLV-O = 1 ELSE VLV-O = 0
+IF ACTIVE-DMD < ( VLV-POS - 3.0 ) THEN VLV-C = 1 ELSE VLV-C = 0
 IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN VLV-C = 1
 IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN VLV-O = 0
 REM
@@ -231,11 +246,12 @@ REM
 
 _PRG_DX_1 = """\
 REM --- FCU-DX-PRG ---
-REM DX cooling — single stage compressor
-REM Min on/off timer 3 minutes (180 seconds)
+REM DX cooling — single stage from loop demand
+REM Stage enables when CLG-DAT-DEMAND > CFG-STG1-T
+REM Min on/off timer 3 minutes
 REM
-IF HVAC-MODE = 2 AND ACT-RMT > ( CLG-SP + 1.0 ) THEN COMP-CMD = 1
-IF HVAC-MODE <> 2 OR ACT-RMT < ( CLG-SP - 1.0 ) THEN COMP-CMD = 0
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > CFG-STG1-T THEN COMP-CMD = 1
+IF HVAC-MODE <> 2 OR CLG-DAT-DEMAND < ( CFG-STG1-T - 10.0 ) THEN COMP-CMD = 0
 REM
 REM --- Min On/Off Timer ---
 COMP-S/S = TIME-ON( COMP-CMD, 180 )
@@ -246,17 +262,16 @@ REM
 
 _PRG_DX_2 = """\
 REM --- FCU-DX-PRG ---
-REM DX cooling — two stage compressor
-REM Stage 1 min on/off 3 min, stage 2 delay 5 min after stage 1
+REM DX cooling — two stage from loop demand
+REM Stage 1 > CFG-STG1-T, Stage 2 > CFG-STG2-T
+REM Stage 1 min on/off 3 min, Stage 2 delay 5 min
 REM
-REM --- Stage 1 ---
-IF HVAC-MODE = 2 AND ACT-RMT > ( CLG-SP + 1.0 ) THEN COMP1-CMD = 1
-IF HVAC-MODE <> 2 OR ACT-RMT < ( CLG-SP - 1.0 ) THEN COMP1-CMD = 0
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > CFG-STG1-T THEN COMP1-CMD = 1
+IF HVAC-MODE <> 2 OR CLG-DAT-DEMAND < ( CFG-STG1-T - 10.0 ) THEN COMP1-CMD = 0
 COMP1-S/S = TIME-ON( COMP1-CMD, 180 )
 REM
-REM --- Stage 2 (5 min delay after stage 1) ---
-IF COMP1-S/S AND ACT-RMT > ( CLG-SP + 2.0 ) THEN COMP2-CMD = 1
-IF NOT COMP1-S/S OR ACT-RMT < ( CLG-SP - 0.5 ) THEN COMP2-CMD = 0
+IF COMP1-S/S AND CLG-DAT-DEMAND > CFG-STG2-T THEN COMP2-CMD = 1
+IF NOT COMP1-S/S OR CLG-DAT-DEMAND < ( CFG-STG2-T - 10.0 ) THEN COMP2-CMD = 0
 COMP2-S/S = TIME-ON( COMP2-CMD, 300 )
 REM
 999 REM End
@@ -264,26 +279,24 @@ REM
 
 _PRG_HP_CORE = """\
 REM --- FCU-HP-PRG ---
-REM Heat pump — compressor and reversing valve control
+REM Heat pump — compressor from loop demand, reversing valve by mode
 REM CFG-RV-CLG: True = RV energized in cooling, False = RV energized in heating
 REM
-REM --- Compressor Command ---
-IF HVAC-MODE = 2 AND ACT-RMT > ( CLG-SP + 1.0 ) THEN COMP-CMD = 1
-IF HVAC-MODE = 3 AND ACT-RMT < ( HTG-SP - 1.0 ) THEN COMP-CMD = 1
+REM --- Compressor from active demand ---
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > CFG-STG1-T THEN COMP-CMD = 1
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-STG1-T THEN COMP-CMD = 1
 IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN COMP-CMD = 0
-IF HVAC-MODE = 2 AND ACT-RMT < ( CLG-SP - 1.0 ) THEN COMP-CMD = 0
-IF HVAC-MODE = 3 AND ACT-RMT > ( HTG-SP + 1.0 ) THEN COMP-CMD = 0
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND < ( CFG-STG1-T - 10.0 ) THEN COMP-CMD = 0
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND < ( CFG-STG1-T - 10.0 ) THEN COMP-CMD = 0
 REM
 REM --- Min On/Off Timer (3 minutes) ---
 COMP-S/S = TIME-ON( COMP-CMD, 180 )
 REM
 REM --- Reversing Valve ---
-REM CFG-RV-CLG=True: energize in cooling, de-energize in heating
-REM CFG-RV-CLG=False: energize in heating, de-energize in cooling
 IF CFG-RV-CLG THEN RV = ( HVAC-MODE = 2 )
 IF NOT CFG-RV-CLG THEN RV = ( HVAC-MODE = 3 )
 REM
-REM --- DAT Limits ---
+REM --- Safety ---
 IF DAT-LL-ALARM AND HVAC-MODE = 2 THEN COMP-CMD = 0
 IF DAT-HL-ALARM AND HVAC-MODE = 3 THEN COMP-CMD = 0
 REM
@@ -292,17 +305,15 @@ REM
 
 _PRG_HP_AUX = """\
 REM --- FCU-AUX-PRG ---
-REM Heat pump auxiliary electric heat
-REM Enables when HP running but room temp still falling after delay
-REM CFG-AUX-DELAY default 10 min (600 seconds)
+REM Heat pump aux electric — enables on high demand after delay
+REM Aux when HP running AND HTG-DAT-DEMAND > CFG-STG2-T after CFG-AUX-DELAY
 REM
-REM --- Aux Enable Logic ---
-REM HP must be running in heating AND room temp below setpoint after delay
-AUX-DEMAND = COMP-S/S AND ( HVAC-MODE = 3 ) AND ( ACT-RMT < ( HTG-SP - 2.0 ) )
+AUX-DEMAND = COMP-S/S AND ( HVAC-MODE = 3 ) AND ( HTG-DAT-DEMAND > CFG-STG2-T )
 AUX-HTR-S/S = TIME-ON( AUX-DEMAND, CFG-AUX-DELAY )
 REM
 REM --- Lockout: DAT > 87F ---
 IF ACT-DAT > 87.0 THEN AUX-HTR-S/S = 0
+IF DAT-HL-ALARM THEN AUX-HTR-S/S = 0
 REM
 999 REM End
 """
@@ -312,11 +323,9 @@ REM --- FCU-ECON-PRG ---
 REM Economizer — modulating OA damper
 REM Enable when OAT < RAT and OAT < CFG-ECON-ENABLE-T
 REM
-REM --- Economizer Enable ---
 ECON-ENABLE = ( NET-OAT < ACT-RMT ) AND ( NET-OAT < CFG-ECON-ENABLE-T ) AND OCC-CMD
 REM
-REM --- Damper Control ---
-IF ECON-ENABLE AND HVAC-MODE = 2 THEN OAD = SLIDE( ACT-RMT - CLG-SP, 0.0, 3.0, 0.0, 100.0 )
+IF ECON-ENABLE AND HVAC-MODE = 2 THEN OAD = CLG-DAT-DEMAND
 IF NOT ECON-ENABLE OR HVAC-MODE <> 2 THEN OAD = 0.0
 REM
 999 REM End
@@ -324,15 +333,36 @@ REM
 
 _PRG_ECON_FLT = """\
 REM --- FCU-ECON-PRG ---
-REM Economizer — floating point OA damper
-REM Enable when OAT < RAT and OAT < CFG-ECON-ENABLE-T
+REM Economizer — floating point OA damper from loop demand
 REM
 ECON-ENABLE = ( NET-OAT < ACT-RMT ) AND ( NET-OAT < CFG-ECON-ENABLE-T ) AND OCC-CMD
 REM
-IF ECON-ENABLE AND HVAC-MODE = 2 AND ACT-RMT > ( CLG-SP + 0.5 ) THEN OAD-O = 1 ELSE OAD-O = 0
-IF ECON-ENABLE AND HVAC-MODE = 2 AND ACT-RMT < ( CLG-SP - 0.5 ) THEN OAD-C = 1 ELSE OAD-C = 0
+IF ECON-ENABLE AND HVAC-MODE = 2 AND CLG-DAT-DEMAND > ( OAD-POS + 3.0 ) THEN OAD-O = 1 ELSE OAD-O = 0
+IF ECON-ENABLE AND HVAC-MODE = 2 AND CLG-DAT-DEMAND < ( OAD-POS - 3.0 ) THEN OAD-C = 1 ELSE OAD-C = 0
 IF NOT ECON-ENABLE OR HVAC-MODE <> 2 THEN OAD-C = 1
 IF NOT ECON-ENABLE OR HVAC-MODE <> 2 THEN OAD-O = 0
+REM
+999 REM End
+"""
+
+_PRG_FREEZESTAT = """\
+REM --- FCU-FREEZE-PRG ---
+REM Freezestat protection — trips on BI or DAT below CFG-FREEZE-T
+REM Manual reset required via FREEZE-RESET BV
+REM
+IF FREEZE-STAT OR ( ACT-DAT < CFG-FREEZE-T ) THEN FREEZE-TRIP = 1
+REM
+REM --- Latch until manual reset ---
+IF FREEZE-TRIP AND NOT FREEZE-RESET THEN FREEZE-LATCH = 1
+IF FREEZE-RESET THEN FREEZE-LATCH = 0
+IF FREEZE-RESET THEN FREEZE-TRIP = 0
+IF FREEZE-RESET THEN FREEZE-RESET = 0
+REM
+REM --- Shutdown when latched ---
+IF FREEZE-LATCH THEN FAN-CMD = 0
+IF FREEZE-LATCH THEN HVAC-MODE = 1
+REM
+FREEZE-ALARM = FREEZE-LATCH
 REM
 999 REM End
 """
@@ -343,12 +373,12 @@ REM
 # ═══════════════════════════════════════════════════════════════════════════
 
 def build_fcu_core():
-    """FCU core — DAT, room temp, occupancy, mode determination"""
+    """FCU core — sensors, cascade loops, mode determination"""
     return Module(
         id="fcu-core",
         name="FCU Core",
         category="core",
-        description="Base FCU: DAT sensor, room temp, occupancy, HVAC mode, DAT limits",
+        description="Base FCU: DAT/RMT sensors, cascade loops, occupancy, HVAC mode, DAT limits",
         is_core=True,
 
         inputs=[
@@ -359,32 +389,64 @@ def build_fcu_core():
 
         values=[
             # Sensors / calculated
-            ValuePoint(1, "ACT-RMT",        "AV", 72.0,  "Actual Room Temperature",     "°F"),
-            ValuePoint(2, "ACT-DAT",        "AV", 55.0,  "Actual Discharge Air Temp",   "°F"),
-            ValuePoint(3, "CLG-SP",         "AV", 75.0,  "Cooling Setpoint",            "°F"),
-            ValuePoint(4, "HTG-SP",         "AV", 70.0,  "Heating Setpoint",            "°F"),
-            ValuePoint(5, "CFG-DAT-LL",     "AV", 45.0,  "DAT Low Limit",               "°F"),
-            ValuePoint(6, "CFG-DAT-HL",     "AV", 95.0,  "DAT High Limit",              "°F"),
-            ValuePoint(7, "CFG-UNOCC-DB",   "AV", 4.0,   "Unoccupied Deadband",         "°F"),
-            ValuePoint(8, "NET-OAT",        "AV", 65.0,  "Network OAT",                 "°F"),
+            ValuePoint(1, "ACT-RMT",          "AV", 72.0,  "Actual Room Temperature",     "°F"),
+            ValuePoint(2, "ACT-DAT",          "AV", 55.0,  "Actual Discharge Air Temp",   "°F"),
+            ValuePoint(3, "CLG-SP",           "AV", 75.0,  "Cooling Setpoint",            "°F"),
+            ValuePoint(4, "HTG-SP",           "AV", 70.0,  "Heating Setpoint",            "°F"),
+            ValuePoint(5, "CFG-DAT-LL",       "AV", 45.0,  "DAT Low Limit (safety)",      "°F"),
+            ValuePoint(6, "CFG-DAT-HL",       "AV", 95.0,  "DAT High Limit (safety)",     "°F"),
+            ValuePoint(7, "CFG-UNOCC-DB",     "AV", 4.0,   "Unoccupied Deadband",         "°F"),
+            ValuePoint(8, "NET-OAT",          "AV", 65.0,  "Network OAT",                 "°F"),
+            # DAT setpoint reset (loop outputs)
+            ValuePoint(31, "CLG-DAT-SP",      "AV", 55.0,  "Cooling DAT Setpoint",        "°F"),
+            ValuePoint(32, "HTG-DAT-SP",      "AV", 95.0,  "Heating DAT Setpoint",        "°F"),
+            ValuePoint(33, "CFG-CLG-DAT-MIN", "AV", 52.0,  "Min Cooling DAT SP",          "°F"),
+            ValuePoint(34, "CFG-CLG-DAT-MAX", "AV", 65.0,  "Max Cooling DAT SP",          "°F"),
+            ValuePoint(35, "CFG-HTG-DAT-MIN", "AV", 85.0,  "Min Heating DAT SP",          "°F"),
+            ValuePoint(36, "CFG-HTG-DAT-MAX", "AV", 110.0, "Max Heating DAT SP",          "°F"),
+            # Loop demand outputs
+            ValuePoint(37, "CLG-DAT-DEMAND",  "AV", 0.0,   "Cooling DAT Loop Demand",     "%"),
+            ValuePoint(38, "HTG-DAT-DEMAND",  "AV", 0.0,   "Heating DAT Loop Demand",     "%"),
+            ValuePoint(39, "LOOP-DEMAND",     "AV", 0.0,   "Active Loop Demand",          "%"),
+            # Stage thresholds
+            ValuePoint(40, "CFG-STG1-T",      "AV", 50.0,  "Stage 1 Threshold",           "%"),
+            ValuePoint(41, "CFG-STG2-T",      "AV", 80.0,  "Stage 2 Threshold",           "%"),
             # Occupancy
-            ValuePoint(10, "NET-OCC-CMD",   "BV", True,  "Network Occupied Command"),
-            ValuePoint(11, "OCC-CMD",       "BV", True,  "Occupancy Command"),
-            ValuePoint(12, "USE-LOC-SCHD",  "BV", False, "Use Local Schedule"),
+            ValuePoint(10, "NET-OCC-CMD",     "BV", True,  "Network Occupied Command"),
+            ValuePoint(11, "OCC-CMD",         "BV", True,  "Occupancy Command"),
+            ValuePoint(12, "USE-LOC-SCHD",    "BV", False, "Use Local Schedule"),
             # Status
-            ValuePoint(13, "FAN-CMD",       "BV", False, "Fan Command"),
-            ValuePoint(14, "FAN-FAIL",      "BV", False, "Fan Failure Alarm"),
-            ValuePoint(15, "DAT-LL-ALARM",  "BV", False, "DAT Low Limit Alarm"),
-            ValuePoint(16, "DAT-HL-ALARM",  "BV", False, "DAT High Limit Alarm"),
+            ValuePoint(13, "FAN-CMD",         "BV", False, "Fan Command"),
+            ValuePoint(14, "FAN-FAIL",        "BV", False, "Fan Failure Alarm"),
+            ValuePoint(15, "DAT-LL-ALARM",    "BV", False, "DAT Low Limit Alarm"),
+            ValuePoint(16, "DAT-HL-ALARM",    "BV", False, "DAT High Limit Alarm"),
+            ValuePoint(17, "HWS-OK",          "BV", True,  "Hot Water Available (network)"),
             # Modes
-            ValuePoint(20, "HVAC-MODE",     "MV", "Off",
+            ValuePoint(20, "HVAC-MODE",       "MV", "Off",
                        "HVAC Mode",
                        states={1: "Off", 2: "Cooling", 3: "Heating", 4: "Deadband"}),
         ],
 
+        loops=[
+            # Primary: space temp → DAT setpoint reset
+            LoopDef(1, "CLG-RESET-LOOP", "ACT-RMT", "CLG-SP", "CLG-DAT-SP",
+                    p_band=4.0, integral=10.0, action="direct",
+                    description="Cooling reset: space temp resets CLG-DAT-SP"),
+            LoopDef(2, "HTG-RESET-LOOP", "ACT-RMT", "HTG-SP", "HTG-DAT-SP",
+                    p_band=4.0, integral=10.0, action="reverse",
+                    description="Heating reset: space temp resets HTG-DAT-SP"),
+            # Secondary: DAT → valve/stage demand
+            LoopDef(3, "CLG-DAT-LOOP", "ACT-DAT", "CLG-DAT-SP", "CLG-DAT-DEMAND",
+                    p_band=8.0, integral=20.0, action="direct",
+                    description="Cooling DAT loop: DAT vs CLG-DAT-SP"),
+            LoopDef(4, "HTG-DAT-LOOP", "ACT-DAT", "HTG-DAT-SP", "HTG-DAT-DEMAND",
+                    p_band=8.0, integral=20.0, action="reverse",
+                    description="Heating DAT loop: DAT vs HTG-DAT-SP"),
+        ],
+
         programs=[
             ProgramDef(1, "FCU-CFG-PRG", "PRG01-FCU-CFG.bas", _PRG_FCU_CFG, True,
-                       "Configuration — sensors, network, mode determination",
+                       "Configuration — sensors, network, mode, loop demand",
                        exec_order=1),
         ],
 
@@ -400,10 +462,11 @@ def build_fcu_core():
         ],
 
         soo_paragraph="""The fan coil unit shall be equipped with a direct digital controller
-providing fully automatic operation. The controller shall monitor discharge
-air temperature and room temperature, and control fan speed and valve
-position to maintain space temperature setpoint. Occupancy shall be
-determined by network command or local schedule.""",
+providing fully automatic cascaded control. Primary PID loops shall reset
+discharge air temperature setpoints based on space temperature deviation
+from setpoint. Secondary PID loops shall modulate valve position or stage
+outputs to maintain the discharge air temperature setpoint. Occupancy
+shall be determined by network command or local schedule.""",
     )
 
 
@@ -440,7 +503,7 @@ def build_fcu_fan_ms():
         id="fcu-fan-ms",
         name="FCU Fan Multi-Speed",
         category="fan",
-        description="Multi-speed fan — low/med/high relays",
+        description="Multi-speed fan — low/med/high from loop demand",
 
         outputs=[
             OutputPoint(1, "FAN-LO", "BO", "Stop/Start", "Fan Low Speed"),
@@ -450,7 +513,7 @@ def build_fcu_fan_ms():
 
         programs=[
             ProgramDef(2, "FCU-FAN-PRG", "PRG02-FCU-FAN.bas", _PRG_FAN_MS, True,
-                       "Fan control — multi-speed low/med/high", exec_order=2),
+                       "Fan control — multi-speed from loop demand", exec_order=2),
         ],
 
         requires=["fcu-core"],
@@ -465,7 +528,7 @@ def build_fcu_fan_vfd():
         id="fcu-fan-vfd",
         name="FCU Fan VFD",
         category="fan",
-        description="VFD fan — modulating speed signal",
+        description="VFD fan — speed tracks loop demand",
 
         outputs=[
             OutputPoint(1, "FAN-SPD", "AO", "0.0 ->100%", "Fan Speed Command", 0.0, 10.0),
@@ -477,7 +540,7 @@ def build_fcu_fan_vfd():
 
         programs=[
             ProgramDef(2, "FCU-FAN-PRG", "PRG02-FCU-FAN.bas", _PRG_FAN_VFD, True,
-                       "Fan control — VFD speed", exec_order=2),
+                       "Fan control — VFD speed from demand", exec_order=2),
         ],
 
         requires=["fcu-core"],
@@ -496,7 +559,7 @@ def build_fcu_chw_mod():
         id="fcu-chw-mod",
         name="FCU CHW Modulating",
         category="cooling",
-        description="Chilled water cooling — modulating valve AO",
+        description="CHW cooling — modulating valve driven by CLG-DAT-LOOP",
 
         outputs=[
             OutputPoint(4, "CHW-VLV", "AO", "0.0 ->100%", "CHW Valve", 2.0, 10.0),
@@ -504,7 +567,7 @@ def build_fcu_chw_mod():
 
         programs=[
             ProgramDef(3, "FCU-CLG-PRG", "PRG03-FCU-CLG.bas", _PRG_CHW_MOD, True,
-                       "Cooling control — CHW modulating valve", exec_order=3),
+                       "Cooling — CHW modulating from DAT loop", exec_order=3),
         ],
 
         requires=["fcu-core"],
@@ -520,16 +583,20 @@ def build_fcu_chw_flt():
         id="fcu-chw-flt",
         name="FCU CHW Floating",
         category="cooling",
-        description="Chilled water cooling — floating point valve (open/close)",
+        description="CHW cooling — floating point valve from CLG-DAT-LOOP demand",
 
         outputs=[
             OutputPoint(4, "CHW-VLV-O", "BO", "Stop/Start", "CHW Valve Open"),
             OutputPoint(5, "CHW-VLV-C", "BO", "Stop/Start", "CHW Valve Close"),
         ],
 
+        values=[
+            ValuePoint(45, "CHW-VLV-POS", "AV", 0.0, "CHW Valve Position (est)", "%"),
+        ],
+
         programs=[
             ProgramDef(3, "FCU-CLG-PRG", "PRG03-FCU-CLG.bas", _PRG_CHW_FLT, True,
-                       "Cooling control — CHW floating point valve", exec_order=3),
+                       "Cooling — CHW floating from DAT loop", exec_order=3),
         ],
 
         requires=["fcu-core"],
@@ -549,19 +616,15 @@ def build_fcu_hw_mod():
         id="fcu-hw-mod",
         name="FCU HW Modulating",
         category="heating",
-        description="Hot water heating — modulating valve AO",
+        description="HW heating — modulating valve driven by HTG-DAT-LOOP",
 
         outputs=[
             OutputPoint(6, "HW-VLV", "AO", "0.0 ->100%", "HW Valve (reverse)", 10.0, 2.0, True),
         ],
 
-        values=[
-            ValuePoint(40, "HWS-OK", "BV", True, "Hot Water Available (network)"),
-        ],
-
         programs=[
             ProgramDef(4, "FCU-HTG-PRG", "PRG04-FCU-HTG.bas", _PRG_HW_MOD, True,
-                       "Heating control — HW modulating valve", exec_order=4),
+                       "Heating — HW modulating from DAT loop", exec_order=4),
         ],
 
         requires=["fcu-core"],
@@ -577,7 +640,7 @@ def build_fcu_hw_flt():
         id="fcu-hw-flt",
         name="FCU HW Floating",
         category="heating",
-        description="Hot water heating — floating point valve (open/close)",
+        description="HW heating — floating point valve from HTG-DAT-LOOP demand",
 
         outputs=[
             OutputPoint(6, "HW-VLV-O", "BO", "Stop/Start", "HW Valve Open"),
@@ -585,12 +648,12 @@ def build_fcu_hw_flt():
         ],
 
         values=[
-            ValuePoint(40, "HWS-OK", "BV", True, "Hot Water Available (network)"),
+            ValuePoint(46, "HW-VLV-POS", "AV", 0.0, "HW Valve Position (est)", "%"),
         ],
 
         programs=[
             ProgramDef(4, "FCU-HTG-PRG", "PRG04-FCU-HTG.bas", _PRG_HW_FLT, True,
-                       "Heating control — HW floating point valve", exec_order=4),
+                       "Heating — HW floating from DAT loop", exec_order=4),
         ],
 
         requires=["fcu-core"],
@@ -606,7 +669,7 @@ def build_fcu_elec_1():
         id="fcu-elec-1",
         name="FCU Electric 1-Stage",
         category="heating",
-        description="Electric heating — single stage relay (also serves as backup with HW)",
+        description="Electric heating — stage from HTG-DAT-LOOP demand > threshold",
 
         outputs=[
             OutputPoint(8, "ELEC-HTR-S/S", "BO", "Stop/Start", "Electric Heater"),
@@ -614,7 +677,7 @@ def build_fcu_elec_1():
 
         programs=[
             ProgramDef(5, "FCU-ELEC-PRG", "PRG05-FCU-ELEC.bas", _PRG_ELEC_1, True,
-                       "Heating control — 1 stage electric", exec_order=5),
+                       "Heating — 1 stage electric from loop demand", exec_order=5),
         ],
 
         requires=["fcu-core"],
@@ -629,7 +692,7 @@ def build_fcu_elec_2():
         id="fcu-elec-2",
         name="FCU Electric 2-Stage",
         category="heating",
-        description="Electric heating — 2 stage relays (also serves as backup with HW)",
+        description="Electric heating — 2 stages from HTG-DAT-LOOP demand > thresholds",
 
         outputs=[
             OutputPoint(8, "ELEC-HTR1-S/S", "BO", "Stop/Start", "Electric Heater Stage 1"),
@@ -638,7 +701,7 @@ def build_fcu_elec_2():
 
         programs=[
             ProgramDef(5, "FCU-ELEC-PRG", "PRG05-FCU-ELEC.bas", _PRG_ELEC_2, True,
-                       "Heating control — 2 stage electric", exec_order=5),
+                       "Heating — 2 stage electric from loop demand", exec_order=5),
         ],
 
         requires=["fcu-core"],
@@ -657,21 +720,20 @@ def build_fcu_2pipe_mod():
         id="fcu-2pipe-mod",
         name="FCU 2-Pipe Modulating",
         category="cooling",
-        description="2-pipe switchover — single modulating valve, reverse acting in heating",
+        description="2-pipe switchover — valve from active DAT loop, reverses by mode",
 
         outputs=[
             OutputPoint(4, "VLV", "AO", "0.0 ->100%", "2-Pipe Valve", 2.0, 10.0),
         ],
 
         values=[
-            ValuePoint(40, "HWS-OK",            "BV", False, "Hot Water Available (network)"),
-            ValuePoint(41, "HTG-MODE",          "BV", False, "Heating Mode Active"),
-            ValuePoint(42, "CFG-SWITCHOVER-T",  "AV", 55.0,  "Switchover Temperature", "°F"),
+            ValuePoint(42, "HTG-MODE",          "BV", False, "Heating Mode Active"),
+            ValuePoint(43, "CFG-SWITCHOVER-T",  "AV", 55.0,  "Switchover Temperature", "°F"),
         ],
 
         programs=[
             ProgramDef(3, "FCU-2PIPE-PRG", "PRG03-FCU-2PIPE.bas", _PRG_2PIPE_MOD, True,
-                       "2-pipe switchover — modulating valve", exec_order=3),
+                       "2-pipe switchover — modulating from DAT loop", exec_order=3),
         ],
 
         requires=["fcu-core"],
@@ -688,7 +750,7 @@ def build_fcu_2pipe_flt():
         id="fcu-2pipe-flt",
         name="FCU 2-Pipe Floating",
         category="cooling",
-        description="2-pipe switchover — floating point valve, reverse acting in heating",
+        description="2-pipe switchover — floating valve from active DAT loop",
 
         outputs=[
             OutputPoint(4, "VLV-O", "BO", "Stop/Start", "2-Pipe Valve Open"),
@@ -696,14 +758,15 @@ def build_fcu_2pipe_flt():
         ],
 
         values=[
-            ValuePoint(40, "HWS-OK",            "BV", False, "Hot Water Available (network)"),
-            ValuePoint(41, "HTG-MODE",          "BV", False, "Heating Mode Active"),
-            ValuePoint(42, "CFG-SWITCHOVER-T",  "AV", 55.0,  "Switchover Temperature", "°F"),
+            ValuePoint(42, "HTG-MODE",          "BV", False, "Heating Mode Active"),
+            ValuePoint(43, "CFG-SWITCHOVER-T",  "AV", 55.0,  "Switchover Temperature", "°F"),
+            ValuePoint(44, "VLV-POS",           "AV", 0.0,   "Valve Position (est)",   "%"),
+            ValuePoint(47, "ACTIVE-DMD",        "AV", 0.0,   "Active Demand",          "%"),
         ],
 
         programs=[
             ProgramDef(3, "FCU-2PIPE-PRG", "PRG03-FCU-2PIPE.bas", _PRG_2PIPE_FLT, True,
-                       "2-pipe switchover — floating point valve", exec_order=3),
+                       "2-pipe switchover — floating from DAT loop", exec_order=3),
         ],
 
         requires=["fcu-core"],
@@ -724,7 +787,7 @@ def build_fcu_dx_1():
         id="fcu-dx-1",
         name="FCU DX 1-Stage",
         category="cooling",
-        description="DX cooling — single stage compressor with min on/off timer",
+        description="DX cooling — stage from CLG-DAT-LOOP demand > threshold, 3min timer",
 
         outputs=[
             OutputPoint(4, "COMP-S/S", "BO", "Stop/Start", "Compressor Start/Stop"),
@@ -752,7 +815,7 @@ def build_fcu_dx_2():
         id="fcu-dx-2",
         name="FCU DX 2-Stage",
         category="cooling",
-        description="DX cooling — two stage compressor with staging timers",
+        description="DX cooling — 2 stages from CLG-DAT-LOOP demand > thresholds",
 
         outputs=[
             OutputPoint(4, "COMP1-S/S", "BO", "Stop/Start", "Compressor Stage 1"),
@@ -786,10 +849,10 @@ def build_fcu_econ_mod():
         id="fcu-econ-mod",
         name="FCU Economizer Modulating",
         category="economizer",
-        description="Economizer OA damper — modulating AO",
+        description="Economizer OA damper — modulating from CLG-DAT-LOOP demand",
 
         outputs=[
-            OutputPoint(8, "OAD", "AO", "0.0 ->100%", "OA Damper", 2.0, 10.0),
+            OutputPoint(10, "OAD", "AO", "0.0 ->100%", "OA Damper", 2.0, 10.0),
         ],
 
         values=[
@@ -798,8 +861,8 @@ def build_fcu_econ_mod():
         ],
 
         programs=[
-            ProgramDef(5, "FCU-ECON-PRG", "PRG05-FCU-ECON.bas", _PRG_ECON_MOD, True,
-                       "Economizer — modulating OA damper", exec_order=5),
+            ProgramDef(6, "FCU-ECON-PRG", "PRG06-FCU-ECON.bas", _PRG_ECON_MOD, True,
+                       "Economizer — modulating from loop demand", exec_order=6),
         ],
 
         requires=["fcu-core"],
@@ -814,21 +877,22 @@ def build_fcu_econ_flt():
         id="fcu-econ-flt",
         name="FCU Economizer Floating",
         category="economizer",
-        description="Economizer OA damper — floating point (open/close)",
+        description="Economizer OA damper — floating point from loop demand",
 
         outputs=[
-            OutputPoint(8, "OAD-O", "BO", "Stop/Start", "OA Damper Open"),
-            OutputPoint(9, "OAD-C", "BO", "Stop/Start", "OA Damper Close"),
+            OutputPoint(10, "OAD-O", "BO", "Stop/Start", "OA Damper Open"),
+            OutputPoint(11, "OAD-C", "BO", "Stop/Start", "OA Damper Close"),
         ],
 
         values=[
             ValuePoint(60, "CFG-ECON-ENABLE-T", "AV", 65.0, "Economizer Enable Temp", "°F"),
             ValuePoint(61, "ECON-ENABLE",       "BV", False, "Economizer Enabled"),
+            ValuePoint(62, "OAD-POS",           "AV", 0.0,  "OA Damper Position (est)", "%"),
         ],
 
         programs=[
-            ProgramDef(5, "FCU-ECON-PRG", "PRG05-FCU-ECON.bas", _PRG_ECON_FLT, True,
-                       "Economizer — floating point OA damper", exec_order=5),
+            ProgramDef(6, "FCU-ECON-PRG", "PRG06-FCU-ECON.bas", _PRG_ECON_FLT, True,
+                       "Economizer — floating from loop demand", exec_order=6),
         ],
 
         requires=["fcu-core"],
@@ -847,7 +911,7 @@ def build_fcu_hp_core():
         id="fcu-hp-core",
         name="FCU Heat Pump",
         category="cooling",
-        description="Heat pump — reversing valve + compressor, CFG-RV-CLG config variable",
+        description="Heat pump — compressor from loop demand, CFG-RV-CLG config",
 
         outputs=[
             OutputPoint(4, "COMP-S/S", "BO", "Stop/Start", "Compressor Start/Stop"),
@@ -861,7 +925,7 @@ def build_fcu_hp_core():
 
         programs=[
             ProgramDef(3, "FCU-HP-PRG", "PRG03-FCU-HP.bas", _PRG_HP_CORE, True,
-                       "Heat pump — compressor + reversing valve", exec_order=3),
+                       "Heat pump — compressor + RV from loop demand", exec_order=3),
         ],
 
         requires=["fcu-core"],
@@ -878,7 +942,7 @@ def build_fcu_hp_aux():
         id="fcu-hp-aux",
         name="FCU HP Aux Electric",
         category="heating",
-        description="Heat pump auxiliary electric heat — enables after delay when HP insufficient",
+        description="HP aux heat — enables on high demand after delay",
 
         outputs=[
             OutputPoint(6, "AUX-HTR-S/S", "BO", "Stop/Start", "Auxiliary Electric Heater"),
@@ -891,7 +955,7 @@ def build_fcu_hp_aux():
 
         programs=[
             ProgramDef(4, "FCU-AUX-PRG", "PRG04-FCU-AUX.bas", _PRG_HP_AUX, True,
-                       "Aux electric heat — delay after HP insufficiency", exec_order=4),
+                       "Aux electric — from loop demand after delay", exec_order=4),
         ],
 
         requires=["fcu-hp-core"],
@@ -900,94 +964,9 @@ def build_fcu_hp_aux():
     )
 
 
-
-# DAT Cascade Control Module (optional)
-
-_PRG_DAT_CTRL = """\
-REM --- FCU-DAT-CTRL-PRG ---
-REM DAT cascade control - hard limits or full PID cascade
-REM CFG-DAT-CASCADE: True = full PID, False = hard limits only
-REM
-REM --- Freeze Protection (always active) ---
-IF ACT-DAT < CFG-DAT-FREEZE THEN FREEZE-TRIP = 1
-IF ACT-DAT < CFG-DAT-FREEZE THEN HVAC-MODE = 1
-IF ACT-DAT < CFG-DAT-FREEZE THEN FAN-CMD = 0
-REM
-REM --- Hard Limits Mode ---
-IF NOT CFG-DAT-CASCADE THEN GOTO 200
-REM Full cascade - DAT loop output limits valve demand
-GOTO 999
-REM
-200 REM --- Hard Limit Clamping ---
-IF HVAC-MODE = 3 AND ACT-DAT > CFG-DAT-HTG-MAX THEN DAT-HTG-CLAMP = 1 ELSE DAT-HTG-CLAMP = 0
-IF HVAC-MODE = 2 AND ACT-DAT < CFG-DAT-CLG-MIN THEN DAT-CLG-CLAMP = 1 ELSE DAT-CLG-CLAMP = 0
-REM
-999 REM End
-"""
-
-
-def build_fcu_dat_ctrl():
-    """DAT cascade control - hard limits or full PID"""
-    return Module(
-        id="fcu-dat-ctrl",
-        name="FCU DAT Cascade Control",
-        category="safety",
-        description="DAT cascade control - configurable hard limits or full PID cascade mode",
-
-        values=[
-            ValuePoint(80, "CFG-DAT-CASCADE",  "BV", False, "DAT Cascade Mode (True=PID, False=limits)"),
-            ValuePoint(81, "CFG-DAT-HTG-MAX",  "AV", 110.0, "Max DAT in Heating",         "deg.F"),
-            ValuePoint(82, "CFG-DAT-CLG-MIN",  "AV", 52.0,  "Min DAT in Cooling",         "deg.F"),
-            ValuePoint(83, "CFG-DAT-FREEZE",   "AV", 38.0,  "DAT Freeze Protection",      "deg.F"),
-            ValuePoint(84, "DAT-HTG-CLAMP",    "BV", False, "Heating DAT Clamp Active"),
-            ValuePoint(85, "DAT-CLG-CLAMP",    "BV", False, "Cooling DAT Clamp Active"),
-            ValuePoint(86, "DAT-CORRECTION",   "AV", 100.0, "DAT Loop Correction Factor",  "%"),
-        ],
-
-        loops=[
-            LoopDef(1, "DAT-LOOP", "ACT-DAT", "CFG-DAT-HTG-MAX", "DAT-CORRECTION",
-                    p_band=15.0, integral=30.0, action="reverse",
-                    description="DAT Cascade PID (active when CFG-DAT-CASCADE=True)"),
-        ],
-
-        programs=[
-            ProgramDef(7, "FCU-DAT-CTRL-PRG", "PRG07-FCU-DAT-CTRL.bas", _PRG_DAT_CTRL, True,
-                       "DAT cascade control - limits or PID", exec_order=7),
-        ],
-
-        requires=["fcu-core"],
-    )
-
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 #  Freezestat Module (optional)
 # ═══════════════════════════════════════════════════════════════════════════
-
-_PRG_FREEZESTAT = """\
-REM --- FCU-FREEZE-PRG ---
-REM Freezestat protection — trips on BI or DAT below CFG-FREEZE-T
-REM Manual reset required via FREEZE-RESET BV
-REM
-REM --- Freezestat Trip Detection ---
-IF FREEZE-STAT OR ( ACT-DAT < CFG-FREEZE-T ) THEN FREEZE-TRIP = 1
-REM
-REM --- Latch until manual reset ---
-IF FREEZE-TRIP AND NOT FREEZE-RESET THEN FREEZE-LATCH = 1
-IF FREEZE-RESET THEN FREEZE-LATCH = 0
-IF FREEZE-RESET THEN FREEZE-TRIP = 0
-IF FREEZE-RESET THEN FREEZE-RESET = 0
-REM
-REM --- Shutdown sequence when latched ---
-IF FREEZE-LATCH THEN FAN-CMD = 0
-IF FREEZE-LATCH THEN HVAC-MODE = 1
-REM
-REM --- Alarm ---
-FREEZE-ALARM = FREEZE-LATCH
-REM
-999 REM End
-"""
-
 
 def build_fcu_freezestat():
     """Freezestat protection — trips on BI or low DAT"""
@@ -995,7 +974,7 @@ def build_fcu_freezestat():
         id="fcu-freezestat",
         name="FCU Freezestat",
         category="safety",
-        description="Freezestat BI + low DAT backup — latching shutdown, manual reset required",
+        description="Freezestat BI + low DAT backup — latching shutdown, manual reset",
 
         inputs=[
             InputPoint(4, "FREEZE-STAT", "BI", "Normal/Alarm", "Freezestat Contact"),
@@ -1010,8 +989,8 @@ def build_fcu_freezestat():
         ],
 
         programs=[
-            ProgramDef(6, "FCU-FREEZE-PRG", "PRG06-FCU-FREEZE.bas", _PRG_FREEZESTAT, True,
-                       "Freezestat protection — latching shutdown", exec_order=6),
+            ProgramDef(7, "FCU-FREEZE-PRG", "PRG07-FCU-FREEZE.bas", _PRG_FREEZESTAT, True,
+                       "Freezestat — latching shutdown", exec_order=7),
         ],
 
         requires=["fcu-core"],

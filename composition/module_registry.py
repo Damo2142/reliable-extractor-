@@ -60,7 +60,7 @@ from composition.modules.fcu import (
     build_fcu_chw_mod, build_fcu_chw_flt, build_fcu_hw_mod, build_fcu_hw_flt,
     build_fcu_elec_1, build_fcu_elec_2, build_fcu_2pipe_mod, build_fcu_2pipe_flt,
     build_fcu_dx_1, build_fcu_dx_2, build_fcu_econ_mod, build_fcu_econ_flt,
-    build_fcu_hp_core, build_fcu_hp_aux, build_fcu_dat_ctrl, build_fcu_freezestat,
+    build_fcu_hp_core, build_fcu_hp_aux, build_fcu_freezestat,
 )
 
 
@@ -209,7 +209,6 @@ _register("fcu-econ-mod", build_fcu_econ_mod)
 _register("fcu-econ-flt", build_fcu_econ_flt)
 _register("fcu-hp-core", build_fcu_hp_core)
 _register("fcu-hp-aux", build_fcu_hp_aux)
-_register("fcu-dat-ctrl", build_fcu_dat_ctrl)
 _register("fcu-freezestat", build_fcu_freezestat)
 
 
