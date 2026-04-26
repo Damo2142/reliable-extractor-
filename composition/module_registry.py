@@ -534,16 +534,6 @@ EQUIPMENT_FAMILIES = {
         "notes": "Wizard-based. Generates MPV (ProView LCD), zone controllers (RC-FLEXair), and optional bypass controller.",
         "wizard": True,
     },
-    # ── AHU + VAV System ──
-    "AHU-VAV-SYSTEM": {
-        "name": "AHU + VAV System",
-        "description": "Matched AHU and VAV zone controllers — generates AHU with AY1-AY8 arrays and all VAV zones with parent device linking. One package for the complete system.",
-        "prefix": "SBS-AHU-VAV",
-        "required_modules": ["core"],
-        "available_categories": [],
-        "notes": "Wizard-based. Generates AHU (MPS) and VAV zone controllers (RC-FLEXair). Arrays auto-sized to zone count.",
-        "wizard": True,
-    },
     "CHW-PLANT-TOWER": {
         "name": "Water Cooled Chiller Plant",
         "description": "Water cooled chiller plant — chillers, primary/secondary CHW pumps, CW pumps, cooling towers. MPS controller.",
