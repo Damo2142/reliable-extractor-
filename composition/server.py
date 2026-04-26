@@ -2203,6 +2203,8 @@ function onFamilyChange(){
     var rec='RCFA-12';
     if(hasAO||hasRH||hasFan||hasDD)rec='RCFA-34';
     document.getElementById('selCtrl').value=rec;
+  }else if(activeFamily.startsWith('FCU-')){
+    document.getElementById('selCtrl').value='MPZ-88';
   }else{
     document.getElementById('selCtrl').value='auto';
   }
@@ -2211,6 +2213,7 @@ function onFamilyChange(){
   document.getElementById('results').style.display='none';
   var statusMsg=f?(isPlant?'Configure plant options, then click Assemble.':'Select a standard configuration, then click Assemble.'):'Select an equipment family.';
   if(isVAV)statusMsg='Confirm controller model, then click Assemble.';
+  if(activeFamily.startsWith('FCU-'))statusMsg='Select config or customize modules. MPZ-88 default, MPV-LCD available for display.';
   document.getElementById('status').textContent=statusMsg;
 }
 
@@ -2365,9 +2368,14 @@ function renderModules(){
     }
   }
   var noOptionals=(allowedCats.length===0);
+  // Prefix filter: FCU families only show fcu- modules, VVT only show vvt- modules
+  var modPrefix='';
+  if(activeFamily.startsWith('FCU-'))modPrefix='fcu-';
+  else if(activeFamily.startsWith('VVT-')||activeFamily==='VVT-SYSTEM')modPrefix='vvt-';
   for(var ci=0;ci<catOrder.length;ci++){
     var cat=catOrder[ci];
     var mods=modules[cat];if(!mods)continue;
+    if(modPrefix)mods=mods.filter(function(m){return m.id.startsWith(modPrefix);});
     if(noOptionals){mods=mods.filter(function(m){return reqMods.indexOf(m.id)!==-1;});if(!mods.length)continue;}
     else if(allowedCats.indexOf(cat)===-1)continue;
     html+='<div class="mod-grp"><div class="mod-grp-t">'+cat.toUpperCase()+' ('+mods.length+')</div>';
