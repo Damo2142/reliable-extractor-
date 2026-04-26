@@ -28,7 +28,8 @@ def build_rf_vfd():
         ],
 
         values=[
-            ValuePoint(7,   "AVG-BLDG-PRESS", "AV", 0.0,   "Avg Building Pressure",  "WC"),
+            ValuePoint(164, "AVG-BLDG-PRESS", "AV", 0.0,   "Avg Building Pressure",  "WC"),
+            ValuePoint(165, "BLDG-P-SP",       "AV", 0.05,  "Building Pressure Setpoint", "WC"),
             ValuePoint(160, "RF-MIN-SPEED",    "AV", 30.0,  "RF Minimum Speed",       "%"),
             ValuePoint(161, "RF-MAX-SPEED",    "AV", 100.0, "RF Maximum Speed",       "%"),
             ValuePoint(162, "RF-SPEED-RAMP",   "AV", 1.0,   "RF Speed Ramp Time",     "Min."),
@@ -220,7 +221,7 @@ def build_rlf_vfd():
         ],
 
         values=[
-            ValuePoint(7,   "AVG-BLDG-PRESS", "AV", 0.0,   "Avg Building Pressure", "WC"),
+            ValuePoint(194, "AVG-BLDG-PRESS", "AV", 0.0,   "Avg Building Pressure", "WC"),
             ValuePoint(190, "RLF-MIN-SPEED",   "AV", 30.0,  "RLF Minimum Speed",     "%"),
             ValuePoint(191, "RLF-MAX-SPEED",   "AV", 100.0, "RLF Maximum Speed",     "%"),
             ValuePoint(192, "RLF-SPEED-RAMP",  "AV", 1.0,   "RLF Speed Ramp Time",   "Min."),

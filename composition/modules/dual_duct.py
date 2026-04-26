@@ -23,7 +23,7 @@ def build_dd_cold_chw():
         description="Dual duct cold deck — CHW cooling coil with SAT control",
 
         inputs=[
-            InputPoint(6, "COLD-DECK-T", "AI", "10K -40 ->250", "Cold Deck Temperature", "°F"),
+            InputPoint(9, "COLD-DECK-T", "AI", "10K -40 ->250", "Cold Deck Temperature", "°F"),
             InputPoint(33, "CHWC-SUPW-T", "AI", "10K -40 ->250", "CHW Coil Supply Water Temp", "°F"),
             InputPoint(34, "CHWC-RETW-T", "AI", "10K -40 ->250", "CHW Coil Return Water Temp", "°F"),
         ],
@@ -33,7 +33,7 @@ def build_dd_cold_chw():
         ],
 
         values=[
-            ValuePoint(77, "COLD-DECK-SAT-SP", "AV", 55.0,  "Cold Deck SAT Setpoint", "°F"),
+            ValuePoint(240, "COLD-DECK-SAT-SP", "AV", 55.0,  "Cold Deck SAT Setpoint", "°F"),
             ValuePoint(152, "CHW-AVAIL",        "BV", False, "Chilled Water Available"),
             ValuePoint(153, "CLG-RAMP",         "AV", 0.5,   "Cooling Valve Ramp Time", "Min."),
         ],
@@ -70,7 +70,7 @@ def build_dd_hot_hw():
         description="Dual duct hot deck — HW heating coil with SAT control",
 
         inputs=[
-            InputPoint(8, "HOT-DECK-T", "AI", "10K -40 ->250", "Hot Deck Temperature", "°F"),
+            InputPoint(10, "HOT-DECK-T", "AI", "10K -40 ->250", "Hot Deck Temperature", "°F"),
             InputPoint(31, "HWC-SUPW-T", "AI", "10K -40 ->250", "HW Coil Supply Water Temp", "°F"),
             InputPoint(32, "HWC-RETW-T", "AI", "10K -40 ->250", "HW Coil Return Water Temp", "°F"),
         ],
@@ -80,7 +80,7 @@ def build_dd_hot_hw():
         ],
 
         values=[
-            ValuePoint(76, "HOT-DECK-SAT-SP",  "AV", 85.0,  "Hot Deck SAT Setpoint",      "°F"),
+            ValuePoint(241, "HOT-DECK-SAT-SP",  "AV", 85.0,  "Hot Deck SAT Setpoint",      "°F"),
             ValuePoint(55, "HTG-LO-SP",         "AV", 65.0,  "Heating Lockout OAT SP",     "°F"),
             ValuePoint(56, "HTG-LOCKOUT",        "BV", True,  "Heating Lockout Active"),
             ValuePoint(58, "CLG-LO-SP",          "AV", 55.0,  "Cooling Lockout OAT SP",     "°F"),
@@ -89,6 +89,7 @@ def build_dd_hot_hw():
             ValuePoint(53, "FRZ-PRTC-MODE",      "BV", False, "Freeze Protection Mode"),
             ValuePoint(150,"HTG-RAMP",            "AV", 0.5,   "Heating Valve Ramp Time",    "Min."),
             ValuePoint(151,"HW-AVAIL",            "BV", False, "Hot Water Available"),
+            ValuePoint(242,"HTG-VLV-FREEZE-SP",  "AV", 110.0, "HW Valve Freeze SP",         "°F"),
         ],
 
         loops=[
@@ -140,7 +141,7 @@ def build_dd_hot_elec():
         description="Dual duct hot deck — 2-stage electric heat with SAT control",
 
         inputs=[
-            InputPoint(8, "HOT-DECK-T", "AI", "10K -40 ->250", "Hot Deck Temperature", "°F"),
+            InputPoint(10, "HOT-DECK-T", "AI", "10K -40 ->250", "Hot Deck Temperature", "°F"),
         ],
 
         outputs=[
@@ -149,7 +150,7 @@ def build_dd_hot_elec():
         ],
 
         values=[
-            ValuePoint(76, "HOT-DECK-SAT-SP", "AV", 85.0,  "Hot Deck SAT Setpoint", "°F"),
+            ValuePoint(241, "HOT-DECK-SAT-SP", "AV", 85.0,  "Hot Deck SAT Setpoint", "°F"),
             ValuePoint(55, "HTG-LO-SP",        "AV", 65.0,  "Heating Lockout OAT SP", "°F"),
             ValuePoint(56, "HTG-LOCKOUT",       "BV", True,  "Heating Lockout Active"),
             ValuePoint(58, "CLG-LO-SP",         "AV", 55.0,  "Cooling Lockout OAT SP", "°F"),

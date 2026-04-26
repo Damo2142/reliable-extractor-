@@ -18,7 +18,7 @@ def build_ph_hw():
         description="HW preheat coil with modulating valve, pump, and entering/leaving temps",
 
         inputs=[
-            InputPoint(8,  "PH-LAT",    "AI", "10K -40 ->250", "Preheat Leaving Air Temp",       "°F"),
+            InputPoint(16, "PH-LAT",    "AI", "10K -40 ->250", "Preheat Leaving Air Temp",       "°F"),
             InputPoint(35, "PH-EAT",    "AI", "10K -40 ->250", "Preheat Entering Air Temp",      "°F"),
             InputPoint(39, "PH-SUPW-T", "AI", "10K -40 ->250", "Preheat Coil Supply Water Temp", "°F"),
             InputPoint(40, "PH-RETW-T", "AI", "10K -40 ->250", "Preheat Coil Return Water Temp", "°F"),
@@ -71,7 +71,7 @@ def build_ph_elec():
         description="Electric preheat coil",
 
         inputs=[
-            InputPoint(8, "PH-LAT", "AI", "10K -40 ->250", "Preheat Leaving Air Temp", "°F"),
+            InputPoint(16, "PH-LAT", "AI", "10K -40 ->250", "Preheat Leaving Air Temp", "°F"),
         ],
 
         outputs=[
@@ -108,7 +108,7 @@ def build_ph_glycol():
         description="Glycol preheat coil with pump and valve",
 
         inputs=[
-            InputPoint(8,  "PH-LAT",    "AI", "10K -40 ->250", "Preheat Leaving Air Temp",       "°F"),
+            InputPoint(16, "PH-LAT",    "AI", "10K -40 ->250", "Preheat Leaving Air Temp",       "°F"),
             InputPoint(35, "PH-EAT",    "AI", "10K -40 ->250", "Preheat Entering Air Temp",      "°F"),
             InputPoint(45, "PH-PMP-S",  "BI", "Off/On",        "Preheat Pump Status"),
         ],
