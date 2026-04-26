@@ -55,6 +55,13 @@ from composition.modules.vvt import (
     build_rh_elec_1 as vvt_build_rh_elec_1,
     build_rh_elec_2 as vvt_build_rh_elec_2,
 )
+from composition.modules.fcu import (
+    build_fcu_core, build_fcu_fan_cv, build_fcu_fan_ms, build_fcu_fan_vfd,
+    build_fcu_chw_mod, build_fcu_chw_flt, build_fcu_hw_mod, build_fcu_hw_flt,
+    build_fcu_elec_1, build_fcu_elec_2, build_fcu_2pipe_mod, build_fcu_2pipe_flt,
+    build_fcu_dx_1, build_fcu_dx_2, build_fcu_econ_mod, build_fcu_econ_flt,
+    build_fcu_hp_core, build_fcu_hp_aux, build_fcu_dat_ctrl, build_fcu_freezestat,
+)
 
 
 # Registry: module_id -> builder function
@@ -183,6 +190,28 @@ _register("vvt-rh-hw-flt", vvt_build_rh_hw_flt)
 _register("vvt-rh-elec-1", vvt_build_rh_elec_1)
 _register("vvt-rh-elec-2", vvt_build_rh_elec_2)
 
+# FCU modules
+_register("fcu-core", build_fcu_core)
+_register("fcu-fan-cv", build_fcu_fan_cv)
+_register("fcu-fan-ms", build_fcu_fan_ms)
+_register("fcu-fan-vfd", build_fcu_fan_vfd)
+_register("fcu-chw-mod", build_fcu_chw_mod)
+_register("fcu-chw-flt", build_fcu_chw_flt)
+_register("fcu-hw-mod", build_fcu_hw_mod)
+_register("fcu-hw-flt", build_fcu_hw_flt)
+_register("fcu-elec-1", build_fcu_elec_1)
+_register("fcu-elec-2", build_fcu_elec_2)
+_register("fcu-2pipe-mod", build_fcu_2pipe_mod)
+_register("fcu-2pipe-flt", build_fcu_2pipe_flt)
+_register("fcu-dx-1", build_fcu_dx_1)
+_register("fcu-dx-2", build_fcu_dx_2)
+_register("fcu-econ-mod", build_fcu_econ_mod)
+_register("fcu-econ-flt", build_fcu_econ_flt)
+_register("fcu-hp-core", build_fcu_hp_core)
+_register("fcu-hp-aux", build_fcu_hp_aux)
+_register("fcu-dat-ctrl", build_fcu_dat_ctrl)
+_register("fcu-freezestat", build_fcu_freezestat)
+
 
 # Cache built modules
 _CACHE = {}
@@ -263,6 +292,16 @@ FAMILY_CORES = {
     'VVT-MPV':          ['vvt-mpv-core'],
     'VVT-ZONE':         ['vvt-zone-core'],
     'VVT-BYPASS':       ['vvt-bypass-core'],
+    # FCU families
+    'FCU-2P-SW':        ['fcu-core'],
+    'FCU-2P-CHW':       ['fcu-core'],
+    'FCU-4P-CHW-HW':    ['fcu-core'],
+    'FCU-4P-CHW-HW-E':  ['fcu-core'],
+    'FCU-4P-CHW-E':     ['fcu-core'],
+    'FCU-DX-HW':        ['fcu-core'],
+    'FCU-DX-E':         ['fcu-core'],
+    'FCU-HP':           ['fcu-core'],
+    'FCU-HP-AUX':       ['fcu-core'],
 }
 
 
@@ -533,6 +572,70 @@ EQUIPMENT_FAMILIES = {
         "available_categories": [],
         "notes": "Wizard-based. Generates MPV (ProView LCD), zone controllers (RC-FLEXair), and optional bypass controller.",
         "wizard": True,
+    },
+    # ── FCU Families ──
+    "FCU-2P-SW": {
+        "name": "FCU 2-Pipe Switchover",
+        "description": "2-pipe fan coil — single valve switchover between heating and cooling based on HWS-OK or OAT",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-2pipe-mod"],
+        "available_categories": ["fan", "economizer", "safety"],
+    },
+    "FCU-2P-CHW": {
+        "name": "FCU 2-Pipe CHW Only",
+        "description": "2-pipe fan coil — chilled water cooling only, no heating",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-chw-mod"],
+        "available_categories": ["fan", "economizer", "safety"],
+    },
+    "FCU-4P-CHW-HW": {
+        "name": "FCU 4-Pipe CHW + HW",
+        "description": "4-pipe fan coil — separate CHW cooling and HW heating valves",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-chw-mod", "fcu-hw-mod"],
+        "available_categories": ["fan", "economizer", "safety"],
+    },
+    "FCU-4P-CHW-HW-E": {
+        "name": "FCU 4-Pipe CHW + HW + Electric",
+        "description": "4-pipe fan coil — CHW cooling, HW primary heating, electric backup",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-chw-mod", "fcu-hw-mod", "fcu-elec-1"],
+        "available_categories": ["fan", "economizer", "safety"],
+    },
+    "FCU-4P-CHW-E": {
+        "name": "FCU 4-Pipe CHW + Electric",
+        "description": "4-pipe fan coil — CHW cooling, electric heating only",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-chw-mod", "fcu-elec-1"],
+        "available_categories": ["fan", "economizer", "safety"],
+    },
+    "FCU-DX-HW": {
+        "name": "FCU DX + HW",
+        "description": "Fan coil with DX cooling and HW heating",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-dx-1", "fcu-hw-mod"],
+        "available_categories": ["fan", "economizer", "safety"],
+    },
+    "FCU-DX-E": {
+        "name": "FCU DX + Electric",
+        "description": "Fan coil with DX cooling and electric heating",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-dx-1", "fcu-elec-1"],
+        "available_categories": ["fan", "economizer", "safety"],
+    },
+    "FCU-HP": {
+        "name": "FCU Heat Pump",
+        "description": "Heat pump fan coil — reversing valve, no auxiliary heat",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-hp-core"],
+        "available_categories": ["fan", "economizer", "safety"],
+    },
+    "FCU-HP-AUX": {
+        "name": "FCU Heat Pump + Aux",
+        "description": "Heat pump fan coil with electric auxiliary heating",
+        "prefix": "SBS-FCU",
+        "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-hp-core", "fcu-hp-aux"],
+        "available_categories": ["fan", "economizer", "safety"],
     },
     "CHW-PLANT-TOWER": {
         "name": "Water Cooled Chiller Plant",
@@ -1331,6 +1434,74 @@ STANDARD_CONFIGS = {
         "name": "Dual Duct — Floating HW Reheat",
         "description": "Dual duct + floating HW valve on hot deck. RC-FLEXair-34.",
         "modules": ["vav-core", "vav-dd-hot-deck", "vav-rh-hw-flt", "vav-stat-hardwired"],
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  FCU — SBS-FCU-601 to 609
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-FCU-601": {
+        "family": "FCU-2P-SW",
+        "name": "2-Pipe HW/CHW Switchover",
+        "description": "2-pipe FCU with single valve switching between heating and cooling. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-2pipe-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-FCU-602": {
+        "family": "FCU-2P-CHW",
+        "name": "2-Pipe CHW Only",
+        "description": "2-pipe FCU cooling only with CHW modulating valve. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-chw-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-FCU-603": {
+        "family": "FCU-4P-CHW-HW",
+        "name": "4-Pipe CHW + HW Modulating",
+        "description": "4-pipe FCU with separate CHW and HW modulating valves. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-chw-mod", "fcu-hw-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-FCU-604": {
+        "family": "FCU-4P-CHW-HW-E",
+        "name": "4-Pipe CHW + HW + Electric Backup",
+        "description": "4-pipe FCU: CHW cooling, HW primary heat, electric backup. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-chw-mod", "fcu-hw-mod", "fcu-elec-1"],
+        "controller": "MPZ",
+    },
+    "SBS-FCU-605": {
+        "family": "FCU-4P-CHW-E",
+        "name": "4-Pipe CHW + Electric Only",
+        "description": "4-pipe FCU: CHW cooling, electric heating. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-chw-mod", "fcu-elec-1"],
+        "controller": "MPZ",
+    },
+    "SBS-FCU-606": {
+        "family": "FCU-DX-HW",
+        "name": "DX + HW",
+        "description": "DX cooling with HW heating valve. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-dx-1", "fcu-hw-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-FCU-607": {
+        "family": "FCU-DX-E",
+        "name": "DX + Electric",
+        "description": "DX cooling with electric heating. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-dx-1", "fcu-elec-1"],
+        "controller": "MPZ",
+    },
+    "SBS-FCU-608": {
+        "family": "FCU-HP",
+        "name": "Heat Pump — No Aux",
+        "description": "Heat pump FCU: reversing valve + compressor, no auxiliary heat. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-hp-core"],
+        "controller": "MPZ",
+    },
+    "SBS-FCU-609": {
+        "family": "FCU-HP-AUX",
+        "name": "Heat Pump + Electric Aux",
+        "description": "Heat pump FCU with electric auxiliary heating. MPZ-88.",
+        "modules": ["fcu-core", "fcu-fan-cv", "fcu-hp-core", "fcu-hp-aux"],
+        "controller": "MPZ",
     },
 }
 
