@@ -62,6 +62,14 @@ from composition.modules.fcu import (
     build_fcu_dx_1, build_fcu_dx_2, build_fcu_econ_mod, build_fcu_econ_flt,
     build_fcu_hp_core, build_fcu_hp_aux, build_fcu_freezestat,
 )
+from composition.modules.uv import (
+    build_uv_core, build_uv_fan_cv, build_uv_fan_vfd,
+    build_uv_oad_mod, build_uv_oad_flt, build_uv_fbp_mod, build_uv_fbp_flt,
+    build_uv_hw_mod, build_uv_hw_flt, build_uv_hw_mod_fbp,
+    build_uv_steam_mod, build_uv_steam_onoff, build_uv_steam_onoff_fbp,
+    build_uv_chw_mod, build_uv_chw_flt, build_uv_dx_1, build_uv_dx_2,
+    build_uv_dcv, build_uv_freezestat,
+)
 
 
 # Registry: module_id -> builder function
@@ -211,6 +219,27 @@ _register("fcu-hp-core", build_fcu_hp_core)
 _register("fcu-hp-aux", build_fcu_hp_aux)
 _register("fcu-freezestat", build_fcu_freezestat)
 
+# UV modules
+_register("uv-core", build_uv_core)
+_register("uv-fan-cv", build_uv_fan_cv)
+_register("uv-fan-vfd", build_uv_fan_vfd)
+_register("uv-oad-mod", build_uv_oad_mod)
+_register("uv-oad-flt", build_uv_oad_flt)
+_register("uv-fbp-mod", build_uv_fbp_mod)
+_register("uv-fbp-flt", build_uv_fbp_flt)
+_register("uv-hw-mod", build_uv_hw_mod)
+_register("uv-hw-flt", build_uv_hw_flt)
+_register("uv-hw-mod-fbp", build_uv_hw_mod_fbp)
+_register("uv-steam-mod", build_uv_steam_mod)
+_register("uv-steam-onoff", build_uv_steam_onoff)
+_register("uv-steam-onoff-fbp", build_uv_steam_onoff_fbp)
+_register("uv-chw-mod", build_uv_chw_mod)
+_register("uv-chw-flt", build_uv_chw_flt)
+_register("uv-dx-1", build_uv_dx_1)
+_register("uv-dx-2", build_uv_dx_2)
+_register("uv-dcv", build_uv_dcv)
+_register("uv-freezestat", build_uv_freezestat)
+
 
 # Cache built modules
 _CACHE = {}
@@ -301,6 +330,15 @@ FAMILY_CORES = {
     'FCU-DX-E':         ['fcu-core'],
     'FCU-HP':           ['fcu-core'],
     'FCU-HP-AUX':       ['fcu-core'],
+    # UV families
+    'UV-HW-OAD':        ['uv-core'],
+    'UV-HW-FBP':        ['uv-core'],
+    'UV-STM-OAD':       ['uv-core'],
+    'UV-STM-FBP':       ['uv-core'],
+    'UV-CHW-HW-OAD':    ['uv-core'],
+    'UV-CHW-HW-FBP':    ['uv-core'],
+    'UV-DX-HW-OAD':     ['uv-core'],
+    'UV-DX-HW-FBP':     ['uv-core'],
 }
 
 
@@ -634,6 +672,63 @@ EQUIPMENT_FAMILIES = {
         "description": "Heat pump fan coil with electric auxiliary heating",
         "prefix": "SBS-FCU",
         "required_modules": ["fcu-core", "fcu-fan-cv", "fcu-hp-core", "fcu-hp-aux"],
+        "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
+    },
+    # ── UV Families ──
+    "UV-HW-OAD": {
+        "name": "UV HW + OA Damper",
+        "description": "Unit ventilator — HW heating coil with modulating OA damper (ASHRAE Cycle 1+2)",
+        "prefix": "SBS-UV",
+        "required_modules": ["uv-core", "uv-fan-cv", "uv-hw-mod", "uv-oad-mod"],
+        "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
+    },
+    "UV-HW-FBP": {
+        "name": "UV HW + Face/Bypass",
+        "description": "Unit ventilator — HW heating with face/bypass damper (cold/mild mode)",
+        "prefix": "SBS-UV",
+        "required_modules": ["uv-core", "uv-fan-cv", "uv-hw-mod-fbp", "uv-fbp-mod"],
+        "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
+    },
+    "UV-STM-OAD": {
+        "name": "UV Steam + OA Damper",
+        "description": "Unit ventilator — steam heating with modulating OA damper",
+        "prefix": "SBS-UV",
+        "required_modules": ["uv-core", "uv-fan-cv", "uv-steam-mod", "uv-oad-mod"],
+        "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
+    },
+    "UV-STM-FBP": {
+        "name": "UV Steam + Face/Bypass",
+        "description": "Unit ventilator — steam on/off with face/bypass damper",
+        "prefix": "SBS-UV",
+        "required_modules": ["uv-core", "uv-fan-cv", "uv-steam-onoff-fbp", "uv-fbp-mod"],
+        "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
+    },
+    "UV-CHW-HW-OAD": {
+        "name": "UV CHW + HW + OA Damper",
+        "description": "Unit ventilator — CHW cooling + HW heating with OA damper",
+        "prefix": "SBS-UV",
+        "required_modules": ["uv-core", "uv-fan-cv", "uv-chw-mod", "uv-hw-mod", "uv-oad-mod"],
+        "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
+    },
+    "UV-CHW-HW-FBP": {
+        "name": "UV CHW + HW + Face/Bypass",
+        "description": "Unit ventilator — CHW cooling + HW heating with face/bypass",
+        "prefix": "SBS-UV",
+        "required_modules": ["uv-core", "uv-fan-cv", "uv-chw-mod", "uv-hw-mod-fbp", "uv-fbp-mod"],
+        "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
+    },
+    "UV-DX-HW-OAD": {
+        "name": "UV DX + HW + OA Damper",
+        "description": "Unit ventilator — DX cooling + HW heating with OA damper",
+        "prefix": "SBS-UV",
+        "required_modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod", "uv-oad-mod"],
+        "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
+    },
+    "UV-DX-HW-FBP": {
+        "name": "UV DX + HW + Face/Bypass",
+        "description": "Unit ventilator — DX cooling + HW heating with face/bypass",
+        "prefix": "SBS-UV",
+        "required_modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod-fbp", "uv-fbp-mod"],
         "available_categories": ["fan", "cooling", "heating", "economizer", "safety", "thermostat", "thermostat-addon"],
     },
     "CHW-PLANT-TOWER": {
@@ -1500,6 +1595,67 @@ STANDARD_CONFIGS = {
         "name": "Heat Pump + Electric Aux",
         "description": "Heat pump FCU with electric auxiliary heating. MPZ-88.",
         "modules": ["fcu-core", "fcu-fan-cv", "fcu-hp-core", "fcu-hp-aux"],
+        "controller": "MPZ",
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  UV — SBS-UV-701 to 708
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-UV-701": {
+        "family": "UV-HW-OAD",
+        "name": "HW + OA Damper",
+        "description": "Unit ventilator: HW heating coil with modulating OA damper. MPZ-88.",
+        "modules": ["uv-core", "uv-fan-cv", "uv-hw-mod", "uv-oad-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-UV-702": {
+        "family": "UV-HW-FBP",
+        "name": "HW + Face/Bypass",
+        "description": "Unit ventilator: HW heating with face/bypass damper. MPZ-88.",
+        "modules": ["uv-core", "uv-fan-cv", "uv-hw-mod-fbp", "uv-fbp-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-UV-703": {
+        "family": "UV-STM-OAD",
+        "name": "Steam + OA Damper",
+        "description": "Unit ventilator: steam heating with modulating OA damper. MPZ-88.",
+        "modules": ["uv-core", "uv-fan-cv", "uv-steam-mod", "uv-oad-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-UV-704": {
+        "family": "UV-STM-FBP",
+        "name": "Steam + Face/Bypass",
+        "description": "Unit ventilator: steam on/off with face/bypass damper. MPZ-88.",
+        "modules": ["uv-core", "uv-fan-cv", "uv-steam-onoff-fbp", "uv-fbp-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-UV-705": {
+        "family": "UV-CHW-HW-OAD",
+        "name": "CHW + HW + OA Damper",
+        "description": "Unit ventilator: CHW cooling + HW heating with OA damper. MPZ-88.",
+        "modules": ["uv-core", "uv-fan-cv", "uv-chw-mod", "uv-hw-mod", "uv-oad-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-UV-706": {
+        "family": "UV-CHW-HW-FBP",
+        "name": "CHW + HW + Face/Bypass",
+        "description": "Unit ventilator: CHW cooling + HW heating with face/bypass. MPZ-88.",
+        "modules": ["uv-core", "uv-fan-cv", "uv-chw-mod", "uv-hw-mod-fbp", "uv-fbp-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-UV-707": {
+        "family": "UV-DX-HW-OAD",
+        "name": "DX + HW + OA Damper",
+        "description": "Unit ventilator: DX cooling + HW heating with OA damper. MPZ-88.",
+        "modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod", "uv-oad-mod"],
+        "controller": "MPZ",
+    },
+    "SBS-UV-708": {
+        "family": "UV-DX-HW-FBP",
+        "name": "DX + HW + Face/Bypass",
+        "description": "Unit ventilator: DX cooling + HW heating with face/bypass. MPZ-88.",
+        "modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod-fbp", "uv-fbp-mod"],
         "controller": "MPZ",
     },
 }

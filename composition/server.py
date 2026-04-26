@@ -2371,11 +2371,13 @@ function renderModules(){
   // Prefix filter: FCU families only show fcu-/vav-stat- modules, VVT only show vvt- modules
   var modPrefix='';
   if(activeFamily.startsWith('FCU-'))modPrefix='fcu-';
+  else if(activeFamily.startsWith('UV-'))modPrefix='uv-';
   else if(activeFamily.startsWith('VVT-')||activeFamily==='VVT-SYSTEM')modPrefix='vvt-';
   for(var ci=0;ci<catOrder.length;ci++){
     var cat=catOrder[ci];
     var mods=modules[cat];if(!mods)continue;
     if(modPrefix==='fcu-')mods=mods.filter(function(m){return m.id.startsWith('fcu-')||m.id.startsWith('vav-stat-');});
+    else if(modPrefix==='uv-')mods=mods.filter(function(m){return m.id.startsWith('uv-')||m.id.startsWith('vav-stat-');});
     else if(modPrefix)mods=mods.filter(function(m){return m.id.startsWith(modPrefix);});
     if(noOptionals){mods=mods.filter(function(m){return reqMods.indexOf(m.id)!==-1;});if(!mods.length)continue;}
     else if(allowedCats.indexOf(cat)===-1)continue;
