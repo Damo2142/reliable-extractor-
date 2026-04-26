@@ -87,18 +87,21 @@ REM
 _PRG_FAN_MS = """\
 REM --- FCU-FAN-PRG ---
 REM Fan control — multi-speed from loop demand
-REM Low < 33%, Med 33-66%, High > 66%
+REM Low = demand > 0 and < 33%, Med = 33-66%, High >= 66%
 REM
 IF HVAC-MODE <= 1 THEN FAN-CMD = 0
 IF HVAC-MODE = 4 THEN FAN-CMD = 1
-IF HVAC-MODE = 2 OR HVAC-MODE = 3 THEN FAN-CMD = 1
-IF LOOP-DEMAND > 66.0 THEN FAN-CMD = 3
-IF LOOP-DEMAND > 33.0 AND LOOP-DEMAND <= 66.0 THEN FAN-CMD = 2
-IF LOOP-DEMAND > 0.0 AND LOOP-DEMAND <= 33.0 THEN FAN-CMD = 1
 REM
-FAN-LO = FAN-CMD >= 1
-FAN-MED = FAN-CMD >= 2
-FAN-HI = FAN-CMD >= 3
+REM --- Speed from demand ---
+IF LOOP-DEMAND > 0.0 AND LOOP-DEMAND < 33.0 THEN FAN-CMD = 1
+IF LOOP-DEMAND >= 33.0 AND LOOP-DEMAND < 66.0 THEN FAN-CMD = 2
+IF LOOP-DEMAND >= 66.0 THEN FAN-CMD = 3
+IF LOOP-DEMAND = 0.0 AND HVAC-MODE > 1 THEN FAN-CMD = 1
+REM
+REM --- Relay outputs (only one active at a time) ---
+FAN-LO = FAN-CMD = 1
+FAN-MED = FAN-CMD = 2
+FAN-HI = FAN-CMD = 3
 FAN-FAIL = ( FAN-CMD > 0 ) AND NOT FAN-STS
 REM
 999 REM End
@@ -106,11 +109,14 @@ REM
 
 _PRG_FAN_VFD = """\
 REM --- FCU-FAN-PRG ---
-REM Fan control — VFD speed tracks loop demand
+REM Fan control — VFD speed = max of cooling and heating demand
+REM
+REM --- Calculate max demand across both loops ---
+FAN-DMD = MAX( CLG-DAT-DEMAND, HTG-DAT-DEMAND )
 REM
 IF HVAC-MODE <= 1 THEN FAN-SPD = 0.0
 IF HVAC-MODE = 4 THEN FAN-SPD = CFG-FAN-MIN-SPD
-IF HVAC-MODE = 2 OR HVAC-MODE = 3 THEN FAN-SPD = SLIDE( LOOP-DEMAND, 0.0, 100.0, CFG-FAN-MIN-SPD, 100.0 )
+IF HVAC-MODE = 2 OR HVAC-MODE = 3 THEN FAN-SPD = SLIDE( FAN-DMD, 0.0, 100.0, CFG-FAN-MIN-SPD, 100.0 )
 REM
 FAN-FAIL = ( FAN-SPD > 0.0 ) AND NOT FAN-STS
 REM
@@ -132,10 +138,17 @@ REM
 
 _PRG_CHW_FLT = """\
 REM --- FCU-CLG-PRG ---
-REM Cooling — CHW floating point valve from loop demand
+REM Cooling — CHW floating point valve from CLG-DAT-LOOP demand
+REM Position estimated from pulse time vs CFG-FLT-TRAVEL
 REM
-IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > ( CHW-VLV-POS + 3.0 ) THEN CHW-VLV-O = 1 ELSE CHW-VLV-O = 0
-IF HVAC-MODE = 2 AND CLG-DAT-DEMAND < ( CHW-VLV-POS - 3.0 ) THEN CHW-VLV-C = 1 ELSE CHW-VLV-C = 0
+REM --- Position estimation ---
+IF CHW-VLV-O THEN CHW-VLV-POS = CHW-VLV-POS + ( 100.0 / CFG-FLT-TRAVEL )
+IF CHW-VLV-C THEN CHW-VLV-POS = CHW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
+CHW-VLV-POS = LIMIT( CHW-VLV-POS, 0.0, 100.0 )
+REM
+REM --- Open/close from demand vs position ---
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > ( CHW-VLV-POS + CFG-FLT-DB ) THEN CHW-VLV-O = 1 ELSE CHW-VLV-O = 0
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND < ( CHW-VLV-POS - CFG-FLT-DB ) THEN CHW-VLV-C = 1 ELSE CHW-VLV-C = 0
 IF HVAC-MODE <> 2 THEN CHW-VLV-C = 1
 IF HVAC-MODE <> 2 THEN CHW-VLV-O = 0
 REM
@@ -160,10 +173,17 @@ REM
 
 _PRG_HW_FLT = """\
 REM --- FCU-HTG-PRG ---
-REM Heating — HW floating point valve from loop demand
+REM Heating — HW floating point valve from HTG-DAT-LOOP demand
+REM Position estimated from pulse time vs CFG-FLT-TRAVEL
 REM
-IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > ( HW-VLV-POS + 3.0 ) THEN HW-VLV-O = 1 ELSE HW-VLV-O = 0
-IF HVAC-MODE = 3 AND HTG-DAT-DEMAND < ( HW-VLV-POS - 3.0 ) THEN HW-VLV-C = 1 ELSE HW-VLV-C = 0
+REM --- Position estimation ---
+IF HW-VLV-O THEN HW-VLV-POS = HW-VLV-POS + ( 100.0 / CFG-FLT-TRAVEL )
+IF HW-VLV-C THEN HW-VLV-POS = HW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
+HW-VLV-POS = LIMIT( HW-VLV-POS, 0.0, 100.0 )
+REM
+REM --- Open/close from demand vs position ---
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > ( HW-VLV-POS + CFG-FLT-DB ) THEN HW-VLV-O = 1 ELSE HW-VLV-O = 0
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND < ( HW-VLV-POS - CFG-FLT-DB ) THEN HW-VLV-C = 1 ELSE HW-VLV-C = 0
 IF HVAC-MODE <> 3 THEN HW-VLV-C = 1
 IF HVAC-MODE <> 3 THEN HW-VLV-O = 0
 REM
@@ -189,14 +209,15 @@ REM
 
 _PRG_ELEC_2 = """\
 REM --- FCU-ELEC-PRG ---
-REM Heating — 2 stage electric from loop demand
-REM Stage 1 > CFG-STG1-T, Stage 2 > CFG-STG2-T
+REM Heating — 2 stage electric from HTG-DAT-LOOP demand
+REM Stage 1: demand > CFG-STG1-T AND DAT < 87F
+REM Stage 2: demand > CFG-STG2-T AND stage 1 on AND DAT < 87F
 REM
-IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-STG1-T AND FAN-CMD THEN ELEC-HTR1-S/S = 1 ELSE ELEC-HTR1-S/S = 0
-IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-STG2-T AND FAN-CMD THEN ELEC-HTR2-S/S = 1 ELSE ELEC-HTR2-S/S = 0
+ELEC-HTR1-S/S = 0
+ELEC-HTR2-S/S = 0
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-STG1-T AND FAN-CMD AND ACT-DAT < 87.0 THEN ELEC-HTR1-S/S = 1
+IF ELEC-HTR1-S/S AND HTG-DAT-DEMAND > CFG-STG2-T AND ACT-DAT < 87.0 THEN ELEC-HTR2-S/S = 1
 REM
-IF ACT-DAT > 87.0 THEN ELEC-HTR1-S/S = 0
-IF ACT-DAT > 87.0 THEN ELEC-HTR2-S/S = 0
 IF DAT-HL-ALARM THEN ELEC-HTR1-S/S = 0
 IF DAT-HL-ALARM THEN ELEC-HTR2-S/S = 0
 REM
@@ -225,19 +246,25 @@ REM
 
 _PRG_2PIPE_FLT = """\
 REM --- FCU-2PIPE-PRG ---
-REM 2-pipe switchover — floating point valve from loop demand
+REM 2-pipe switchover — floating valve from active DAT loop demand
+REM Position estimated from pulse time vs CFG-FLT-TRAVEL
 REM {parent} for HWS-OK network variable
 REM
 IF HWS-OK OR ( NET-OAT < CFG-SWITCHOVER-T ) THEN HTG-MODE = 1 ELSE HTG-MODE = 0
+REM
+REM --- Position estimation ---
+IF VLV-O THEN VLV-POS = VLV-POS + ( 100.0 / CFG-FLT-TRAVEL )
+IF VLV-C THEN VLV-POS = VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
+VLV-POS = LIMIT( VLV-POS, 0.0, 100.0 )
 REM
 REM --- Determine active demand ---
 IF HTG-MODE AND HVAC-MODE = 3 THEN ACTIVE-DMD = HTG-DAT-DEMAND
 IF NOT HTG-MODE AND HVAC-MODE = 2 THEN ACTIVE-DMD = CLG-DAT-DEMAND
 IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN ACTIVE-DMD = 0.0
 REM
-REM --- Float valve from demand ---
-IF ACTIVE-DMD > ( VLV-POS + 3.0 ) THEN VLV-O = 1 ELSE VLV-O = 0
-IF ACTIVE-DMD < ( VLV-POS - 3.0 ) THEN VLV-C = 1 ELSE VLV-C = 0
+REM --- Open/close from demand vs position ---
+IF ACTIVE-DMD > ( VLV-POS + CFG-FLT-DB ) THEN VLV-O = 1 ELSE VLV-O = 0
+IF ACTIVE-DMD < ( VLV-POS - CFG-FLT-DB ) THEN VLV-C = 1 ELSE VLV-C = 0
 IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN VLV-C = 1
 IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN VLV-O = 0
 REM
@@ -246,30 +273,35 @@ REM
 
 _PRG_DX_1 = """\
 REM --- FCU-DX-PRG ---
-REM DX cooling — single stage from loop demand
-REM Stage enables when CLG-DAT-DEMAND > CFG-STG1-T
-REM Min on/off timer 3 minutes
+REM DX cooling — single stage compressor from CLG-DAT-LOOP demand
+REM ON when demand > CFG-STG1-T AND off-timer elapsed (3 min)
 REM
+REM --- Stage 1 enable ---
 IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > CFG-STG1-T THEN COMP-CMD = 1
 IF HVAC-MODE <> 2 OR CLG-DAT-DEMAND < ( CFG-STG1-T - 10.0 ) THEN COMP-CMD = 0
 REM
-REM --- Min On/Off Timer ---
-COMP-S/S = TIME-ON( COMP-CMD, 180 )
-IF NOT COMP-CMD THEN COMP-S/S = NOT TIME-ON( NOT COMP-CMD, 180 )
+REM --- Min on/off timer (180s) protects compressor ---
+IF COMP-CMD AND NOT COMP-S/S THEN COMP-S/S = TIME-ON( COMP-CMD, 0 )
+IF COMP-CMD THEN COMP-S/S = 1
+IF NOT COMP-CMD AND COMP-S/S THEN COMP-S/S = NOT TIME-OFF( NOT COMP-CMD, 180 )
+IF NOT COMP-CMD THEN COMP-OFF-TMR = TIME-ON( NOT COMP-CMD, 180 )
+IF COMP-CMD AND COMP-OFF-TMR THEN COMP-S/S = COMP-CMD
 REM
 999 REM End
 """
 
 _PRG_DX_2 = """\
 REM --- FCU-DX-PRG ---
-REM DX cooling — two stage from loop demand
-REM Stage 1 > CFG-STG1-T, Stage 2 > CFG-STG2-T
-REM Stage 1 min on/off 3 min, Stage 2 delay 5 min
+REM DX cooling — two stage from CLG-DAT-LOOP demand
+REM Stage 1: demand > CFG-STG1-T AND off-timer elapsed
+REM Stage 2: demand > CFG-STG2-T AND stage 1 on AND stage delay elapsed (5 min)
 REM
+REM --- Stage 1 ---
 IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > CFG-STG1-T THEN COMP1-CMD = 1
 IF HVAC-MODE <> 2 OR CLG-DAT-DEMAND < ( CFG-STG1-T - 10.0 ) THEN COMP1-CMD = 0
 COMP1-S/S = TIME-ON( COMP1-CMD, 180 )
 REM
+REM --- Stage 2 (requires stage 1 on + 5 min delay) ---
 IF COMP1-S/S AND CLG-DAT-DEMAND > CFG-STG2-T THEN COMP2-CMD = 1
 IF NOT COMP1-S/S OR CLG-DAT-DEMAND < ( CFG-STG2-T - 10.0 ) THEN COMP2-CMD = 0
 COMP2-S/S = TIME-ON( COMP2-CMD, 300 )
@@ -279,20 +311,22 @@ REM
 
 _PRG_HP_CORE = """\
 REM --- FCU-HP-PRG ---
-REM Heat pump — compressor from loop demand, reversing valve by mode
-REM CFG-RV-CLG: True = RV energized in cooling, False = RV energized in heating
+REM Heat pump — compressor from loop demand > CFG-HP-MIN (10%)
+REM Reversing valve state from CFG-RV-CLG field config
+REM Min on/off timer 3 minutes protects compressor
 REM
-REM --- Compressor from active demand ---
-IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > CFG-STG1-T THEN COMP-CMD = 1
-IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-STG1-T THEN COMP-CMD = 1
+REM --- Compressor enable from active demand ---
+COMP-CMD = 0
+IF HVAC-MODE = 2 AND CLG-DAT-DEMAND > CFG-HP-MIN THEN COMP-CMD = 1
+IF HVAC-MODE = 3 AND HTG-DAT-DEMAND > CFG-HP-MIN THEN COMP-CMD = 1
 IF HVAC-MODE <= 1 OR HVAC-MODE = 4 THEN COMP-CMD = 0
-IF HVAC-MODE = 2 AND CLG-DAT-DEMAND < ( CFG-STG1-T - 10.0 ) THEN COMP-CMD = 0
-IF HVAC-MODE = 3 AND HTG-DAT-DEMAND < ( CFG-STG1-T - 10.0 ) THEN COMP-CMD = 0
 REM
-REM --- Min On/Off Timer (3 minutes) ---
+REM --- Min On/Off Timer (180s) ---
 COMP-S/S = TIME-ON( COMP-CMD, 180 )
 REM
 REM --- Reversing Valve ---
+REM CFG-RV-CLG=True: energize in cooling, de-energize in heating
+REM CFG-RV-CLG=False: energize in heating, de-energize in cooling
 IF CFG-RV-CLG THEN RV = ( HVAC-MODE = 2 )
 IF NOT CFG-RV-CLG THEN RV = ( HVAC-MODE = 3 )
 REM
@@ -535,7 +569,8 @@ def build_fcu_fan_vfd():
         ],
 
         values=[
-            ValuePoint(30, "CFG-FAN-MIN-SPD", "AV", 30.0, "Fan Minimum Speed", "%"),
+            ValuePoint(30, "CFG-FAN-MIN-SPD", "AV", 30.0, "Fan Minimum Speed",      "%"),
+            ValuePoint(48, "FAN-DMD",         "AV", 0.0,  "Fan Demand (max of loops)", "%"),
         ],
 
         programs=[
@@ -591,7 +626,9 @@ def build_fcu_chw_flt():
         ],
 
         values=[
-            ValuePoint(45, "CHW-VLV-POS", "AV", 0.0, "CHW Valve Position (est)", "%"),
+            ValuePoint(45, "CHW-VLV-POS",    "AV", 0.0,   "CHW Valve Position (est)",  "%"),
+            ValuePoint(90, "CFG-FLT-DB",     "AV", 2.0,   "Float Valve Deadband",      "%"),
+            ValuePoint(91, "CFG-FLT-TRAVEL", "AV", 150.0, "Float Valve Travel Time",   "Sec"),
         ],
 
         programs=[
@@ -648,7 +685,9 @@ def build_fcu_hw_flt():
         ],
 
         values=[
-            ValuePoint(46, "HW-VLV-POS", "AV", 0.0, "HW Valve Position (est)", "%"),
+            ValuePoint(46, "HW-VLV-POS",    "AV", 0.0,   "HW Valve Position (est)",   "%"),
+            ValuePoint(90, "CFG-FLT-DB",     "AV", 2.0,   "Float Valve Deadband",      "%"),
+            ValuePoint(91, "CFG-FLT-TRAVEL", "AV", 150.0, "Float Valve Travel Time",   "Sec"),
         ],
 
         programs=[
@@ -762,6 +801,8 @@ def build_fcu_2pipe_flt():
             ValuePoint(43, "CFG-SWITCHOVER-T",  "AV", 55.0,  "Switchover Temperature", "°F"),
             ValuePoint(44, "VLV-POS",           "AV", 0.0,   "Valve Position (est)",   "%"),
             ValuePoint(47, "ACTIVE-DMD",        "AV", 0.0,   "Active Demand",          "%"),
+            ValuePoint(90, "CFG-FLT-DB",        "AV", 2.0,   "Float Valve Deadband",   "%"),
+            ValuePoint(91, "CFG-FLT-TRAVEL",    "AV", 150.0, "Float Valve Travel Time", "Sec"),
         ],
 
         programs=[
@@ -921,6 +962,7 @@ def build_fcu_hp_core():
         values=[
             ValuePoint(50, "COMP-CMD",    "BV", False, "Compressor Command"),
             ValuePoint(55, "CFG-RV-CLG",  "BV", True,  "RV Energized in Cooling (field config)"),
+            ValuePoint(58, "CFG-HP-MIN",  "AV", 10.0,  "HP Compressor Min Demand",    "%"),
         ],
 
         programs=[
