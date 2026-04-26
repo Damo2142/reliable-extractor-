@@ -21,7 +21,7 @@ Seed block format (from ground truth RC Studio reference file):
   SYS_GROUP: desc + name
   DEVICE:    copy from blank
   TREND:     not written (RC Studio adds)
-  ARRAY:     not written (RC Studio adds)
+  ARRAY:     type 142 — name + size + N×float slots (all 0.0)
 """
 
 import struct
@@ -580,37 +580,38 @@ def write_prg_seed(instance: int, name: str, desc: str) -> bytes:
 
 def write_prg_block(instance: int, name: str, bytecode: bytes,
                     enabled: int = 1, desc: str = '') -> bytes:
-    """Fully populated PRG block with compiled bytecode."""
+    """Fully populated PRG block with compiled bytecode.
+    Structure matches RC Studio reference (testr39.pan):
+      1. desc as enum(0)
+      2. name
+      3. program-enabled
+      4. bytecode record (LAST — _seed_payload strips trailing 0x00)
+    No vendor tail properties — RC Studio sets those at runtime.
+    """
     # Append FF end-of-program marker if not already present
-    if bytecode and bytecode[-1] == 0xFF:
+    if bytecode and bytecode[-1:] == b'\xFF':
         full_bc = bytecode
     else:
         full_bc = bytecode + b'\xFF'
 
-    # Build 5-byte FE header: [FE] [size_hi] [size_lo] [checksum] [size_hi]
+    # Build 5-byte FE header: [FE] [size_hi] [size_lo] [chk] [size_hi]
+    # chk byte matches RC Studio format — set to 0x00 (RC Studio reads
+    # bytecode size from size_hi/size_lo, not from the chk byte)
     bc_size = len(full_bc)
     size_hi = (bc_size >> 8) & 0xFF
     size_lo = bc_size & 0xFF
-    chk = 0x00
-    fe_header = bytes([0xFE, size_hi, size_lo, chk, size_hi])
+    fe_header = bytes([0xFE, size_hi, size_lo, 0x00, size_hi])
 
     # Bytecode record: ctx=0x0004, prop=0x29, tag=0x65
+    # MUST be last record so _seed_payload strips trailing 0x00
     bc_blob = fe_header + full_bc
     bc_rec = _rec(0x0004, 0x29, 0x65, bc_blob)
 
-    # Two vendor tail properties (consistent across all production PRG blocks):
-    #   0x0441 = FALSE (runtime program status)
-    #   0x0540 = 20000 (execution interval in ms)
-    tail_0441 = _rec_bool_false(0x0004, 0x41)
-    tail_0540 = _rec_uint16(0x0005, 0x40, 20000)
-
     return _build_block(16, instance, _seed_payload([
-        _rec_desc(desc) if desc else _rec_enum(0x0000, 0x1C, 0x00),
+        _rec_enum(0x0000, 0x1C, 0x00),               # desc: enum(0) per reference
         _rec_mu(name),                                # object-name
         _rec_uint8(0x0004, 0x0A, 0x91, enabled),     # program-enabled
-        bc_rec,                                        # bytecode
-        tail_0441,                                     # vendor: program status
-        tail_0540,                                     # vendor: exec interval
+        bc_rec,                                        # bytecode (LAST record)
     ]))
 
 
@@ -890,6 +891,43 @@ def read_blank_header(blank_path: str) -> tuple:
     return (struct.unpack_from('<I', data, 0)[0],
             struct.unpack_from('<I', data, 4)[0],
             struct.unpack_from('<I', data, 8)[0])
+
+
+# ============================================================
+# ARRAY BLOCK WRITER — type 142
+# ============================================================
+
+def write_array_block(instance: int, name: str, size: int) -> bytes:
+    """Build an ARRAY block (type 142) with N float slots initialized to 0.0.
+
+    Format decoded from vvt-array-ref.pan (RC Studio reference file):
+      [LE16 le_size][00 00][BE16 le_size][ObjID(142,inst)][CRC]
+      [payload: prefix + name + fixed middle + N×float(0.0)]
+
+    Args:
+        instance: BACnet instance number (1-based)
+        name: Array name WITHOUT {device-name}- prefix
+        size: Number of float elements in the array
+    """
+    name_bytes = name.encode('latin-1', errors='replace') + b'\x00'
+    name_len = len(name_bytes)  # includes null terminator
+
+    payload = bytearray()
+    # Prefix: 3 padding + (name_len + 8) + 3 padding
+    payload += b'\x00\x00\x00'
+    payload += bytes([(name_len + 8) & 0xFF])
+    payload += b'\x00\x00\x00'
+    # Name property: 0x4D 0x75 name_len 0x00 + name bytes
+    payload += bytes([0x4D, 0x75, name_len, 0x00])
+    payload += name_bytes
+    # Fixed middle section: separator + units(95) + property 0x1A + array_size + marker 0x2E
+    payload += bytes([0x08, 0x00, 0x00, 0x00, 0x75, 0x91, 0x5F, 0x00,
+                      0x1A, 0x00, 0x00, size & 0xFF, 0x2E])
+    # Float values: N × [0x44 + 4-byte BE float 0.0]
+    for _ in range(size):
+        payload += b'\x44\x00\x00\x00\x00'
+
+    return _build_block(142, instance, bytes(payload))
 
 
 # ============================================================
