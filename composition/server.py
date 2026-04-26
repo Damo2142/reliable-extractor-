@@ -733,6 +733,298 @@ async def api_assemble_vvt(req: VVTAssembleRequest):
     return result
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  AHU + VAV System — Matched AHU and VAV zone controllers
+# ═══════════════════════════════════════════════════════════════════════════
+
+class AHUVAVZoneDef(BaseModel):
+    tag: str = "VAV-01"
+    family: str = "SBS-VAV-502"
+    zone_number: int = 1
+    device_id: int = 200001
+
+
+class AHUVAVAssembleRequest(BaseModel):
+    ahu_tag: str = "AHU-01"
+    ahu_family: str = "SBS-AHU-101"
+    ahu_device_id: int = 100000
+    array_size: int = 30
+    zones: List[AHUVAVZoneDef] = []
+
+
+@app.post("/api/assemble-ahu-vav")
+async def api_assemble_ahu_vav(req: AHUVAVAssembleRequest):
+    """Assemble a complete AHU+VAV system — matched AHU with zone controllers."""
+    import copy
+
+    if len(req.zones) < 1:
+        raise HTTPException(400, "At least 1 VAV zone is required.")
+    if len(req.zones) > 127:
+        raise HTTPException(400, "Maximum 127 VAV zones per AHU.")
+
+    # Validate AHU family
+    if req.ahu_family not in STANDARD_CONFIGS:
+        raise HTTPException(400, f"Unknown AHU family: {req.ahu_family}")
+
+    ahu_cfg = STANDARD_CONFIGS[req.ahu_family]
+    ahu_family_type = ahu_cfg.get("family", "VAV-AHU")
+
+    # Validate no duplicate zone numbers
+    zone_nums = [z.zone_number for z in req.zones]
+    if len(zone_nums) != len(set(zone_nums)):
+        raise HTTPException(400, "Duplicate zone numbers detected.")
+
+    # Validate zone families
+    for z in req.zones:
+        if z.family not in STANDARD_CONFIGS:
+            raise HTTPException(400, f"Unknown VAV family: {z.family}")
+
+    warnings = []
+    max_zone = max(z.zone_number for z in req.zones)
+    effective_array_size = max(max_zone, req.array_size)
+
+    # --- Build AHU controller ---
+    ahu_modules = ahu_cfg["modules"]
+    ahu_ctrl = ahu_cfg.get("controller", "auto")
+    ahu_config = assemble(ahu_modules, req.ahu_tag, "{parent}",
+                          ahu_family_type, ahu_ctrl)
+    inject_program_code(ahu_config)
+
+    # Override array sizes to match zone count
+    for arr in ahu_config.arrays:
+        arr.size = effective_array_size
+
+    # Update AHU-TOT-ZONES default
+    for v in ahu_config.values:
+        if v.name == "AHU-TOT-ZONES":
+            v.default = float(effective_array_size)
+
+    result = {
+        "system_tag": req.ahu_tag,
+        "ahu_device_id": req.ahu_device_id,
+        "zone_count": len(req.zones),
+        "array_size": effective_array_size,
+        "warnings": warnings,
+        "controllers": {},
+    }
+
+    # AHU summary
+    result["controllers"]["ahu"] = {
+        "tag": req.ahu_tag,
+        "device_id": req.ahu_device_id,
+        "controller": ahu_config.controller_model,
+        "family": ahu_family_type,
+        "config": req.ahu_family,
+        "counts": {
+            "inputs": len(ahu_config.inputs),
+            "outputs": len(ahu_config.outputs),
+            "values": len(ahu_config.values),
+            "loops": len(ahu_config.loops),
+            "arrays": len(ahu_config.arrays),
+            "programs": len(ahu_config.programs),
+        },
+        "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in ahu_config.inputs],
+        "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in ahu_config.outputs],
+        "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description} for v in ahu_config.values],
+        "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "action": l.action, "desc": l.description} for l in ahu_config.loops],
+        "arrays": [{"instance": a.instance, "name": a.name, "size": a.size, "desc": a.description} for a in ahu_config.arrays],
+        "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "desc": p.description, "code": p.code or ""} for p in sorted(ahu_config.programs, key=lambda x: x.exec_order)],
+    }
+
+    # --- Build each VAV zone controller ---
+    zones_result = []
+    for zone in req.zones:
+        vav_cfg = STANDARD_CONFIGS[zone.family]
+        vav_family_type = vav_cfg.get("family", "VAV-SD-CLG")
+        vav_modules = vav_cfg["modules"]
+        vav_ctrl = vav_cfg.get("controller", "auto")
+
+        zn_config = assemble(vav_modules, zone.tag, f"DEV{req.ahu_device_id}",
+                             vav_family_type, vav_ctrl)
+        inject_program_code(zn_config)
+
+        zones_result.append({
+            "zone_number": zone.zone_number,
+            "tag": zone.tag,
+            "device_id": zone.device_id,
+            "controller": zn_config.controller_model,
+            "family": vav_family_type,
+            "config": zone.family,
+            "parent_device_id": req.ahu_device_id,
+            "counts": {
+                "inputs": len(zn_config.inputs),
+                "outputs": len(zn_config.outputs),
+                "values": len(zn_config.values),
+                "loops": len(zn_config.loops),
+                "programs": len(zn_config.programs),
+            },
+            "inputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in zn_config.inputs],
+            "outputs": [{"row": p.row, "name": p.name, "type": p.point_type, "desc": p.description, "module": p.module} for p in zn_config.outputs],
+            "values": [{"instance": v.instance, "name": v.name, "type": v.point_type, "default": str(v.default), "units": v.units, "desc": v.description} for v in zn_config.values],
+            "loops": [{"instance": l.instance, "name": l.name, "input": l.input_ref, "setpoint": l.setpoint_ref, "action": l.action, "desc": l.description} for l in zn_config.loops],
+            "programs": [{"instance": p.instance, "name": p.name, "filename": p.filename, "desc": p.description, "code": p.code or ""} for p in sorted(zn_config.programs, key=lambda x: x.exec_order)],
+        })
+
+    result["controllers"]["zones"] = zones_result
+
+    # Build topology
+    result["topology"] = {
+        "ahu": {"tag": req.ahu_tag, "device_id": req.ahu_device_id, "controller": ahu_config.controller_model},
+        "zones": [{"tag": z.tag, "device_id": z.device_id, "zone_number": z.zone_number, "parent": req.ahu_tag} for z in req.zones],
+    }
+
+    return result
+
+
+@app.post("/api/generate-ahu-vav")
+async def api_generate_ahu_vav(req: AHUVAVAssembleRequest):
+    """Generate full AHU+VAV system package as ZIP."""
+    import copy
+
+    if len(req.zones) < 1:
+        raise HTTPException(400, "At least 1 VAV zone is required.")
+    if req.ahu_family not in STANDARD_CONFIGS:
+        raise HTTPException(400, f"Unknown AHU family: {req.ahu_family}")
+
+    zone_nums = [z.zone_number for z in req.zones]
+    if len(zone_nums) != len(set(zone_nums)):
+        raise HTTPException(400, "Duplicate zone numbers detected.")
+
+    max_zone = max(z.zone_number for z in req.zones)
+    effective_array_size = max(max_zone, req.array_size)
+
+    # Build AHU
+    ahu_cfg = STANDARD_CONFIGS[req.ahu_family]
+    ahu_family_type = ahu_cfg.get("family", "VAV-AHU")
+    ahu_config = assemble(ahu_cfg["modules"], req.ahu_tag, "{parent}",
+                          ahu_family_type, ahu_cfg.get("controller", "auto"))
+    inject_program_code(ahu_config)
+
+    for arr in ahu_config.arrays:
+        arr.size = effective_array_size
+    for v in ahu_config.values:
+        if v.name == "AHU-TOT-ZONES":
+            v.default = float(effective_array_size)
+
+    # Generate AHU Excel + programs
+    ahu_excel = generate_excel(ahu_config)
+    ahu_report = _build_validation_report(ahu_config)
+
+    # Build topology
+    topology = {
+        "system": req.ahu_tag,
+        "generated": __import__("datetime").datetime.now().isoformat(),
+        "ahu": {
+            "tag": req.ahu_tag,
+            "device_id": req.ahu_device_id,
+            "config": req.ahu_family,
+            "controller": ahu_config.controller_model,
+            "array_size": effective_array_size,
+        },
+        "zones": [],
+    }
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # AHU package
+        zf.writestr(f"{req.ahu_tag}/RC-Studio-Output.xlsx", ahu_excel)
+        zf.writestr(f"{req.ahu_tag}/SBS-Validation-Report.md", ahu_report)
+        for prg in ahu_config.programs:
+            zf.writestr(f"{req.ahu_tag}/programs/{prg.filename}", prg.code or "")
+        zf.writestr(f"{req.ahu_tag}/SOO.txt", ahu_config.soo_document)
+
+        # Each VAV zone
+        for zone in req.zones:
+            vav_cfg = STANDARD_CONFIGS[zone.family]
+            vav_family_type = vav_cfg.get("family", "VAV-SD-CLG")
+            zn_config = assemble(vav_cfg["modules"], zone.tag, f"DEV{req.ahu_device_id}",
+                                 vav_family_type, vav_cfg.get("controller", "auto"))
+            inject_program_code(zn_config)
+
+            zn_excel = generate_excel(zn_config)
+            zn_report = _build_validation_report(zn_config)
+
+            zf.writestr(f"{zone.tag}/RC-Studio-Output.xlsx", zn_excel)
+            zf.writestr(f"{zone.tag}/SBS-Validation-Report.md", zn_report)
+            for prg in zn_config.programs:
+                zf.writestr(f"{zone.tag}/programs/{prg.filename}", prg.code or "")
+
+            topology["zones"].append({
+                "tag": zone.tag,
+                "device_id": zone.device_id,
+                "zone_number": zone.zone_number,
+                "config": zone.family,
+                "controller": zn_config.controller_model,
+                "parent_device_id": req.ahu_device_id,
+            })
+
+        # IO schedule
+        io_lines = [f"# AHU+VAV System IO Schedule — {req.ahu_tag}", ""]
+        io_lines.append(f"## AHU: {req.ahu_tag} ({ahu_config.controller_model})")
+        io_lines.append(f"{'Row':<5} {'Type':<4} {'Name':<25} {'Description'}")
+        io_lines.append("-" * 70)
+        for p in sorted(ahu_config.inputs, key=lambda x: x.row):
+            io_lines.append(f"{p.row:<5} {p.point_type:<4} {p.name:<25} {p.description}")
+        for p in sorted(ahu_config.outputs, key=lambda x: x.row):
+            io_lines.append(f"{p.row:<5} {p.point_type:<4} {p.name:<25} {p.description}")
+        io_lines.append("")
+
+        for zone in req.zones:
+            vav_cfg2 = STANDARD_CONFIGS[zone.family]
+            zn2 = assemble(vav_cfg2["modules"], zone.tag, f"DEV{req.ahu_device_id}",
+                           vav_cfg2.get("family", "VAV-SD-CLG"),
+                           vav_cfg2.get("controller", "auto"))
+            io_lines.append(f"## VAV: {zone.tag} (Zone {zone.zone_number}, {zn2.controller_model})")
+            io_lines.append(f"{'Row':<5} {'Type':<4} {'Name':<25} {'Description'}")
+            io_lines.append("-" * 70)
+            for p in sorted(zn2.inputs, key=lambda x: x.row):
+                io_lines.append(f"{p.row:<5} {p.point_type:<4} {p.name:<25} {p.description}")
+            for p in sorted(zn2.outputs, key=lambda x: x.row):
+                io_lines.append(f"{p.row:<5} {p.point_type:<4} {p.name:<25} {p.description}")
+            io_lines.append("")
+
+        zf.writestr("IO-Schedule.txt", "\n".join(io_lines))
+        zf.writestr("TOPOLOGY.json", json.dumps(topology, indent=2))
+
+        # README
+        readme_lines = [
+            f"# AHU+VAV System Package — {req.ahu_tag}",
+            f"Generated by SBS Composition Engine v2",
+            "",
+            f"## System Overview",
+            f"AHU: {req.ahu_tag} (Device ID: {req.ahu_device_id})",
+            f"  Config: {req.ahu_family} ({ahu_family_type})",
+            f"  Controller: {ahu_config.controller_model}",
+            f"  Arrays: AY1-AY8 (size {effective_array_size})",
+            "",
+            f"VAV Zones: {len(req.zones)}",
+        ]
+        for zone in req.zones:
+            readme_lines.append(f"  Zone {zone.zone_number}: {zone.tag} ({zone.family}, Device ID: {zone.device_id})")
+        readme_lines.extend([
+            "",
+            "## Commissioning Notes",
+            f"- Set {{parent}} on each VAV to DEV{req.ahu_device_id}",
+            "- VAV array index auto-calculated from device MAC (DEV4194303:1042 MOD 1000)",
+            "- Verify zone coordinator PRG51 runs on AHU after all VAV writes complete",
+            "",
+            "## Package Contents",
+            f"  {req.ahu_tag}/ — AHU controller package (Excel, programs, SOO)",
+        ])
+        for zone in req.zones:
+            readme_lines.append(f"  {zone.tag}/ — VAV zone controller package")
+        readme_lines.extend([
+            "  IO-Schedule.txt — Combined IO schedule for all controllers",
+            "  TOPOLOGY.json — System topology with device IDs",
+        ])
+        zf.writestr("README.txt", "\n".join(readme_lines))
+
+    zip_buf.seek(0)
+    filename = f"{req.ahu_tag}-System-Package.zip"
+    return StreamingResponse(zip_buf, media_type="application/zip",
+                             headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
 @app.post("/api/generate")
 async def api_generate(req: GenerateRequest):
     try:
@@ -2117,6 +2409,30 @@ tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:
     </div>
     <button onclick="vvtAddZone()" style="margin-top:6px;font-size:0.8em;padding:3px 10px;background:#334155;color:#e2e8f0;border:1px solid #475569;border-radius:4px;cursor:pointer">+ Add Zone</button>
   </div>
+  <div class="sec" id="ahuvavWizard" style="display:none">
+    <div class="sec-t">AHU + VAV System Configuration</div>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">AHU Tag</label>
+    <input type="text" id="ahuvav_ahu_tag" value="AHU-01" style="width:100%;padding:4px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;margin-bottom:6px">
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">AHU Configuration</label>
+    <select id="ahuvav_ahu_family" style="width:100%;margin-bottom:6px;font-size:0.85em;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px"></select>
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">AHU Device ID</label>
+    <input type="number" id="ahuvav_ahu_devid" value="100000" style="width:100%;padding:4px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;margin-bottom:6px">
+    <label style="font-size:0.75em;color:#94a3b8;margin-bottom:2px;display:block">Array Size (min)</label>
+    <input type="number" id="ahuvav_array_size" value="30" min="1" max="127" style="width:100%;padding:4px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;margin-bottom:6px">
+    <div class="sec-t" style="margin-top:10px">VAV Zone Table</div>
+    <div id="ahuvavZoneTable" style="font-size:0.8em">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="color:#94a3b8;text-align:left;border-bottom:1px solid #334155">
+          <th style="padding:2px 4px">Zone#</th><th style="padding:2px 4px">Tag</th>
+          <th style="padding:2px 4px">Config</th><th style="padding:2px 4px">Device ID</th>
+          <th style="padding:2px 4px"></th>
+        </tr></thead>
+        <tbody id="ahuvavZoneRows"></tbody>
+      </table>
+    </div>
+    <button onclick="ahuvavAddZone()" style="margin-top:6px;font-size:0.8em;padding:3px 10px;background:#334155;color:#e2e8f0;border:1px solid #475569;border-radius:4px;cursor:pointer">+ Add Zone</button>
+    <button onclick="ahuvavGenerate()" style="margin-top:6px;margin-left:6px;font-size:0.8em;padding:3px 10px;background:#065f46;color:#e2e8f0;border:1px solid #047857;border-radius:4px;cursor:pointer">Download System Package</button>
+  </div>
 </div>
 <div class="main">
   <div id="status">Select an equipment family to begin.</div>
@@ -2177,8 +2493,9 @@ function onFamilyChange(){
   const isHWP=activeFamily==='HW-PLANT';
   const isCHWP=activeFamily==='CHW-PLANT-AIR'||activeFamily==='CHW-PLANT-TOWER';
   const isVVT=activeFamily.startsWith('VVT-');
+  const isAHUVAV=activeFamily==='AHU-VAV-SYSTEM';
   const isPlant=isHWP||isCHWP;
-  const isWizard=isPlant||isVVT;
+  const isWizard=isPlant||isVVT||isAHUVAV;
   const isVAV=activeFamily.startsWith('VAV-SD-')||activeFamily.startsWith('VAV-PF-')||activeFamily.startsWith('VAV-SF-')||activeFamily.startsWith('VAV-DD-');
   document.getElementById('modToggles').style.display=isWizard?'none':'';
   document.getElementById('ctrlSection').style.display=isVVT?'none':'';
@@ -2186,8 +2503,10 @@ function onFamilyChange(){
   document.getElementById('hwpWizard').style.display=isHWP?'':'none';
   document.getElementById('chwpWizard').style.display=isCHWP?'':'none';
   document.getElementById('vvtWizard').style.display=isVVT?'':'none';
+  document.getElementById('ahuvavWizard').style.display=isAHUVAV?'':'none';
   if(isCHWP)chwpUpdate();
   if(isVVT&&document.getElementById('vvtZoneRows').children.length===0){vvtAddZone();vvtAddZone();vvtAddZone();}
+  if(isAHUVAV){ahuvavInit();}
   // VAV families: pre-select recommended controller
   if(isVAV){
     var reqMods=f?f.required_modules:[];
@@ -2497,6 +2816,13 @@ async function doAssemble(){
       if(!res.ok){var e=await res.json();throw new Error(e.detail);}
       var r=await res.json();
       vvtRenderResults(r);
+      return;
+    }else if(activeFamily==='AHU-VAV-SYSTEM'){
+      var avData=ahuvavGetParams();
+      res=await fetch('api/assemble-ahu-vav',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(avData)});
+      if(!res.ok){var e=await res.json();throw new Error(e.detail);}
+      var r=await res.json();
+      ahuvavRenderResults(r);
       return;
     }else{
       var mods=Array.from(selected);
@@ -3103,6 +3429,127 @@ function vvtGetParams(){
     zones:zones
   };
 }
+// ═══ AHU + VAV System Functions ═══
+var ahuvavZoneCounter=0;
+var ahuvavInited=false;
+function ahuvavInit(){
+  if(ahuvavInited)return;
+  ahuvavInited=true;
+  // Populate AHU config dropdown from standards (AHU families only)
+  var sel=document.getElementById('ahuvav_ahu_family');
+  sel.innerHTML='';
+  var ahuFamilies=['VAV-AHU','CV-AHU','RTU','DOAS','SZ-CV','SZ-VAV','DD-AHU','MZ-AHU'];
+  var skeys=Object.keys(standards);
+  for(var i=0;i<skeys.length;i++){
+    var s=standards[skeys[i]];
+    if(ahuFamilies.indexOf(s.family)!==-1){
+      var o=document.createElement('option');
+      o.value=skeys[i];
+      o.textContent=skeys[i]+' — '+s.name;
+      sel.appendChild(o);
+    }
+  }
+  // Populate VAV config options (stored for zone dropdown)
+  window._vavConfigs=[];
+  for(var i=0;i<skeys.length;i++){
+    var s=standards[skeys[i]];
+    if(s.family&&s.family.startsWith('VAV-')){
+      window._vavConfigs.push({id:skeys[i],name:s.name});
+    }
+  }
+  // Add initial zones
+  if(document.getElementById('ahuvavZoneRows').children.length===0){
+    ahuvavAddZone();ahuvavAddZone();ahuvavAddZone();
+  }
+}
+function ahuvavAddZone(){
+  ahuvavZoneCounter++;
+  var tbody=document.getElementById('ahuvavZoneRows');
+  var tr=document.createElement('tr');
+  tr.style.borderBottom='1px solid #1e293b';
+  var vavOpts='';
+  if(window._vavConfigs){
+    for(var i=0;i<window._vavConfigs.length;i++){
+      var v=window._vavConfigs[i];
+      var sel=v.id==='SBS-VAV-502'?' selected':'';
+      vavOpts+='<option value="'+v.id+'"'+sel+'>'+v.id+'</option>';
+    }
+  }
+  tr.innerHTML='<td style="padding:2px 4px"><input type="number" value="'+ahuvavZoneCounter+'" min="1" max="127" style="width:40px;padding:2px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:3px" class="av-zn"></td>'+
+    '<td style="padding:2px 4px"><input type="text" value="VAV-'+String(ahuvavZoneCounter).padStart(2,'0')+'" style="width:70px;padding:2px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:3px" class="av-tag"></td>'+
+    '<td style="padding:2px 4px"><select class="av-fam" style="font-size:0.85em;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:3px">'+vavOpts+'</select></td>'+
+    '<td style="padding:2px 4px"><input type="number" value="'+(200000+ahuvavZoneCounter)+'" style="width:70px;padding:2px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:3px" class="av-devid"></td>'+
+    '<td style="padding:2px 4px;cursor:pointer;color:#ef4444" onclick="this.parentElement.remove()">x</td>';
+  tbody.appendChild(tr);
+}
+function ahuvavGetParams(){
+  var zones=[];
+  var rows=document.getElementById('ahuvavZoneRows').children;
+  for(var i=0;i<rows.length;i++){
+    zones.push({
+      zone_number:parseInt(rows[i].querySelector('.av-zn').value),
+      tag:rows[i].querySelector('.av-tag').value,
+      family:rows[i].querySelector('.av-fam').value,
+      device_id:parseInt(rows[i].querySelector('.av-devid').value)
+    });
+  }
+  return {
+    ahu_tag:document.getElementById('ahuvav_ahu_tag').value,
+    ahu_family:document.getElementById('ahuvav_ahu_family').value,
+    ahu_device_id:parseInt(document.getElementById('ahuvav_ahu_devid').value),
+    array_size:parseInt(document.getElementById('ahuvav_array_size').value),
+    zones:zones
+  };
+}
+async function ahuvavGenerate(){
+  document.getElementById('status').textContent='Generating AHU+VAV system package...';
+  try{
+    var avData=ahuvavGetParams();
+    var res=await fetch('api/generate-ahu-vav',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(avData)});
+    if(!res.ok){var e=await res.json();throw new Error(e.detail);}
+    var blob=await res.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.download=avData.ahu_tag+'-System-Package.zip';
+    a.click();URL.revokeObjectURL(url);
+    document.getElementById('status').textContent='System package downloaded: '+avData.ahu_tag+' + '+avData.zones.length+' VAV zones';
+  }catch(e){document.getElementById('status').textContent='Error: '+e.message;}
+}
+function ahuvavRenderResults(r){
+  document.getElementById('results').style.display='block';
+  var html='<div style="color:#94a3b8;font-size:0.9em">';
+  html+='<h3 style="color:#e2e8f0">AHU+VAV System: '+r.system_tag+' ('+r.zone_count+' zones, array size '+r.array_size+')</h3>';
+  if(r.warnings&&r.warnings.length>0){
+    r.warnings.forEach(function(w){html+='<div style="color:#fbbf24;margin:4px 0">&#9888; '+w+'</div>';});
+  }
+  // AHU
+  var ahu=r.controllers.ahu;
+  html+='<h4 style="color:#38bdf8;margin-top:12px">AHU: '+ahu.tag+' ('+ahu.controller+', Device ID: '+ahu.device_id+')</h4>';
+  html+='<div>Config: '+ahu.config+' | I:'+ahu.counts.inputs+' O:'+ahu.counts.outputs+' V:'+ahu.counts.values+' L:'+ahu.counts.loops+' ARR:'+ahu.counts.arrays+' PRG:'+ahu.counts.programs+'</div>';
+  html+='<details><summary style="cursor:pointer;color:#94a3b8">Arrays ('+ahu.arrays.length+')</summary><table style="width:100%;font-size:0.85em;border-collapse:collapse">';
+  ahu.arrays.forEach(function(a){html+='<tr style="border-bottom:1px solid #1e293b"><td style="padding:2px">AY'+a.instance+'</td><td>'+a.name+'</td><td>size '+a.size+'</td><td style="color:#64748b">'+a.desc+'</td></tr>';});
+  html+='</table></details>';
+  html+='<details><summary style="cursor:pointer;color:#94a3b8">Programs ('+ahu.programs.length+')</summary><table style="width:100%;font-size:0.85em;border-collapse:collapse">';
+  ahu.programs.forEach(function(p){html+='<tr style="border-bottom:1px solid #1e293b"><td style="padding:2px">'+p.instance+'</td><td>'+p.name+'</td><td style="color:#64748b">'+p.desc+'</td></tr>';});
+  html+='</table></details>';
+  // Zones
+  html+='<h4 style="color:#38bdf8;margin-top:12px">VAV Zone Controllers</h4>';
+  html+='<table style="width:100%;font-size:0.85em;border-collapse:collapse"><tr style="color:#94a3b8;border-bottom:1px solid #334155"><th style="text-align:left;padding:2px 4px">Zone#</th><th style="text-align:left;padding:2px 4px">Tag</th><th style="text-align:left;padding:2px 4px">Device ID</th><th style="text-align:left;padding:2px 4px">Controller</th><th style="text-align:left;padding:2px 4px">Config</th><th style="text-align:left;padding:2px 4px">I/O/V/PRG</th></tr>';
+  r.controllers.zones.forEach(function(z){
+    html+='<tr style="border-bottom:1px solid #1e293b"><td style="padding:2px 4px">'+z.zone_number+'</td><td style="padding:2px 4px">'+z.tag+'</td><td style="padding:2px 4px">'+z.device_id+'</td><td style="padding:2px 4px">'+z.controller+'</td><td style="padding:2px 4px">'+z.config+'</td><td style="padding:2px 4px">'+z.counts.inputs+'/'+z.counts.outputs+'/'+z.counts.values+'/'+z.counts.programs+'</td></tr>';
+  });
+  html+='</table>';
+  // Topology
+  if(r.topology){
+    html+='<details><summary style="cursor:pointer;color:#94a3b8;margin-top:8px">Topology</summary><pre style="background:#0f172a;padding:8px;border-radius:4px;font-size:0.8em;overflow-x:auto">'+JSON.stringify(r.topology,null,2)+'</pre></details>';
+  }
+  html+='</div>';
+  document.getElementById('tabContents').innerHTML=html;
+  document.getElementById('tabBar').innerHTML='';
+  document.getElementById('stats').innerHTML='';
+  document.getElementById('status').textContent='AHU+VAV System assembled: '+r.system_tag+' + '+r.zone_count+' VAV zones';
+}
+
 function vvtRenderResults(r){
   document.getElementById('results').style.display='block';
   var html='<div style="color:#94a3b8;font-size:0.9em">';
