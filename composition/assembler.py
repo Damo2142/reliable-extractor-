@@ -238,6 +238,39 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
                 f"has no matching point in Outputs."
             )
 
+    # Step 3b2: Warn on point names that collide with CBAS reserved words.
+    # CBAS resolves bare identifiers against the function table first; a point
+    # name like MIN-FLO can be parsed as MIN(-FLO) and break compilation.
+    _CBAS_RESERVED = {
+        "IF","THEN","ELSE","AND","OR","NOT","REM","FOR","NEXT",
+        "GOTO","GOSUB","RETURN","END","STOP","LET","DIM",
+        "INPUT","PRINT","READ","DATA","RESTORE","ON","STEP","TO","MOD",
+        "ABS","INT","SQR","LOG","EXP","SIN","COS","TAN","ATN","SGN",
+        "FIX","FRAC","MAX","MIN","AVG","SUM","ROUND","FLOOR","CEIL",
+        "LIMIT","SLIDE","SWITCH","RAMP","ENTHALPY",
+    }
+    def _reserved_hit(name: str):
+        u = name.upper()
+        if u in _CBAS_RESERVED:
+            return u
+        for rw in _CBAS_RESERVED:
+            if u.startswith(rw + "-"):
+                return rw
+            if u.startswith(rw) and len(u) > len(rw) and u[len(rw)].isdigit():
+                return rw
+        return None
+    def _check_reserved(name: str, kind: str):
+        rw = _reserved_hit(name)
+        if rw:
+            warnings.append(f"RESERVED WORD: {kind} '{name}' starts with CBAS reserved word '{rw}'")
+    for pt in config.inputs:    _check_reserved(pt.name, "Input")
+    for pt in config.outputs:   _check_reserved(pt.name, "Output")
+    for v  in config.values:    _check_reserved(v.name,  "Value")
+    for lp in config.loops:     _check_reserved(lp.name, "Loop")
+    for ar in config.arrays:    _check_reserved(ar.name, "Array")
+    for tb in config.tables:    _check_reserved(tb.name, "Table")
+    for sc in config.schedules: _check_reserved(sc.name, "Schedule")
+
     # Step 3c: Generate alarm program and add to programs list
     from composition.alarm_gen import generate_alarm_bas
     alarm_code = generate_alarm_bas(config)

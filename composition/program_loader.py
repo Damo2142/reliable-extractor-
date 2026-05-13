@@ -6,9 +6,88 @@ and injects it into assembled ControllerConfig program definitions.
 """
 
 import os
+import re
 from pathlib import Path
 
 PROGRAMS_DIR = Path(__file__).parent / "programs" / "reliable"
+
+
+def _collect_local_point_names(config) -> set:
+    """Return the set of point names defined locally on this controller.
+    These are the names that should be prefixed with {device-name}- when
+    referenced bare in program code, so .bas references match Excel names.
+    """
+    names = set()
+    for pt in getattr(config, "inputs", []) or []:
+        if getattr(pt, "name", None):
+            names.add(pt.name)
+    for pt in getattr(config, "outputs", []) or []:
+        if getattr(pt, "name", None):
+            names.add(pt.name)
+    for v in getattr(config, "values", []) or []:
+        if getattr(v, "name", None):
+            names.add(v.name)
+    for lp in getattr(config, "loops", []) or []:
+        if getattr(lp, "name", None):
+            names.add(lp.name)
+    for tbl in getattr(config, "tables", []) or []:
+        if getattr(tbl, "name", None):
+            names.add(tbl.name)
+    for arr in getattr(config, "arrays", []) or []:
+        if getattr(arr, "name", None):
+            names.add(arr.name)
+    for sch in getattr(config, "schedules", []) or []:
+        if getattr(sch, "name", None):
+            names.add(sch.name)
+    return names
+
+
+def format_program_commas(programs) -> None:
+    """Insert a space before every comma in program code — RC Control-BASIC
+    syntax requires `arg , arg` style in function calls and statement lists,
+    not `arg, arg`.
+
+    Idempotent: commas that already have a space before them are left alone.
+    Operates on any list of ProgramDef objects (config.programs or merged plant lists).
+    """
+    for prg in programs or []:
+        code = getattr(prg, "code", None)
+        if not code:
+            continue
+        # Add space before comma when the preceding char is not whitespace.
+        prg.code = re.sub(r'(?<=\S),', ' ,', code)
+
+
+def prefix_local_points(config) -> None:
+    """Replace bare local-point references in every program's code with
+    {device-name}-NAME so .bas point names match the Excel.
+
+    Rules:
+      - Only names defined on this controller (inputs/outputs/values/loops/
+        tables/arrays/schedules) are touched.
+      - Already-prefixed references ({device-name}-X, {parent}X) are left alone.
+      - BASIC keywords/built-in functions are untouched because they are not
+        in the local-name set.
+      - Cross-controller references like AHU-SET-LIMITS are untouched because
+        they are not in the local-name set.
+    Idempotent: safe to call more than once.
+    """
+    local_names = _collect_local_point_names(config)
+    if not local_names:
+        return
+    # Match longest names first so RMT-SP-CLG resolves before RMT or RMT-SP.
+    sorted_names = sorted(local_names, key=len, reverse=True)
+    for prg in getattr(config, "programs", []) or []:
+        code = getattr(prg, "code", None)
+        if not code:
+            continue
+        for name in sorted_names:
+            # Identifier chars in Control-BASIC are A-Z, 0-9, _, -.
+            # `}` is in the lookbehind exclusion so {device-name}- and {parent}
+            # already-prefixed references don't get matched a second time.
+            pattern = r'(?<![A-Za-z0-9_\-\}])' + re.escape(name) + r'(?![A-Za-z0-9_\-])'
+            code = re.sub(pattern, '{device-name}-' + name, code)
+        prg.code = code
 
 
 def load_program_code(filename: str) -> str:
@@ -67,11 +146,15 @@ def number_programs(programs):
 def inject_program_code(config):
     """
     Load .bas code for all programs in the config.
-    Adds line numbers if missing (Control-BASIC requires them).
+    Prefixes bare local-point references with {device-name}- so .bas
+    names match the Excel, formats commas to RC CBAS syntax (` , `),
+    then adds line numbers.
     """
     for prg in config.programs:
         if not prg.code:
             prg.code = load_program_code(prg.filename)
+    prefix_local_points(config)
+    format_program_commas(config.programs)
     number_programs(config.programs)
 
 

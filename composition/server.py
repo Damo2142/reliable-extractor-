@@ -22,7 +22,7 @@ from typing import List, Optional
 
 from composition.assembler import assemble, CONTROLLER_SPECS, _select_controller
 from composition.excel_gen import generate_excel
-from composition.program_loader import inject_program_code, number_programs
+from composition.program_loader import inject_program_code, number_programs, prefix_local_points, format_program_commas
 from composition.module_registry import (
     list_modules, list_by_category, get_module, STANDARD_CONFIGS, EQUIPMENT_FAMILIES,
     hwp_assemble, chwp_assemble
@@ -194,6 +194,7 @@ async def api_hwp_assemble(req: HWPAssembleRequest):
     alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                            "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
     merged['programs'].append(alarm_prg)
+    format_program_commas(merged['programs'])
     number_programs(merged['programs'])
 
     # Calculate highest I/O rows
@@ -266,6 +267,7 @@ async def api_hwp_generate(req: HWPAssembleRequest):
     alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                            "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
     merged['programs'].append(alarm_prg)
+    format_program_commas(merged['programs'])
     number_programs(merged['programs'])
 
     wb = write_excel(merged, trends, alarm_code, config_name)
@@ -353,6 +355,7 @@ async def api_chwp_assemble(req: CHWPAssembleRequest):
     alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                            "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
     merged['programs'].append(alarm_prg)
+    format_program_commas(merged['programs'])
     number_programs(merged['programs'])
 
     highest_in = max((p.row for p in merged['inputs']), default=0)
@@ -425,6 +428,7 @@ async def api_chwp_generate(req: CHWPAssembleRequest):
     alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                            "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
     merged['programs'].append(alarm_prg)
+    format_program_commas(merged['programs'])
     number_programs(merged['programs'])
 
     wb = write_excel(merged, trends, alarm_code, config_name)
@@ -504,6 +508,7 @@ async def api_hwp_generate_pan(req: HWPAssembleRequest):
     alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                            "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
     merged['programs'].append(alarm_prg)
+    format_program_commas(merged['programs'])
     number_programs(merged['programs'])
     wb = write_excel(merged, trends, alarm_code, config_name)
     import tempfile, shutil
@@ -548,6 +553,7 @@ async def api_chwp_generate_pan(req: CHWPAssembleRequest):
     alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                            "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
     merged['programs'].append(alarm_prg)
+    format_program_commas(merged['programs'])
     number_programs(merged['programs'])
     wb = write_excel(merged, trends, alarm_code, config_name)
     import tempfile, shutil
@@ -616,6 +622,8 @@ async def api_assemble_vvt(req: VVTAssembleRequest):
     mpv_config.system_groups = copy.deepcopy(mpv_mod.system_groups)
     mpv_config.soo_document = mpv_mod.soo_paragraph
     mpv_config.controller_model = "MACH-ProView LCD"
+    prefix_local_points(mpv_config)
+    format_program_commas(mpv_config.programs)
     number_programs(mpv_config.programs)
 
     result = {
@@ -1760,6 +1768,7 @@ async def api_generate_from_config(req: GenerateFromConfigRequest):
         alarm_prg = ProgramDef(50, "ALARMS-PRG", "PRG-ALARMS.bas", alarm_code, True,
                                "Auto-generated alarm definitions", "alarm-gen", exec_order=50)
         merged['programs'].append(alarm_prg)
+        format_program_commas(merged['programs'])
         number_programs(merged['programs'])
 
         # Apply terminal overrides
