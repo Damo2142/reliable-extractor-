@@ -85,6 +85,35 @@ IF FREEZE-PROT = 1 THEN FBP = 100
 IF FREEZE-PROT = 1 THEN HW-DEMAND = CFG-UV-FREEZE-VLV
 """
 
+_PRG04_FBP_FLT = """\
+REM --- FBP-CTRL ---
+REM Face/bypass floating damper using CBAS FLOAT() function
+REM Cold mode (OAT < switchover): valve full open, FBP modulates DAT
+REM Mild mode (OAT >= switchover): full face position, valve modulates DAT
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
+REM
+IF ACT-OAT < CFG-FBP-SWITCHOVER-T THEN FBP-MODE = 1 ELSE FBP-MODE = 0
+REM
+REM Position command and HW demand based on mode
+IF FBP-MODE = 1 THEN DMP-POS-CMD = HTG-DAT-LOOP
+IF FBP-MODE = 1 THEN HW-DEMAND = 100
+IF FBP-MODE = 0 THEN DMP-POS-CMD = 100
+IF FBP-MODE = 0 THEN HW-DEMAND = HTG-DAT-LOOP
+REM
+REM Freeze: drive damper to full face
+IF FREEZE-PROT = 1 THEN DMP-POS-CMD = 100
+IF FREEZE-PROT = 1 THEN HW-DEMAND = CFG-UV-FREEZE-VLV
+REM
+REM Floating sync on power cycle and mode change
+IF+ POWER-LOSS THEN START DMP-FLOAT-SYNC
+IF+ FBP-MODE = 1 THEN START DMP-FLOAT-SYNC
+IF+ FBP-MODE = 0 THEN START DMP-FLOAT-SYNC
+IF TIME-ON( DMP-FLOAT-SYNC ) > 0:00:05 THEN STOP DMP-FLOAT-SYNC
+REM
+REM FLOAT() drives the open/close relays
+DMP-POS = FLOAT( DMP-OPEN , DMP-CLOSE , DMP-POS-CMD , CFG-DMP-DRV-TIME , CFG-DMP-POS-DB , DMP-FLOAT-SYNC )
+"""
+
 _PRG04_FBP_STEAM_ONOFF = """\
 REM --- FBP-CTRL ---
 REM Face/bypass with steam on/off valve
@@ -113,15 +142,25 @@ IF FREEZE-PROT = 1 THEN HW-VLV = CFG-UV-FREEZE-VLV
 
 _PRG05_HW_FLT = """\
 REM --- HTG-OUTPUT ---
-REM HW floating valve from HTG-DAT-LOOP
+REM HW floating valve using CBAS FLOAT() function
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
-IF HW-VLV-O = 1 THEN HW-VLV-POS = HW-VLV-POS + ( 100.0 / CFG-FLT-TRAVEL )
-IF HW-VLV-C = 1 THEN HW-VLV-POS = HW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
-HW-VLV-POS = LIMIT( HW-VLV-POS, 0.0, 100.0 )
-IF FREEZE-PROT = 0 AND HTG-DAT-LOOP > ( HW-VLV-POS + CFG-FLT-DB ) THEN HW-VLV-O = 1 ELSE HW-VLV-O = 0
-IF FREEZE-PROT = 0 AND HTG-DAT-LOOP < ( HW-VLV-POS - CFG-FLT-DB ) THEN HW-VLV-C = 1 ELSE HW-VLV-C = 0
-IF ACT-DAT > CFG-DAT-HL THEN HW-VLV-O = 0 : HW-VLV-C = 1
-IF FREEZE-PROT = 1 THEN HW-VLV-O = 1 : HW-VLV-C = 0
+REM Position command from heating DAT loop
+RH-POS-CMD = HTG-DAT-LOOP
+REM
+REM Safety overrides
+IF ACT-DAT > CFG-DAT-HL THEN RH-POS-CMD = 0
+REM
+REM Freeze: drive valve to configured freeze position
+IF FREEZE-PROT = 1 THEN RH-POS-CMD = CFG-UV-FREEZE-VLV
+REM
+REM Floating sync on power cycle and unoccupied
+IF+ POWER-LOSS THEN START RH-FLOAT-SYNC
+IF+ OCC-MODE = 0 THEN START RH-FLOAT-SYNC
+IF TIME-ON( RH-FLOAT-SYNC ) > 0:00:05 THEN STOP RH-FLOAT-SYNC
+REM
+REM FLOAT() drives the open/close relays
+RH-POS = FLOAT( RH-OPEN , RH-CLOSE , RH-POS-CMD , CFG-RH-DRV-TIME , CFG-RH-POS-DB , RH-FLOAT-SYNC )
 """
 
 _PRG05_STEAM_MOD = """\
@@ -164,15 +203,23 @@ IF FREEZE-PROT = 1 THEN CHW-VLV = 0
 
 _PRG06_CHW_FLT = """\
 REM --- CLG-OUTPUT ---
-REM CHW floating valve from CLG-DAT-LOOP
+REM CHW floating valve using CBAS FLOAT() function
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
-IF CHW-VLV-O = 1 THEN CHW-VLV-POS = CHW-VLV-POS + ( 100.0 / CFG-FLT-TRAVEL )
-IF CHW-VLV-C = 1 THEN CHW-VLV-POS = CHW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
-CHW-VLV-POS = LIMIT( CHW-VLV-POS, 0.0, 100.0 )
-IF CLG-DAT-LOOP > ( CHW-VLV-POS + CFG-FLT-DB ) THEN CHW-VLV-O = 1 ELSE CHW-VLV-O = 0
-IF CLG-DAT-LOOP < ( CHW-VLV-POS - CFG-FLT-DB ) THEN CHW-VLV-C = 1 ELSE CHW-VLV-C = 0
-IF ACT-DAT < CFG-DAT-LL THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
-IF FREEZE-PROT = 1 THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
+REM Position command from cooling DAT loop
+CHW-POS-CMD = CLG-DAT-LOOP
+REM
+REM Safety overrides force valve closed
+IF ACT-DAT < CFG-DAT-LL THEN CHW-POS-CMD = 0
+IF FREEZE-PROT = 1 THEN CHW-POS-CMD = 0
+REM
+REM Floating sync on power cycle and unoccupied
+IF+ POWER-LOSS THEN START CHW-FLOAT-SYNC
+IF+ OCC-MODE = 0 THEN START CHW-FLOAT-SYNC
+IF TIME-ON( CHW-FLOAT-SYNC ) > 0:00:05 THEN STOP CHW-FLOAT-SYNC
+REM
+REM FLOAT() drives the open/close relays
+CHW-POS = FLOAT( CHW-OPEN , CHW-CLOSE , CHW-POS-CMD , CFG-CHW-DRV-TIME , CFG-CHW-POS-DB , CHW-FLOAT-SYNC )
 """
 
 _PRG06_DX_1 = """\
@@ -216,19 +263,27 @@ IF FREEZE-PROT = 1 THEN OAD = 0
 
 _PRG07_OAD_FLT = """\
 REM --- OAD-CTRL ---
-REM ASHRAE Cycle 1+2 floating OA damper
+REM ASHRAE Cycle 1+2 floating OA damper using CBAS FLOAT() function
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
-OAD-TARGET = CFG-OAD-MIN
-IF OCC-MODE = 0 THEN OAD-TARGET = 0
-IF FREEZE-PROT = 1 THEN OAD-TARGET = 0
-IF ACT-OAT < ACT-RMT AND ACT-OAT < CFG-ECON-ENABLE-T AND OCC-MODE = 1 THEN OAD-TARGET = SLIDE( CLG-DAT-LOOP, 0.0, 100.0, CFG-OAD-MIN, 100.0 )
-IF OAD-O = 1 THEN OAD-POS = OAD-POS + ( 100.0 / CFG-FLT-TRAVEL )
-IF OAD-C = 1 THEN OAD-POS = OAD-POS - ( 100.0 / CFG-FLT-TRAVEL )
-OAD-POS = LIMIT( OAD-POS, 0.0, 100.0 )
-IF OAD-TARGET > ( OAD-POS + CFG-FLT-DB ) THEN OAD-O = 1 ELSE OAD-O = 0
-IF OAD-TARGET < ( OAD-POS - CFG-FLT-DB ) THEN OAD-C = 1 ELSE OAD-C = 0
-IF OCC-MODE = 0 THEN OAD-O = 0 : OAD-C = 1
-IF FREEZE-PROT = 1 THEN OAD-O = 0 : OAD-C = 1
+REM Cycle 2 enable: OAT < RAT AND OAT < enable temp
+IF ACT-OAT < ACT-RMT AND ACT-OAT < CFG-ECON-ENABLE-T THEN CYCLE2-ENABLE = 1 ELSE CYCLE2-ENABLE = 0
+REM
+REM Position command: min position when occupied, free cooling when Cycle 2 enabled
+DMP-POS-CMD = CFG-OAD-MIN
+IF CYCLE2-ENABLE = 1 AND OCC-MODE = 1 THEN DMP-POS-CMD = SLIDE( CLG-DAT-LOOP , 0.0 , 100.0 , CFG-OAD-MIN , 100.0 )
+REM
+REM Safety overrides force damper closed
+IF OCC-MODE = 0 THEN DMP-POS-CMD = 0
+IF FREEZE-PROT = 1 THEN DMP-POS-CMD = 0
+REM
+REM Floating sync on power cycle and unoccupied
+IF+ POWER-LOSS THEN START DMP-FLOAT-SYNC
+IF+ OCC-MODE = 0 THEN START DMP-FLOAT-SYNC
+IF TIME-ON( DMP-FLOAT-SYNC ) > 0:00:05 THEN STOP DMP-FLOAT-SYNC
+REM
+REM FLOAT() drives the open/close relays
+DMP-POS = FLOAT( DMP-OPEN , DMP-CLOSE , DMP-POS-CMD , CFG-DMP-DRV-TIME , CFG-DMP-POS-DB , DMP-FLOAT-SYNC )
 """
 
 _PRG08_FAN_CV = """\
@@ -436,19 +491,20 @@ def build_uv_oad_mod():
 def build_uv_oad_flt():
     return Module(
         id="uv-oad-flt", name="UV OA Damper Floating", category="economizer",
-        description="OA damper floating — ASHRAE Cycle 1+2",
+        description="OA damper floating — CBAS FLOAT() ASHRAE Cycle 1+2",
         outputs=[
-            OutputPoint(10, "OAD-O", "BO", "Stop/Start", "OA Damper Open"),
-            OutputPoint(11, "OAD-C", "BO", "Stop/Start", "OA Damper Close"),
+            OutputPoint(10, "DMP-OPEN",  "BO", "Stop/Start", "OA Damper Open"),
+            OutputPoint(11, "DMP-CLOSE", "BO", "Stop/Start", "OA Damper Close"),
         ],
         values=[
-            ValuePoint(80, "CFG-OAD-MIN",       "AV", 10.0,  "Min OA Damper Position",  "%"),
-            ValuePoint(81, "CFG-ECON-ENABLE-T",  "AV", 65.0,  "Economizer Enable Temp",  "°F"),
-            ValuePoint(82, "CYCLE2-ENABLE",      "BV", False,  "Cycle 2 Free Cooling"),
-            ValuePoint(83, "OAD-POS",            "AV", 0.0,   "OA Damper Position (est)", "%"),
-            ValuePoint(84, "OAD-TARGET",         "AV", 0.0,   "OA Damper Target",        "%"),
-            ValuePoint(90, "CFG-FLT-DB",         "AV", 2.0,   "Float Deadband",          "%"),
-            ValuePoint(91, "CFG-FLT-TRAVEL",     "AV", 150.0, "Float Travel Time",       "Sec"),
+            ValuePoint(80, "CFG-OAD-MIN",       "AV", 10.0,  "Min OA Damper Position",        "%"),
+            ValuePoint(81, "CFG-ECON-ENABLE-T", "AV", 65.0,  "Economizer Enable Temp",        "°F"),
+            ValuePoint(82, "CYCLE2-ENABLE",     "BV", False, "Cycle 2 Free Cooling"),
+            ValuePoint(83, "DMP-POS",           "AV", 0.0,   "OA Damper Actual Position",    "%"),
+            ValuePoint(84, "DMP-POS-CMD",       "AV", 0.0,   "OA Damper Commanded Position", "%"),
+            ValuePoint(96, "CFG-DMP-POS-DB",    "AV", 2.0,   "Damper Float Position Deadband","%"),
+            ValuePoint(97, "CFG-DMP-DRV-TIME",  "AV", 150.0, "Damper Full Stroke Time",      "Sec"),
+            ValuePoint(98, "DMP-FLOAT-SYNC",    "BV", False, "Damper Float Sync Trigger"),
         ],
         programs=[ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD_FLT, True,
                              "OA damper floating Cycle 1+2", exec_order=7)],
@@ -483,20 +539,23 @@ def build_uv_fbp_mod():
 def build_uv_fbp_flt():
     return Module(
         id="uv-fbp-flt", name="UV Face/Bypass Floating", category="economizer",
-        description="Face/bypass floating — cold/mild mode switching",
+        description="Face/bypass floating damper — CBAS FLOAT() cold/mild mode switching",
         outputs=[
-            OutputPoint(10, "FBP-O", "BO", "Stop/Start", "Face/Bypass Open"),
-            OutputPoint(11, "FBP-C", "BO", "Stop/Start", "Face/Bypass Close"),
+            OutputPoint(10, "DMP-OPEN",  "BO", "Stop/Start", "Face/Bypass Open"),
+            OutputPoint(11, "DMP-CLOSE", "BO", "Stop/Start", "Face/Bypass Close"),
         ],
         values=[
-            ValuePoint(85, "CFG-FBP-SWITCHOVER-T", "AV", 40.0,  "FBP Switchover Temp",  "°F"),
-            ValuePoint(86, "FBP-MODE",             "BV", False,  "FBP Cold Mode"),
-            ValuePoint(87, "HW-DEMAND",            "AV", 0.0,   "HW Demand from FBP",   "%"),
-            ValuePoint(90, "CFG-FLT-DB",           "AV", 2.0,   "Float Deadband",        "%"),
-            ValuePoint(91, "CFG-FLT-TRAVEL",       "AV", 150.0, "Float Travel Time",     "Sec"),
+            ValuePoint(85, "CFG-FBP-SWITCHOVER-T", "AV", 40.0,  "FBP Switchover Temp",          "°F"),
+            ValuePoint(86, "FBP-MODE",             "BV", False, "FBP Cold Mode"),
+            ValuePoint(87, "HW-DEMAND",            "AV", 0.0,   "HW Demand from FBP",          "%"),
+            ValuePoint(88, "DMP-POS",              "AV", 0.0,   "FBP Actual Position",         "%"),
+            ValuePoint(89, "DMP-POS-CMD",          "AV", 0.0,   "FBP Commanded Position",      "%"),
+            ValuePoint(96, "CFG-DMP-POS-DB",       "AV", 2.0,   "Damper Float Position Deadband","%"),
+            ValuePoint(97, "CFG-DMP-DRV-TIME",     "AV", 150.0, "Damper Full Stroke Time",     "Sec"),
+            ValuePoint(98, "DMP-FLOAT-SYNC",       "BV", False, "Damper Float Sync Trigger"),
         ],
-        programs=[ProgramDef(4, "FBP-CTRL", "PRG04-FBP-CTRL.bas", _PRG04_FBP, True,
-                             "Face/bypass floating cold/mild", exec_order=4)],
+        programs=[ProgramDef(4, "FBP-CTRL", "PRG04-FBP-CTRL.bas", _PRG04_FBP_FLT, True,
+                             "Face/bypass floating: FLOAT() with cold/mild logic", exec_order=4)],
         requires=["uv-core"],
         conflicts=["uv-oad-mod", "uv-oad-flt", "uv-fbp-mod"],
         mutually_exclusive_group="uv-airpath",
@@ -523,15 +582,17 @@ def build_uv_hw_mod():
 def build_uv_hw_flt():
     return Module(
         id="uv-hw-flt", name="UV HW Floating", category="heating",
-        description="HW floating valve from HTG-DAT-LOOP",
+        description="HW floating valve — CBAS FLOAT() function drives open/close relays",
         outputs=[
-            OutputPoint(6, "HW-VLV-O", "BO", "Stop/Start", "HW Valve Open"),
-            OutputPoint(7, "HW-VLV-C", "BO", "Stop/Start", "HW Valve Close"),
+            OutputPoint(6, "RH-OPEN",  "BO", "Stop/Start", "HW Valve Open"),
+            OutputPoint(7, "RH-CLOSE", "BO", "Stop/Start", "HW Valve Close"),
         ],
         values=[
-            ValuePoint(46, "HW-VLV-POS",     "AV", 0.0,   "HW Valve Position",   "%"),
-            ValuePoint(90, "CFG-FLT-DB",     "AV", 2.0,   "Float Deadband",       "%"),
-            ValuePoint(91, "CFG-FLT-TRAVEL", "AV", 150.0, "Float Travel Time",    "Sec"),
+            ValuePoint(46, "RH-POS",          "AV", 0.0,   "HW Valve Actual Position",    "%"),
+            ValuePoint(47, "RH-POS-CMD",      "AV", 0.0,   "HW Valve Commanded Position", "%"),
+            ValuePoint(93, "CFG-RH-POS-DB",   "AV", 2.0,   "HW Float Position Deadband",  "%"),
+            ValuePoint(94, "CFG-RH-DRV-TIME", "AV", 150.0, "HW Valve Full Stroke Time",   "Sec"),
+            ValuePoint(95, "RH-FLOAT-SYNC",   "BV", False, "HW Float Sync Trigger"),
         ],
         programs=[ProgramDef(5, "HTG-OUTPUT", "PRG05-HTG-OUTPUT.bas", _PRG05_HW_FLT, True,
                              "HW float = HTG-DAT-LOOP vs position", exec_order=5)],
@@ -615,15 +676,17 @@ def build_uv_chw_mod():
 def build_uv_chw_flt():
     return Module(
         id="uv-chw-flt", name="UV CHW Floating", category="cooling",
-        description="CHW floating valve from CLG-DAT-LOOP",
+        description="CHW floating valve — CBAS FLOAT() function drives open/close relays",
         outputs=[
-            OutputPoint(4, "CHW-VLV-O", "BO", "Stop/Start", "CHW Valve Open"),
-            OutputPoint(5, "CHW-VLV-C", "BO", "Stop/Start", "CHW Valve Close"),
+            OutputPoint(4, "CHW-OPEN",  "BO", "Stop/Start", "CHW Valve Open"),
+            OutputPoint(5, "CHW-CLOSE", "BO", "Stop/Start", "CHW Valve Close"),
         ],
         values=[
-            ValuePoint(45, "CHW-VLV-POS",    "AV", 0.0,   "CHW Valve Position",  "%"),
-            ValuePoint(90, "CFG-FLT-DB",     "AV", 2.0,   "Float Deadband",      "%"),
-            ValuePoint(91, "CFG-FLT-TRAVEL", "AV", 150.0, "Float Travel Time",   "Sec"),
+            ValuePoint(45, "CHW-POS",          "AV", 0.0,   "CHW Valve Actual Position",    "%"),
+            ValuePoint(48, "CHW-POS-CMD",      "AV", 0.0,   "CHW Valve Commanded Position", "%"),
+            ValuePoint(90, "CFG-CHW-POS-DB",   "AV", 2.0,   "CHW Float Position Deadband",  "%"),
+            ValuePoint(91, "CFG-CHW-DRV-TIME", "AV", 150.0, "CHW Valve Full Stroke Time",   "Sec"),
+            ValuePoint(92, "CHW-FLOAT-SYNC",   "BV", False, "CHW Float Sync Trigger"),
         ],
         programs=[ProgramDef(6, "CLG-OUTPUT", "PRG06-CLG-OUTPUT.bas", _PRG06_CHW_FLT, True,
                              "CHW float = CLG-DAT-LOOP vs position", exec_order=6)],

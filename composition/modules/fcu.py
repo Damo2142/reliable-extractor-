@@ -83,17 +83,24 @@ IF OCC-MODE = 0 AND ACT-RMT < CFG-UNOCC-CLG-SP THEN CHW-VLV = 0
 
 _PRG04_CHW_FLT = """\
 REM --- CLG-OUTPUT ---
-REM CHW floating valve driven by CLG-DAT-LOOP
-REM Open pulse when loop > position + DB, close when loop < position - DB
+REM CHW floating valve using CBAS FLOAT() function
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
-IF CHW-VLV-O = 1 THEN CHW-VLV-POS = CHW-VLV-POS + ( 100.0 / CFG-FLT-TRAVEL )
-IF CHW-VLV-C = 1 THEN CHW-VLV-POS = CHW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
-CHW-VLV-POS = LIMIT( CHW-VLV-POS, 0.0, 100.0 )
-IF CLG-DAT-LOOP > ( CHW-VLV-POS + CFG-FLT-DB ) THEN CHW-VLV-O = 1 ELSE CHW-VLV-O = 0
-IF CLG-DAT-LOOP < ( CHW-VLV-POS - CFG-FLT-DB ) THEN CHW-VLV-C = 1 ELSE CHW-VLV-C = 0
-IF ACT-DAT < CFG-DAT-LL THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
-IF FREEZE-TRIP = 1 THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
-IF OCC-MODE = 0 AND ACT-RMT < CFG-UNOCC-CLG-SP THEN CHW-VLV-O = 0 : CHW-VLV-C = 1
+REM Position command from cooling DAT loop
+CHW-POS-CMD = CLG-DAT-LOOP
+REM
+REM Safety overrides force valve closed
+IF ACT-DAT < CFG-DAT-LL THEN CHW-POS-CMD = 0
+IF FREEZE-TRIP = 1 THEN CHW-POS-CMD = 0
+IF OCC-MODE = 0 AND ACT-RMT < CFG-UNOCC-CLG-SP THEN CHW-POS-CMD = 0
+REM
+REM Floating sync on power cycle and unoccupied
+IF+ POWER-LOSS THEN START CHW-FLOAT-SYNC
+IF+ OCC-MODE = 0 THEN START CHW-FLOAT-SYNC
+IF TIME-ON( CHW-FLOAT-SYNC ) > 0:00:05 THEN STOP CHW-FLOAT-SYNC
+REM
+REM FLOAT() drives the open/close relays
+CHW-POS = FLOAT( CHW-OPEN , CHW-CLOSE , CHW-POS-CMD , CFG-CHW-DRV-TIME , CFG-CHW-POS-DB , CHW-FLOAT-SYNC )
 """
 
 _PRG04_DX_1 = """\
@@ -140,17 +147,29 @@ IF OCC-MODE = 0 AND PIPE-MODE = 1 AND ACT-RMT > CFG-UNOCC-HTG-SP THEN VALVE = 0
 
 _PRG04_2PIPE_FLT = """\
 REM --- CLG-OUTPUT ---
-REM 2-pipe switchover: floating valve from active DAT loop
+REM 2-pipe switchover floating valve using CBAS FLOAT() function
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
+REM Pipe mode: 1=heating loop active, 0=cooling loop active
 IF HWS-OK = 1 OR NET-OAT < CFG-SWITCHOVER-T THEN PIPE-MODE = 1 ELSE PIPE-MODE = 0
-IF VLV-O = 1 THEN VLV-POS = VLV-POS + ( 100.0 / CFG-FLT-TRAVEL )
-IF VLV-C = 1 THEN VLV-POS = VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
-VLV-POS = LIMIT( VLV-POS, 0.0, 100.0 )
+REM
+REM Position command from active mode's DAT loop
 IF PIPE-MODE = 0 THEN ACTIVE-DMD = CLG-DAT-LOOP ELSE ACTIVE-DMD = HTG-DAT-LOOP
-IF ACTIVE-DMD > ( VLV-POS + CFG-FLT-DB ) THEN VLV-O = 1 ELSE VLV-O = 0
-IF ACTIVE-DMD < ( VLV-POS - CFG-FLT-DB ) THEN VLV-C = 1 ELSE VLV-C = 0
-IF FREEZE-TRIP = 1 THEN VLV-O = 0 : VLV-C = 1
-IF OCC-MODE = 0 AND ACT-RMT > CFG-UNOCC-HTG-SP AND ACT-RMT < CFG-UNOCC-CLG-SP THEN VLV-O = 0 : VLV-C = 1
+VLV-POS-CMD = ACTIVE-DMD
+REM
+REM Safety overrides
+IF FREEZE-TRIP = 1 THEN VLV-POS-CMD = 0
+IF OCC-MODE = 0 AND ACT-RMT > CFG-UNOCC-HTG-SP AND ACT-RMT < CFG-UNOCC-CLG-SP THEN VLV-POS-CMD = 0
+REM
+REM Floating sync on power cycle, mode change, and unoccupied
+IF+ POWER-LOSS THEN START VLV-FLOAT-SYNC
+IF+ OCC-MODE = 0 THEN START VLV-FLOAT-SYNC
+IF+ PIPE-MODE = 1 THEN START VLV-FLOAT-SYNC
+IF+ PIPE-MODE = 0 THEN START VLV-FLOAT-SYNC
+IF TIME-ON( VLV-FLOAT-SYNC ) > 0:00:05 THEN STOP VLV-FLOAT-SYNC
+REM
+REM FLOAT() drives the open/close relays
+VLV-POS = FLOAT( VLV-OPEN , VLV-CLOSE , VLV-POS-CMD , CFG-VLV-DRV-TIME , CFG-VLV-POS-DB , VLV-FLOAT-SYNC )
 """
 
 _PRG04_HP = """\
@@ -188,16 +207,26 @@ IF OCC-MODE = 0 AND ACT-RMT > CFG-UNOCC-HTG-SP THEN HW-VLV = 0
 
 _PRG05_HW_FLT = """\
 REM --- HTG-OUTPUT ---
-REM HW floating valve driven by HTG-DAT-LOOP
+REM HW floating valve using CBAS FLOAT() function
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
-IF HW-VLV-O = 1 THEN HW-VLV-POS = HW-VLV-POS + ( 100.0 / CFG-FLT-TRAVEL )
-IF HW-VLV-C = 1 THEN HW-VLV-POS = HW-VLV-POS - ( 100.0 / CFG-FLT-TRAVEL )
-HW-VLV-POS = LIMIT( HW-VLV-POS, 0.0, 100.0 )
-IF HTG-DAT-LOOP > ( HW-VLV-POS + CFG-FLT-DB ) THEN HW-VLV-O = 1 ELSE HW-VLV-O = 0
-IF HTG-DAT-LOOP < ( HW-VLV-POS - CFG-FLT-DB ) THEN HW-VLV-C = 1 ELSE HW-VLV-C = 0
-IF ACT-DAT > CFG-DAT-HL THEN HW-VLV-O = 0 : HW-VLV-C = 1
-IF FREEZE-TRIP = 1 THEN HW-VLV-O = 0 : HW-VLV-C = 1
-IF OCC-MODE = 0 AND ACT-RMT > CFG-UNOCC-HTG-SP THEN HW-VLV-O = 0 : HW-VLV-C = 1
+REM Position command from heating DAT loop
+RH-POS-CMD = HTG-DAT-LOOP
+REM
+REM Safety overrides
+IF ACT-DAT > CFG-DAT-HL THEN RH-POS-CMD = 0
+IF OCC-MODE = 0 AND ACT-RMT > CFG-UNOCC-HTG-SP THEN RH-POS-CMD = 0
+REM
+REM Freeze: drive valve open to keep coil warm
+IF FREEZE-TRIP = 1 THEN RH-POS-CMD = 100
+REM
+REM Floating sync on power cycle and unoccupied
+IF+ POWER-LOSS THEN START RH-FLOAT-SYNC
+IF+ OCC-MODE = 0 THEN START RH-FLOAT-SYNC
+IF TIME-ON( RH-FLOAT-SYNC ) > 0:00:05 THEN STOP RH-FLOAT-SYNC
+REM
+REM FLOAT() drives the open/close relays
+RH-POS = FLOAT( RH-OPEN , RH-CLOSE , RH-POS-CMD , CFG-RH-DRV-TIME , CFG-RH-POS-DB , RH-FLOAT-SYNC )
 """
 
 _PRG05_ELEC_1 = """\
@@ -297,18 +326,26 @@ IF FREEZE-TRIP = 1 THEN OAD = 0
 
 _PRG07_ECON_FLT = """\
 REM --- ECON-CTRL ---
-REM Economizer floating damper from CLG-DAT-LOOP
-REM Open pulse when CLG-DAT-LOOP > OAD-POS + DB
+REM Economizer floating damper using CBAS FLOAT() function
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
+REM Economizer enable: OAT < RAT AND OAT < enable temp
 ECON-ENABLE = 0
 IF NET-OAT < ACT-RMT AND NET-OAT < CFG-ECON-ENABLE-T THEN ECON-ENABLE = 1
-IF OAD-O = 1 THEN OAD-POS = OAD-POS + ( 100.0 / CFG-FLT-TRAVEL )
-IF OAD-C = 1 THEN OAD-POS = OAD-POS - ( 100.0 / CFG-FLT-TRAVEL )
-OAD-POS = LIMIT( OAD-POS, 0.0, 100.0 )
-IF ECON-ENABLE = 1 AND CLG-DAT-LOOP > ( OAD-POS + CFG-FLT-DB ) THEN OAD-O = 1 ELSE OAD-O = 0
-IF ECON-ENABLE = 1 AND CLG-DAT-LOOP < ( OAD-POS - CFG-FLT-DB ) THEN OAD-C = 1 ELSE OAD-C = 0
-IF ECON-ENABLE = 0 THEN OAD-O = 0 : OAD-C = 1
-IF FREEZE-TRIP = 1 THEN OAD-O = 0 : OAD-C = 1
+REM
+REM Position command from cooling loop when enabled
+IF ECON-ENABLE = 1 THEN DMP-POS-CMD = CLG-DAT-LOOP ELSE DMP-POS-CMD = 0
+REM
+REM Safety overrides force damper closed
+IF FREEZE-TRIP = 1 THEN DMP-POS-CMD = 0
+REM
+REM Floating sync on power cycle and economizer disable
+IF+ POWER-LOSS THEN START DMP-FLOAT-SYNC
+IF+ ECON-ENABLE = 0 THEN START DMP-FLOAT-SYNC
+IF TIME-ON( DMP-FLOAT-SYNC ) > 0:00:05 THEN STOP DMP-FLOAT-SYNC
+REM
+REM FLOAT() drives the open/close relays
+DMP-POS = FLOAT( DMP-OPEN , DMP-CLOSE , DMP-POS-CMD , CFG-DMP-DRV-TIME , CFG-DMP-POS-DB , DMP-FLOAT-SYNC )
 """
 
 # --- Safety ---
@@ -530,15 +567,17 @@ def build_fcu_chw_flt():
     """CHW floating point valve"""
     return Module(
         id="fcu-chw-flt", name="FCU CHW Floating", category="cooling",
-        description="CHW floating valve — open/close from CLG-DAT-LOOP vs position",
+        description="CHW floating valve — CBAS FLOAT() function drives open/close relays",
         outputs=[
-            OutputPoint(4, "CHW-VLV-O", "BO", "Stop/Start", "CHW Valve Open"),
-            OutputPoint(5, "CHW-VLV-C", "BO", "Stop/Start", "CHW Valve Close"),
+            OutputPoint(4, "CHW-OPEN",  "BO", "Stop/Start", "CHW Valve Open"),
+            OutputPoint(5, "CHW-CLOSE", "BO", "Stop/Start", "CHW Valve Close"),
         ],
         values=[
-            ValuePoint(45, "CHW-VLV-POS",    "AV", 0.0,   "CHW Valve Position (est)", "%"),
-            ValuePoint(90, "CFG-FLT-DB",     "AV", 2.0,   "Float Valve Deadband",     "%"),
-            ValuePoint(91, "CFG-FLT-TRAVEL", "AV", 150.0, "Float Valve Travel Time",  "Sec"),
+            ValuePoint(45, "CHW-POS",          "AV", 0.0,   "CHW Valve Actual Position",      "%"),
+            ValuePoint(46, "CHW-POS-CMD",      "AV", 0.0,   "CHW Valve Commanded Position",   "%"),
+            ValuePoint(90, "CFG-CHW-POS-DB",   "AV", 2.0,   "CHW Float Position Deadband",    "%"),
+            ValuePoint(91, "CFG-CHW-DRV-TIME", "AV", 150.0, "CHW Valve Full Stroke Time",     "Sec"),
+            ValuePoint(92, "CHW-FLOAT-SYNC",   "BV", False, "CHW Float Sync Trigger"),
         ],
         programs=[ProgramDef(4, "CLG-OUTPUT", "PRG04-CLG-OUTPUT.bas", _PRG04_CHW_FLT, True,
                              "CHW float = CLG-DAT-LOOP vs position", exec_order=4)],
@@ -571,18 +610,20 @@ def build_fcu_2pipe_flt():
     """2-pipe switchover floating"""
     return Module(
         id="fcu-2pipe-flt", name="FCU 2-Pipe Floating", category="cooling",
-        description="2-pipe switchover — floating valve from active DAT loop",
+        description="2-pipe switchover floating valve — CBAS FLOAT() function",
         outputs=[
-            OutputPoint(4, "VLV-O", "BO", "Stop/Start", "2-Pipe Valve Open"),
-            OutputPoint(5, "VLV-C", "BO", "Stop/Start", "2-Pipe Valve Close"),
+            OutputPoint(4, "VLV-OPEN",  "BO", "Stop/Start", "2-Pipe Valve Open"),
+            OutputPoint(5, "VLV-CLOSE", "BO", "Stop/Start", "2-Pipe Valve Close"),
         ],
         values=[
             ValuePoint(42, "PIPE-MODE",        "BV", False, "Pipe Mode (1=heat 0=cool)"),
-            ValuePoint(43, "CFG-SWITCHOVER-T", "AV", 55.0,  "Switchover Temperature",  "°F"),
-            ValuePoint(44, "VLV-POS",          "AV", 0.0,   "Valve Position (est)",    "%"),
-            ValuePoint(47, "ACTIVE-DMD",       "AV", 0.0,   "Active Demand",           "%"),
-            ValuePoint(90, "CFG-FLT-DB",       "AV", 2.0,   "Float Valve Deadband",    "%"),
-            ValuePoint(91, "CFG-FLT-TRAVEL",   "AV", 150.0, "Float Valve Travel Time", "Sec"),
+            ValuePoint(43, "CFG-SWITCHOVER-T", "AV", 55.0,  "Switchover Temperature",        "°F"),
+            ValuePoint(44, "VLV-POS",          "AV", 0.0,   "Valve Actual Position",         "%"),
+            ValuePoint(47, "ACTIVE-DMD",       "AV", 0.0,   "Active Demand",                 "%"),
+            ValuePoint(48, "VLV-POS-CMD",      "AV", 0.0,   "Valve Commanded Position",      "%"),
+            ValuePoint(90, "CFG-VLV-POS-DB",   "AV", 2.0,   "Valve Float Position Deadband", "%"),
+            ValuePoint(91, "CFG-VLV-DRV-TIME", "AV", 150.0, "Valve Full Stroke Time",        "Sec"),
+            ValuePoint(92, "VLV-FLOAT-SYNC",   "BV", False, "Valve Float Sync Trigger"),
         ],
         programs=[ProgramDef(4, "CLG-OUTPUT", "PRG04-CLG-OUTPUT.bas", _PRG04_2PIPE_FLT, True,
                              "2-pipe float = active DAT loop vs position", exec_order=4)],
@@ -678,15 +719,17 @@ def build_fcu_hw_flt():
     """HW floating point valve"""
     return Module(
         id="fcu-hw-flt", name="FCU HW Floating", category="heating",
-        description="HW floating valve — open/close from HTG-DAT-LOOP vs position",
+        description="HW floating valve — CBAS FLOAT() function drives open/close relays",
         outputs=[
-            OutputPoint(6, "HW-VLV-O", "BO", "Stop/Start", "HW Valve Open"),
-            OutputPoint(7, "HW-VLV-C", "BO", "Stop/Start", "HW Valve Close"),
+            OutputPoint(6, "RH-OPEN",  "BO", "Stop/Start", "HW Valve Open"),
+            OutputPoint(7, "RH-CLOSE", "BO", "Stop/Start", "HW Valve Close"),
         ],
         values=[
-            ValuePoint(46, "HW-VLV-POS",     "AV", 0.0,   "HW Valve Position (est)", "%"),
-            ValuePoint(90, "CFG-FLT-DB",     "AV", 2.0,   "Float Valve Deadband",    "%"),
-            ValuePoint(91, "CFG-FLT-TRAVEL", "AV", 150.0, "Float Valve Travel Time", "Sec"),
+            ValuePoint(50, "RH-POS",          "AV", 0.0,   "HW Valve Actual Position",     "%"),
+            ValuePoint(51, "RH-POS-CMD",      "AV", 0.0,   "HW Valve Commanded Position",  "%"),
+            ValuePoint(93, "CFG-RH-POS-DB",   "AV", 2.0,   "HW Float Position Deadband",   "%"),
+            ValuePoint(94, "CFG-RH-DRV-TIME", "AV", 150.0, "HW Valve Full Stroke Time",    "Sec"),
+            ValuePoint(95, "RH-FLOAT-SYNC",   "BV", False, "HW Float Sync Trigger"),
         ],
         programs=[ProgramDef(5, "HTG-OUTPUT", "PRG05-HTG-OUTPUT.bas", _PRG05_HW_FLT, True,
                              "HW float = HTG-DAT-LOOP vs position", exec_order=5)],
@@ -774,17 +817,19 @@ def build_fcu_econ_flt():
     """Economizer floating"""
     return Module(
         id="fcu-econ-flt", name="FCU Economizer Floating", category="economizer",
-        description="Economizer floating damper from CLG-DAT-LOOP vs position",
+        description="Economizer floating damper — CBAS FLOAT() function",
         outputs=[
-            OutputPoint(10, "OAD-O", "BO", "Stop/Start", "OA Damper Open"),
-            OutputPoint(11, "OAD-C", "BO", "Stop/Start", "OA Damper Close"),
+            OutputPoint(10, "DMP-OPEN",  "BO", "Stop/Start", "OA Damper Open"),
+            OutputPoint(11, "DMP-CLOSE", "BO", "Stop/Start", "OA Damper Close"),
         ],
         values=[
-            ValuePoint(80, "CFG-ECON-ENABLE-T", "AV", 65.0,  "Economizer Enable Temp",  "°F"),
-            ValuePoint(81, "ECON-ENABLE",       "BV", False,  "Economizer Enabled"),
-            ValuePoint(82, "OAD-POS",           "AV", 0.0,   "OA Damper Position (est)", "%"),
-            ValuePoint(90, "CFG-FLT-DB",        "AV", 2.0,   "Float Valve Deadband",    "%"),
-            ValuePoint(91, "CFG-FLT-TRAVEL",    "AV", 150.0, "Float Valve Travel Time", "Sec"),
+            ValuePoint(80, "CFG-ECON-ENABLE-T", "AV", 65.0,  "Economizer Enable Temp",         "°F"),
+            ValuePoint(81, "ECON-ENABLE",       "BV", False, "Economizer Enabled"),
+            ValuePoint(82, "DMP-POS",           "AV", 0.0,   "OA Damper Actual Position",     "%"),
+            ValuePoint(83, "DMP-POS-CMD",       "AV", 0.0,   "OA Damper Commanded Position",  "%"),
+            ValuePoint(96, "CFG-DMP-POS-DB",    "AV", 2.0,   "Damper Float Position Deadband","%"),
+            ValuePoint(97, "CFG-DMP-DRV-TIME",  "AV", 150.0, "Damper Full Stroke Time",       "Sec"),
+            ValuePoint(98, "DMP-FLOAT-SYNC",    "BV", False, "Damper Float Sync Trigger"),
         ],
         programs=[ProgramDef(7, "ECON-CTRL", "PRG07-ECON-CTRL.bas", _PRG07_ECON_FLT, True,
                              "Economizer float = CLG-DAT-LOOP vs position", exec_order=7)],

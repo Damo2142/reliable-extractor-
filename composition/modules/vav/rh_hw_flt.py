@@ -25,51 +25,31 @@ from composition.models import (
 
 _PRG04_RH = """\
 REM --- RH-PRG ---
-REM Floating HW reheat: calculate demand, drive valve via FLOAT()
-REM FLOAT( open-BO, close-BO, LOOP, drive-time, deadband, reset )
+REM Floating HW reheat valve using CBAS FLOAT() function
+REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
-REM --- Reheat Mode Check ---
-IF HVAC-MODE = 3 THEN GOTO 100
-IF HVAC-MODE = 4 THEN GOTO 100
+REM --- Position Command from Heating Loop ---
+REM Active only in Reheat (3) or Heat (4) HVAC mode
+RH-POS-CMD = SELECT( HVAC-MODE , 0 , 0 , RH-DMD , RH-DMD , 0 )
 REM
-REM --- No Reheat ---
-REM Vent, Cool, or Unoccupied — sync valve closed
-REM Trigger sync on transition out of reheat mode
-IF RH-POS > 0.0 THEN RH-FLOAT-SYNC = 1
-RH-POS = FLOAT( RH-OPEN, RH-CLOSE, 0.0, CFG-RH-DRV-TIME, CFG-RH-POS-DB, RH-FLOAT-SYNC )
-GOTO 999
-REM
-REM --- Reheat Active ---
-100 REM Calculate DAT setpoint from room temp deviation
-DAT-SP = SLIDE( RMT-SP-HTG - ACT-RMT, 0.0, 4.0, DAT-MIN-SP, DAT-MAX-SP )
-DAT-SP = LIMIT( DAT-SP, DAT-MIN-SP, DAT-MAX-SP )
+REM --- Calculate Demand 0-100% from DAT deviation ---
+DAT-SP = SLIDE( RMT-SP-HTG - ACT-RMT , 0.0 , 4.0 , DAT-MIN-SP , DAT-MAX-SP )
+DAT-SP = LIMIT( DAT-SP , DAT-MIN-SP , DAT-MAX-SP )
 IF DAT-SP > RH-MAX-DAT THEN DAT-SP = RH-MAX-DAT
+RH-DMD = SLIDE( DAT-SP - DAT , 0.0 , DAT-MAX-SP - DAT-MIN-SP , 0.0 , 100.0 )
+RH-DMD = LIMIT( RH-DMD , 0.0 , 100.0 )
 REM
-REM --- HW Available Check ---
-IF NOT HWS-OK THEN RH-FLOAT-SYNC = 1
-IF NOT HWS-OK THEN RH-POS = FLOAT( RH-OPEN, RH-CLOSE, 0.0, CFG-RH-DRV-TIME, CFG-RH-POS-DB, RH-FLOAT-SYNC )
-IF NOT HWS-OK THEN GOTO 999
+REM --- Drive Valve Closed When HW Unavailable ---
+IF NOT HWS-OK THEN RH-POS-CMD = 0
 REM
-REM --- Calculate Demand 0-100% ---
-REM Demand based on DAT error: how far DAT is below setpoint
-REM At DAT-SP demand=0 (satisfied), at DAT-SP minus range demand=100 (full open)
-REM Range = DAT-MAX-SP - DAT-MIN-SP
-RH-DMD = SLIDE( DAT-SP - DAT, 0.0, DAT-MAX-SP - DAT-MIN-SP, 0.0, 100.0 )
-RH-DMD = LIMIT( RH-DMD, 0.0, 100.0 )
-REM
-REM --- Power Loss Sync ---
+REM --- Floating Sync on Power Cycle and Unoccupied ---
 IF+ POWER-LOSS THEN START RH-FLOAT-SYNC
-REM
-REM --- Unoccupied Transition Sync ---
 IF+ OCC-MODE >= 4 THEN START RH-FLOAT-SYNC
-REM
-REM --- Drive Valve ---
-RH-POS = FLOAT( RH-OPEN, RH-CLOSE, RH-DMD, CFG-RH-DRV-TIME, CFG-RH-POS-DB, RH-FLOAT-SYNC )
-REM
-REM --- Auto-clear sync after FLOAT processes it ---
+IF+ HVAC-MODE <> 3 THEN START RH-FLOAT-SYNC
 IF TIME-ON( RH-FLOAT-SYNC ) > 0:00:05 THEN STOP RH-FLOAT-SYNC
 REM
-999 REM End
+REM --- FLOAT() drives open/close relays ---
+RH-POS = FLOAT( RH-OPEN , RH-CLOSE , RH-POS-CMD , CFG-RH-DRV-TIME , CFG-RH-POS-DB , RH-FLOAT-SYNC )
 """
 
 
@@ -97,11 +77,11 @@ def build():
             ValuePoint(36, "DAT-MAX-SP",      "AV", 102.5, "Max DAT Setpoint",                "deg.F"),
             ValuePoint(37, "DAT-SP",          "AV", 90.0,  "Active DAT Setpoint (calculated)","deg.F"),
             ValuePoint(39, "DAT-MIN-SP",      "AV", 70.0,  "Min DAT Setpoint",                "deg.F"),
-            ValuePoint(67, "RH-POS",          "AV", 0.0,   "Tracked Valve Position (0-100%)", "%"),
-            ValuePoint(68, "CFG-RH-DRV-TIME", "AV", 135.0, "Valve Full Stroke Drive Time",    "Sec."),
-            ValuePoint(69, "CFG-RH-POS-DB",   "AV", 5.0,   "Reheat Position Deadband",        "%"),
+            ValuePoint(67, "RH-POS",          "AV", 0.0,   "Actual Valve Position (0-100%)",  "%"),
+            ValuePoint(68, "CFG-RH-DRV-TIME", "AV", 150.0, "Valve Full Stroke Drive Time",    "Sec."),
+            ValuePoint(69, "CFG-RH-POS-DB",   "AV", 2.0,   "Reheat Position Deadband",        "%"),
             ValuePoint(83, "RH-DMD",          "AV", 0.0,   "Reheat Demand (0-100%)",          "%"),
-            # BV for float sync
+            ValuePoint(84, "RH-POS-CMD",      "AV", 0.0,   "Commanded Valve Position",        "%"),
             ValuePoint(70, "RH-FLOAT-SYNC",   "BV", False, "Float Sync Trigger"),
         ],
 
