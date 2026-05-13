@@ -326,3 +326,102 @@ to maintain supply air temperature setpoint.""",
         conflicts=["htg-hw", "htg-elec", "htg-gas", "htg-stm"],
         mutually_exclusive_group="heating",
     )
+
+
+def build_htg_hw_fbp():
+    """Hot water heating coil with face/bypass damper.
+
+    Face/bypass damper modulates air around the coil:
+      - Heating mode → 100% face (all air through coil for heat transfer)
+      - Cooling mode → modulate F/B from HW coil LAT vs SAT setpoint
+      - Economizer → minimum face (allow OA to bypass coil)
+      - Freeze safety → 100% face (force warm air through coil)
+      - Fan off / safety SD → 100% face (stagnation freeze protection)
+    Includes the full HW coil hardware and program set as htg-hw, plus AO
+    and program for the face/bypass damper.
+    """
+    return Module(
+        id="htg-hw-fbp",
+        name="Hot Water Heating with Face/Bypass",
+        category="heating",
+        description="HW heating coil + face/bypass damper, freeze protection, lockout",
+
+        inputs=[
+            InputPoint(8,  "HWC-DAT",    "AI", "10K -40 ->250", "HW Coil Discharge Air Temp", "°F"),
+            InputPoint(31, "HWC-SUPW-T", "AI", "10K -40 ->250", "HW Coil Supply Water Temp",  "°F"),
+            InputPoint(32, "HWC-RETW-T", "AI", "10K -40 ->250", "HW Coil Return Water Temp",  "°F"),
+        ],
+
+        outputs=[
+            OutputPoint(4, "HW-VLV",      "AO", "0.0 ->100%", "Hot Water Valve (reverse)",            10.0, 2.0, True),
+            OutputPoint(5, "HTG-FBP-DMP", "AO", "0.0 ->100%", "Face/Bypass Damper (0=bypass,100=face)", 10.0, 2.0, False),
+        ],
+
+        values=[
+            # HW coil base set (mirrors htg-hw)
+            ValuePoint(55,  "HTG-LO-SP",        "AV", 65.0,  "Heating Lockout OAT SP",     "°F"),
+            ValuePoint(56,  "HTG-LOCKOUT",      "BV", True,  "Heating Lockout Active"),
+            ValuePoint(57,  "HTG-LO-ICON",      "BV", False, "Heating Lockout Icon"),
+            ValuePoint(58,  "CLG-LO-SP",        "AV", 55.0,  "Cooling Lockout OAT SP",     "°F"),
+            ValuePoint(59,  "CLG-LOCKOUT",      "BV", False, "Cooling Lockout Active"),
+            ValuePoint(60,  "CLG-LO-ICON",      "BV", True,  "Cooling Lockout Icon"),
+            ValuePoint(52,  "FRZ-PRTC-SP",      "AV", 25.0,  "Freeze Protection OAT SP",   "°F"),
+            ValuePoint(53,  "FRZ-PRTC-MODE",    "BV", False, "Freeze Protection Mode"),
+            ValuePoint(78,  "HWC-SAT-SP",       "AV", 52.0,  "HW Coil SAT Setpoint",       "°F"),
+            ValuePoint(150, "HTG-RAMP",         "AV", 0.5,   "Heating Valve Ramp Time",    "Min."),
+            ValuePoint(151, "HW-AVAIL",         "BV", False, "Hot Water Available"),
+            ValuePoint(171, "HTG-VLV-FREEZE-SP","AV", 110.0, "HW Valve Freeze SP",         "°F"),
+            # Face/bypass specific
+            ValuePoint(172, "HTG-FBP-MIN-FACE", "AV", 20.0,  "Face/Bypass Minimum Face Position",  "%"),
+            ValuePoint(173, "HTG-FBP-FREEZE-SP","AV", 40.0,  "DAT Freeze Threshold for Full Face", "°F"),
+            ValuePoint(174, "HTG-FBP-CMD",      "AV", 100.0, "Face/Bypass Damper Command",         "%"),
+        ],
+
+        loops=[
+            LoopDef(7, "HW-VLV-LOOP", "HWC-DAT", "ACT-SAT-SP", "HW-VLV",
+                    p_band=12.0, integral=40.0, action="reverse",
+                    description="Hot Water Valve SAT Control"),
+            LoopDef(9, "FRZ-LOOP", "HWC-DAT", "HTG-VLV-FREEZE-SP", "HW-VLV",
+                    p_band=12.0, integral=40.0, action="reverse",
+                    description="Freeze Protection Valve Override"),
+        ],
+
+        programs=[
+            ProgramDef(39, "HW-VLV-PRG", "PRG39-HW-VLV.bas", "", True,
+                       "Hot water valve modulation with freeze and lockout",
+                       exec_order=39),
+            ProgramDef(5, "FRZ-PRTN-MODE-PRG", "PRG05-FRZ-PRTN-MODE.bas", "", True,
+                       "Freeze protection mode determination",
+                       exec_order=5),
+            ProgramDef(6, "HTG-CLG-LO-PRG", "PRG06-HTG-CLG-LO.bas", "", True,
+                       "Heating/cooling lockout determination",
+                       exec_order=6),
+            ProgramDef(45, "HTG-FBP-PRG", "PRG45-HTG-FBP.bas", "", True,
+                       "Heating coil face/bypass damper modulation",
+                       exec_order=45),
+        ],
+
+        soo_paragraph="""The hot water heating coil shall be controlled by a modulating 2-way valve.
+The valve shall modulate to maintain supply air temperature setpoint during
+heating mode. The valve actuator shall be reverse-acting (fail-open) for
+freeze protection.
+
+In addition, a face/bypass damper shall be provided across the heating coil.
+During heating mode the damper shall be commanded to full face position so all
+supply air passes through the heated coil. During cooling mode the damper shall
+modulate based on the heating coil leaving air temperature relative to the
+supply air temperature setpoint, biasing toward bypass when the coil is not
+adding heat. During economizer operation the damper shall hold at the
+configured minimum face position to coordinate with the outdoor air damper.
+
+Safety: when discharge air temperature falls below the configured freeze
+threshold (default 40°F), or the supply fan is not running, or a safety
+shutdown alarm is active, the face/bypass damper shall be driven to 100%
+face position to force air through the heated coil and prevent stagnation
+freezing.""",
+
+        requires=["core"],
+        conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-elec-3", "htg-elec-scr",
+                   "htg-gas", "htg-gas-2", "htg-gas-mod", "htg-stm"],
+        mutually_exclusive_group="heating",
+    )

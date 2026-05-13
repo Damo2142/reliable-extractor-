@@ -121,7 +121,11 @@ async def api_assemble(req: AssembleRequest):
     config_id = store_config(
         config.inputs, config.outputs, config.equipment_family,
         config.controller_model, "ahu",
-        {"modules": req.modules, "controller_model": req.controller_model},
+        {
+            "modules": req.modules,
+            "controller_model": req.controller_model,
+            "equipment_family": req.equipment_family,
+        },
     )
 
     return {
@@ -739,6 +743,213 @@ async def api_assemble_vvt(req: VVTAssembleRequest):
         warnings.append("Electric reheat present. Verify DAT high limit interlock (87F) and SAT lockout (75F) at commissioning.")
 
     return result
+
+
+def _build_vvt_configs(req: "VVTAssembleRequest"):
+    """Assemble all controllers (MPV + bypass + per-zone) for a VVT system.
+
+    Returns dict:
+      {
+        "warnings": [str, ...],
+        "controllers": [
+          {"folder": "MPV",       "filename_tag": "VVT-MPV",  "tag": "RTU-1-MPV",  "config": ControllerConfig},
+          {"folder": "BYP",       "filename_tag": "VVT-BYP",  "tag": "RTU-1-BYP",  "config": ControllerConfig},
+          {"folder": "ZONE-01",   "filename_tag": "VVT-ZN01", "tag": "VAV-1",      "config": ControllerConfig},
+          ...
+        ],
+      }
+    """
+    import copy
+
+    if len(req.zones) > 20:
+        raise HTTPException(400, "Maximum 20 zones per VVT system.")
+    if len(req.zones) < 1:
+        raise HTTPException(400, "At least 1 zone is required.")
+
+    zone_count = len(req.zones)
+    warnings: List[str] = []
+    if not req.has_bypass:
+        warnings.append("VVT system without bypass damper. Staged heating may cause duct overpressure.")
+
+    controllers = []
+
+    # MPV (parameterized build → assembled config)
+    from composition.modules.vvt.mpv_core import build as build_mpv
+    mpv_mod = build_mpv(htg_stages=req.htg_stages, clg_stages=req.clg_stages, zone_count=zone_count)
+    mpv_config = assemble(["vvt-mpv-core"], controller_model="auto", equipment_family="VVT-MPV")
+    mpv_config.inputs = copy.deepcopy(mpv_mod.inputs)
+    mpv_config.outputs = copy.deepcopy(mpv_mod.outputs)
+    mpv_config.values = copy.deepcopy(mpv_mod.values)
+    mpv_config.loops = copy.deepcopy(mpv_mod.loops)
+    mpv_config.arrays = copy.deepcopy(mpv_mod.arrays)
+    mpv_config.programs = copy.deepcopy(mpv_mod.programs)
+    mpv_config.schedules = copy.deepcopy(mpv_mod.schedules)
+    mpv_config.system_groups = copy.deepcopy(mpv_mod.system_groups)
+    mpv_config.soo_document = mpv_mod.soo_paragraph
+    prefix_local_points(mpv_config)
+    format_program_commas(mpv_config.programs)
+    number_programs(mpv_config.programs)
+    controllers.append({
+        "folder": "MPV",
+        "filename_tag": "VVT-MPV",
+        "tag": f"{req.system_tag}-MPV",
+        "config": mpv_config,
+    })
+
+    # Bypass (optional)
+    if req.has_bypass:
+        byp_config = assemble(["vvt-bypass-core"], controller_model="auto", equipment_family="VVT-BYPASS")
+        inject_program_code(byp_config)
+        controllers.append({
+            "folder": "BYP",
+            "filename_tag": "VVT-BYP",
+            "tag": f"{req.system_tag}-BYP",
+            "config": byp_config,
+        })
+
+    # Zones
+    REHEAT_MODULES = {
+        "none":   [],
+        "hw-mod": ["vvt-rh-hw-mod"],
+        "hw-flt": ["vvt-rh-hw-flt"],
+        "elec-1": ["vvt-rh-elec-1"],
+        "elec-2": ["vvt-rh-elec-2"],
+    }
+    STAT_MODULES = {
+        "hardwired": ["vav-stat-hardwired"],
+        "comm":      ["vav-stat-comm"],
+    }
+
+    has_electric_reheat = False
+    for idx, zone in enumerate(req.zones, start=1):
+        zone_modules = ["vvt-zone-core"]
+        zone_modules.extend(REHEAT_MODULES.get(zone.reheat, []))
+        zone_modules.extend(STAT_MODULES.get(zone.stat, ["vav-stat-hardwired"]))
+        if zone.reheat in ("elec-1", "elec-2"):
+            has_electric_reheat = True
+
+        zn_config = assemble(zone_modules, controller_model="auto", equipment_family="VVT-ZONE")
+        inject_program_code(zn_config)
+        for v in zn_config.values:
+            if v.name == "CFG-ZONE-ADDR":
+                v.default = float(zone.address)
+
+        controllers.append({
+            "folder": f"ZONE-{idx:02d}",
+            "filename_tag": f"VVT-ZN{idx:02d}",
+            "tag": zone.tag,
+            "config": zn_config,
+        })
+
+    if has_electric_reheat:
+        warnings.append("Electric reheat present. Verify DAT high limit interlock (87F) and SAT lockout (75F) at commissioning.")
+
+    return {"warnings": warnings, "controllers": controllers}
+
+
+def _write_vvt_controller_files(zf: zipfile.ZipFile, folder: str, filename_tag: str, tag: str, config):
+    """Write Excel + .bas + .pan + SOO + validation report into zf under <folder>/."""
+    from composition.alarm_gen import generate_alarm_bas
+
+    excel_data = generate_excel(config)
+    alarm_bas = generate_alarm_bas(config)
+    model = config.controller_model or "MPS"
+    pan_data = _compile_pan_from_config(config)
+    report = _build_validation_report(config)
+
+    zf.writestr(f"{folder}/SBS-Validation-Report.md", report)
+    zf.writestr(f"{folder}/RC-Studio-Output.xlsx", excel_data)
+    zf.writestr(f"{folder}/SBS-{filename_tag}-{model}.pan", pan_data)
+    has_alarm_prg = any(p.filename == "PRG-ALARMS.bas" for p in config.programs)
+    for prg in config.programs:
+        zf.writestr(f"{folder}/programs/{prg.filename}", prg.code or "")
+    if alarm_bas and not has_alarm_prg:
+        zf.writestr(f"{folder}/programs/PRG-ALARMS.bas", alarm_bas)
+    zf.writestr(f"{folder}/SOO.txt", config.soo_document or "")
+    zf.writestr(f"{folder}/summary.json", json.dumps({
+        "tag": tag,
+        "controller": model,
+        "family": config.equipment_family,
+        "pan_size": len(pan_data),
+        "counts": {
+            "inputs":   len(config.inputs),
+            "outputs":  len(config.outputs),
+            "values":   len(config.values),
+            "loops":    len(config.loops),
+            "programs": len(config.programs),
+            "trends":   len(config.trends),
+        },
+    }, indent=2))
+
+
+@app.post("/api/vvt-generate-full")
+async def api_vvt_generate_full(req: VVTAssembleRequest):
+    """Generate complete VVT system package: per-controller Excel + .bas + .pan + SOO,
+    bundled into one zip with subfolders MPV/, BYP/, ZONE-01/, ZONE-02/, ..."""
+    try:
+        built = _build_vvt_configs(req)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Per-controller subfolders
+        controllers_summary = []
+        for entry in built["controllers"]:
+            _write_vvt_controller_files(zf, entry["folder"], entry["filename_tag"], entry["tag"], entry["config"])
+            cfg = entry["config"]
+            controllers_summary.append({
+                "folder": entry["folder"],
+                "tag": entry["tag"],
+                "family": cfg.equipment_family,
+                "controller": cfg.controller_model,
+                "counts": {
+                    "inputs":   len(cfg.inputs),
+                    "outputs":  len(cfg.outputs),
+                    "values":   len(cfg.values),
+                    "loops":    len(cfg.loops),
+                    "programs": len(cfg.programs),
+                },
+            })
+
+        # Top-level system summary
+        zf.writestr("system-summary.json", json.dumps({
+            "system_tag": req.system_tag,
+            "zone_count": len(req.zones),
+            "htg_stages": req.htg_stages,
+            "clg_stages": req.clg_stages,
+            "has_bypass": req.has_bypass,
+            "warnings": built["warnings"],
+            "controllers": controllers_summary,
+        }, indent=2))
+
+    zip_buf.seek(0)
+    return StreamingResponse(zip_buf, media_type="application/zip",
+                             headers={"Content-Disposition": "attachment; filename=vvt-system-package.zip"})
+
+
+@app.post("/api/vvt-generate-pan")
+async def api_vvt_generate_pan(req: VVTAssembleRequest):
+    """Generate .pan binaries for every controller in a VVT system, returned as one zip."""
+    try:
+        built = _build_vvt_configs(req)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for entry in built["controllers"]:
+            cfg = entry["config"]
+            model = cfg.controller_model or "MPS"
+            pan_data = _compile_pan_from_config(cfg)
+            zf.writestr(f"SBS-{entry['filename_tag']}-{model}.pan", pan_data)
+    zip_buf.seek(0)
+    return StreamingResponse(zip_buf, media_type="application/zip",
+                             headers={"Content-Disposition": "attachment; filename=vvt-system-pan.zip"})
 
 
 @app.post("/api/generate")
@@ -1702,10 +1913,15 @@ async def api_generate_from_config(req: GenerateFromConfigRequest):
     params = cfg["params"]
 
     if source == "ahu":
-        # AHU path: re-assemble via standard assembler
+        # AHU path: re-assemble via standard assembler.
+        # MUST pass the original equipment_family — otherwise the assembler
+        # falls back to its "AHU-VAV" default, pulls in dsp-ctrl + fan-sf-vfd
+        # as cores, and crashes with a conflict against the original
+        # fan-sf-cs (CV families) or other non-VAV cores.
         mod_list = params.get("modules", [])
         ctrl = req.controller_model if req.controller_model != "auto" else params.get("controller_model", "auto")
-        config = assemble(mod_list, controller_model=ctrl)
+        fam = cfg.get("family") or params.get("equipment_family") or "AHU-VAV"
+        config = assemble(mod_list, controller_model=ctrl, equipment_family=fam)
         inject_program_code(config)
 
         # Apply terminal overrides
@@ -1796,8 +2012,11 @@ async def api_generate_from_config(req: GenerateFromConfigRequest):
                 from compile_from_excel import compile_package
                 model = req.controller_model or "MPS"
                 pan_data = compile_package(tmp, controller_model=model, verbose=False)
-            except Exception:
-                import traceback; traceback.print_exc()
+            except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
+                print(f"[generate-from-config] .pan compile failed for config_id={req.config_id}: {e}\n{tb}", flush=True)
+                raise HTTPException(500, f".pan compile failed: {type(e).__name__}: {e}")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2779,6 +2998,19 @@ async function doGeneratePan(){
     }catch(e){document.getElementById('status').textContent='Error: '+e;}
     return;
   }
+  if(activeFamily.startsWith('VVT-')){
+    var params=vvtGetParams();
+    document.getElementById('status').textContent='Compiling VVT system .pan files (MPV + bypass + zones)...';
+    try{
+      var res=await fetch('api/vvt-generate-pan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
+      if(!res.ok){document.getElementById('status').textContent='Error compiling VVT .pan';return;}
+      var blob=await res.blob();var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');a.href=url;a.download='vvt-system-pan.zip';
+      document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+      document.getElementById('status').textContent='VVT .pan zip downloaded ('+Math.round(blob.size/1024)+'KB)';
+    }catch(e){document.getElementById('status').textContent='Error: '+e;}
+    return;
+  }
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}
   var body=JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value,equipment_family:activeFamily});
@@ -2810,6 +3042,19 @@ async function doGenerateFull(){
     var blob=await res.blob();var url=URL.createObjectURL(blob);
     var a=document.createElement('a');a.href=url;a.download='chw-plant-package.zip';a.click();
     document.getElementById('status').textContent='CHW Plant package downloaded!';return;
+  }
+  if(activeFamily.startsWith('VVT-')){
+    var params=vvtGetParams();
+    document.getElementById('status').textContent='Generating VVT system package (MPV + bypass + zones)...';
+    try{
+      var res=await fetch('api/vvt-generate-full',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
+      if(!res.ok){document.getElementById('status').textContent='Error generating VVT package';return;}
+      var blob=await res.blob();var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');a.href=url;a.download='vvt-system-package.zip';
+      document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+      document.getElementById('status').textContent='VVT system package downloaded!';
+    }catch(e){document.getElementById('status').textContent='Error: '+e;}
+    return;
   }
   var mods=getModList();
   if(mods.length===0){document.getElementById('status').textContent='Assemble first';return;}

@@ -17,35 +17,26 @@ from composition.models import (
 
 _PRG04_RH = """\
 REM --- RH-PRG ---
-REM SCR modulating electric reheat: DAT-SP calc, enable/disable
-REM RH-LOOP (Loop 2) modulates SCR output to maintain DAT at DAT-SP
-REM No HW dependency — electric heat is self-contained
+REM SCR modulating electric reheat: DAT-SP calc, SCR enable/disable.
+REM RH-LOOP modulates RH-SCR to maintain DAT at DAT-SP when active.
+REM No HW dependency — electric heat is self-contained.
 REM
-REM --- Reheat Mode Check ---
-IF HVAC-MODE = 3 THEN GOTO 100
-IF HVAC-MODE = 4 THEN GOTO 100
-REM
-REM --- No Reheat ---
-RH-SCR = 0.0
-DAT-SP = DAT-MIN-SP
-RH-SCR-POS = 0.0
-GOTO 999
-REM
-REM --- Reheat Active ---
-100 REM Calculate DAT setpoint from room temp deviation
-DAT-SP = SLIDE( RMT-SP-HTG - ACT-RMT, 0.0, 4.0, DAT-MIN-SP, DAT-MAX-SP )
-DAT-SP = LIMIT( DAT-SP, DAT-MIN-SP, DAT-MAX-SP )
+REM --- DAT Setpoint from room temp deviation (always computed) ---
+DAT-SP = SLIDE( RMT-SP-HTG - ACT-RMT , 0.0 , 4.0 , DAT-MIN-SP , DAT-MAX-SP )
+DAT-SP = LIMIT( DAT-SP , DAT-MIN-SP , DAT-MAX-SP )
 IF DAT-SP > RH-MAX-DAT THEN DAT-SP = RH-MAX-DAT
 REM
-REM --- Safety Cutoff ---
+REM --- Park DAT-SP at min when not in Reheat (3) / Heat (4) mode ---
+IF HVAC-MODE < 3 THEN DAT-SP = DAT-MIN-SP
+IF HVAC-MODE > 4 THEN DAT-SP = DAT-MIN-SP
+REM
+REM --- Force SCR output to 0 out of heating mode or on safety cutoff ---
+IF HVAC-MODE < 3 THEN RH-SCR = 0.0
+IF HVAC-MODE > 4 THEN RH-SCR = 0.0
 IF DAT > RH-MAX-DAT THEN RH-SCR = 0.0
-IF DAT > RH-MAX-DAT THEN RH-SCR-POS = 0.0
-IF DAT > RH-MAX-DAT THEN GOTO 999
 REM
-REM --- Track SCR Output ---
+REM --- Mirror SCR output to feedback position AV ---
 RH-SCR-POS = RH-SCR
-REM
-999 REM End
 """
 
 

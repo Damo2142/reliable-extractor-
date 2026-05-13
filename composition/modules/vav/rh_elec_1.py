@@ -17,33 +17,24 @@ from composition.models import (
 
 _PRG04_RH = """\
 REM --- RH-PRG ---
-REM 1-stage electric reheat: on/off with DAT setpoint and safety limit
-REM No HW dependency — electric heat is self-contained
+REM 1-stage electric reheat: on/off with DAT setpoint, deadband, safety limit.
+REM No HW dependency — electric heat is self-contained.
 REM
-REM --- Reheat Mode Check ---
-IF HVAC-MODE = 3 THEN GOTO 100
-IF HVAC-MODE = 4 THEN GOTO 100
-REM
-REM --- No Reheat ---
-RH-STG01 = 0
-GOTO 999
-REM
-REM --- Reheat Active ---
-100 REM Calculate DAT setpoint from room temp deviation
-DAT-SP = SLIDE( RMT-SP-HTG - ACT-RMT, 0.0, 4.0, DAT-MIN-SP, DAT-MAX-SP )
-DAT-SP = LIMIT( DAT-SP, DAT-MIN-SP, DAT-MAX-SP )
+REM --- DAT Setpoint from room temp deviation (always computed) ---
+DAT-SP = SLIDE( RMT-SP-HTG - ACT-RMT , 0.0 , 4.0 , DAT-MIN-SP , DAT-MAX-SP )
+DAT-SP = LIMIT( DAT-SP , DAT-MIN-SP , DAT-MAX-SP )
 IF DAT-SP > RH-MAX-DAT THEN DAT-SP = RH-MAX-DAT
 REM
-REM --- Safety Cutoff ---
-IF DAT > RH-MAX-DAT THEN RH-STG01 = 0
-IF DAT > RH-MAX-DAT THEN GOTO 999
+REM --- Default: stage off; raise to 1 only when in heating mode AND DAT cold ---
+RH-STG01 = 0
+IF HVAC-MODE = 3 AND DAT < DAT-SP THEN RH-STG01 = 1
+IF HVAC-MODE = 4 AND DAT < DAT-SP THEN RH-STG01 = 1
 REM
-REM --- Stage Control with Deadband ---
-REM On when DAT below setpoint, off when DAT above setpoint + 2F
-IF DAT < DAT-SP THEN RH-STG01 = 1
+REM --- Deadband: shut off once DAT rises above setpoint + 2°F ---
 IF DAT > ( DAT-SP + 2.0 ) THEN RH-STG01 = 0
 REM
-999 REM End
+REM --- Safety cutoff: forced off if DAT exceeds RH-MAX-DAT ---
+IF DAT > RH-MAX-DAT THEN RH-STG01 = 0
 """
 
 

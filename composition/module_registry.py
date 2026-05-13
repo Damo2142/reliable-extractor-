@@ -99,6 +99,7 @@ _register("fan-rlf-cs", fan_return_exhaust.build_rlf_cs)
 
 # Heating
 _register("htg-hw", heating.build_htg_hw)
+_register("htg-hw-fbp", heating.build_htg_hw_fbp)
 _register("htg-elec", heating.build_htg_elec)
 _register("htg-elec-2", heating.build_htg_elec_2)
 _register("htg-elec-3", heating.build_htg_elec_3)

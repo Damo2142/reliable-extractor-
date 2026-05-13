@@ -21,7 +21,7 @@ from composition.pan_compiler import (
     write_av_seed, write_av_block, write_ai_seed, write_ao_seed, write_ao_block,
     write_bi_seed, write_bo_seed, write_bv_seed,
     write_mv_seed, write_loop_block, write_prg_seed,
-    write_sched_seed, write_sys_group_seed, write_table_block,
+    write_sched_seed, write_sys_group_seed, write_table_block, write_array_block,
     write_stl_block, write_notif_cls_seed, write_empty_block, write_prg_block,
     extract_nc_groups_from_blank, extract_device_block_from_blank,
     read_blank_header, _write_index_entry,
@@ -47,6 +47,11 @@ BLANK_FILE_MAP = {
     'MPA-33':  'MACH-ProAir-08/MACH-ProAir-08.panx',    # 3in/3out = ProAir-08
     'MPZ-88':  'MACH-ProZone-88/MACH-ProZone-88.panx',
     'MPZ-44':  'MACH-ProZone-44/MACH-ProZone-44.panx',
+    # RC-FLEXair (VAV / VVT terminal + VVT bypass) — SBS standard is the -A-F variant
+    'RCFA-12': 'RC-FLEXair-12-A-F/RC-FLEXair-12-A-F.panx',  # 1in / 1out
+    'RCFA-34': 'RC-FLEXair-34-A-F/RC-FLEXair-34-A-F.panx',  # 3in / 4out
+    'RCFA-35': 'RC-FLEXair-35-A-F/RC-FLEXair-35-A-F.panx',  # 3in / 5out
+    'RCFA-36': 'RC-FLEXair-36-A-F/RC-FLEXair-36-A-F.panx',  # 3in / 6out
 }
 
 
@@ -180,6 +185,10 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
     ai, bi = [], []
     for r in rows("Inputs"):
         inst = int(r[0]); nm = _s(r[1]); typ = _s(r[2])
+        # Skip factory reserved points — they come from the blank file
+        mod = _s(r[7] if len(r) > 7 else '')
+        if mod == 'FACTORY':
+            continue
         if not nm:  # filler
             (ai if typ != 'BI' else bi).append(write_empty_block(0 if typ != 'BI' else 3, inst))
             continue
@@ -197,6 +206,10 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
     ao, bo = [], []
     for r in rows("Outputs"):
         inst = int(r[0]); nm = _s(r[1]); typ = _s(r[2])
+        # Skip factory reserved points — they come from the blank file
+        mod = _s(r[9] if len(r) > 9 else '')
+        if mod == 'FACTORY':
+            continue
         if not nm:  # filler
             (ao if typ != 'BO' else bo).append(write_empty_block(1 if typ != 'BO' else 4, inst))
             continue
@@ -204,8 +217,14 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
         u = _uc(r[4] if len(r) > 4 else None)
         rc = _rng(r[5] if len(r) > 5 else '')
         if typ == 'AO':
-            min_v = float(r[6] or 2.0) if len(r) > 6 and r[6] is not None else 2.0
-            max_v = float(r[7] or 10.0) if len(r) > 7 and r[7] is not None else 10.0
+            try:
+                min_v = float(r[6]) if len(r) > 6 and r[6] is not None and r[6] != '' else 2.0
+            except (ValueError, TypeError):
+                min_v = 2.0
+            try:
+                max_v = float(r[7]) if len(r) > 7 and r[7] is not None and r[7] != '' else 10.0
+            except (ValueError, TypeError):
+                max_v = 10.0
             ao.append(write_ao_block(inst, nm, units=u, range_code=rc,
                                      min_v=min_v, max_v=max_v, desc=desc))
         elif typ == 'BO':
@@ -216,10 +235,18 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
     # VALUES
     av, bv, mv = [], [], []
     for r in rows("Values"):
+        # Skip factory reserved values — they come from the blank file
+        mod = _s(r[9] if len(r) > 9 else '')
+        if mod == 'FACTORY':
+            continue
         c0 = _s(r[0]); nm = _s(r[1]); typ = c0[:2]; inst = _pi(r[0])
-        if not nm:  # filler — empty block, default to AV type
-            tid = {'AV':2,'BV':5,'MV':19}.get(typ, 2)
-            av.append(write_empty_block(tid, inst))
+        if not nm:  # filler — empty block routed to the correct type list
+            if typ == 'BV':
+                bv.append(write_empty_block(5, inst))
+            elif typ == 'MV':
+                mv.append(write_empty_block(19, inst))
+            else:
+                av.append(write_empty_block(2, inst))
             continue
         desc = _s(r[8] if len(r) > 8 else '')
         states = _s(r[5] if len(r) > 5 else '')
@@ -263,9 +290,18 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
         inp_name = _s(r[2]); sp_name = _s(r[3])
         out_name = _s(r[4]) if len(r) > 4 else ''
         action = _s(r[5]) if len(r) > 5 else '+'
-        pband = float(r[6] or 0) if len(r) > 6 else 0.0
-        integ = float(r[7] or 0) if len(r) > 7 else 0.0
-        deriv = float(r[8] or 0) if len(r) > 8 else 0.0
+        try:
+            pband = float(r[6]) if len(r) > 6 and r[6] is not None and r[6] != '' else 0.0
+        except (ValueError, TypeError):
+            pband = 0.0
+        try:
+            integ = float(r[7]) if len(r) > 7 and r[7] is not None and r[7] != '' else 0.0
+        except (ValueError, TypeError):
+            integ = 0.0
+        try:
+            deriv = float(r[8]) if len(r) > 8 and r[8] is not None and r[8] != '' else 0.0
+        except (ValueError, TypeError):
+            deriv = 0.0
         desc = _s(r[10] if len(r) > 10 else '')
         in_t, in_i = resolve(inp_name)
         sp_t, sp_i = resolve(sp_name)
@@ -333,6 +369,18 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
         tbls.append(write_table_block(inst, nm, xy_pairs=xy, units=u))
     if tbls: blocks[141] = tbls; log(f"  TABLE: {len(tbls)}")
 
+    # ARRAYS — type 142 with float slots
+    arrs = []
+    for r in rows("Arrays"):
+        if not _s(r[1]): continue  # skip blank/placeholder rows
+        if _s(r[1]).startswith("(No arrays"): continue  # skip stub text
+        inst = _pi(r[0])
+        raw_aname = _s(r[1])
+        nm = raw_aname if raw_aname.startswith("{device-name}-") else "{device-name}-" + raw_aname
+        arr_size = int(r[2]) if len(r) > 2 and r[2] else 20
+        arrs.append(write_array_block(inst, nm, arr_size))
+    if arrs: blocks[142] = arrs; log(f"  ARRAY: {len(arrs)}")
+
     # NOTIF_CLS — name + 0x0485=TRUE
     notifs = []
     ni = 1
@@ -367,7 +415,7 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
     # ══════════════════════════════════════════════════════════════
     # ASSEMBLE .PAN FILE
     # ══════════════════════════════════════════════════════════════
-    TYPE_ORDER = [15, 0, 1, 3, 4, 2, 5, 19, 12, 141, 26, 8, 17, 20, 16]
+    TYPE_ORDER = [15, 0, 1, 3, 4, 2, 5, 19, 12, 141, 142, 26, 8, 17, 20, 16]
     present = [t for t in TYPE_ORDER if t in blocks]
     num_types = len(present)
     blocks_start = 0x0400 + num_types * 0x40 + 6

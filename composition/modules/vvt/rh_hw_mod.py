@@ -19,39 +19,27 @@ from composition.models import (
 
 _PRG07_RH = """\
 REM --- RH-PRG ---
-REM VVT modulating HW reheat: DAT-SP calc, valve enable/disable
-REM RH-LOOP (Loop 2) controls valve to maintain DAT at DAT-SP
+REM VVT modulating HW reheat: DAT-SP calc, valve enable/disable.
+REM RH-LOOP controls RH-VLV to maintain DAT at DAT-SP when active.
+REM Reheat off during RTU warmup (NET-HVAC-MODE=5) — RTU handles warmup.
 REM
-REM --- VVT Warmup Lockout ---
-REM If RTU is in warmup mode, reheat off — RTU handles warmup
-IF NET-HVAC-MODE = 5 THEN GOTO 800
-REM
-REM --- Reheat Mode ---
-REM In local Reheat or Heat mode: calculate DAT setpoint
-IF HVAC-MODE-LOCAL = 3 THEN GOTO 100
-IF HVAC-MODE-LOCAL = 4 THEN GOTO 100
-REM
-REM --- No Reheat ---
-REM Vent, Cool, or Unoccupied — close valve
-800 REM
-RH-VLV = 0.0
-DAT-SP = DAT-MIN-SP
-RH-VLV-POS = 0.0
-GOTO 999
-REM
-REM --- Reheat Active ---
-100 REM Calculate DAT setpoint based on room temp deviation
-REM More deviation below heating setpoint = higher DAT-SP
-DAT-SP = SLIDE( RMT-HTG-SP - ACT-RMT, 0.0, 4.0, DAT-MIN-SP, DAT-MAX-SP )
-DAT-SP = LIMIT( DAT-SP, DAT-MIN-SP, DAT-MAX-SP )
-REM
-REM --- Safety Limit ---
+REM --- DAT Setpoint from room temp deviation (always computed) ---
+DAT-SP = SLIDE( RMT-HTG-SP - ACT-RMT , 0.0 , 4.0 , DAT-MIN-SP , DAT-MAX-SP )
+DAT-SP = LIMIT( DAT-SP , DAT-MIN-SP , DAT-MAX-SP )
 IF DAT-SP > RH-MAX-DAT THEN DAT-SP = RH-MAX-DAT
 REM
-REM --- Track Valve Position ---
-RH-VLV-POS = RH-VLV
+REM --- Park DAT-SP at min when reheat is not active ---
+IF HVAC-MODE-LOCAL < 3 THEN DAT-SP = DAT-MIN-SP
+IF HVAC-MODE-LOCAL > 4 THEN DAT-SP = DAT-MIN-SP
+IF NET-HVAC-MODE = 5 THEN DAT-SP = DAT-MIN-SP
 REM
-999 REM End
+REM --- Force-close valve when reheat is not active ---
+IF HVAC-MODE-LOCAL < 3 THEN RH-VLV = 0.0
+IF HVAC-MODE-LOCAL > 4 THEN RH-VLV = 0.0
+IF NET-HVAC-MODE = 5 THEN RH-VLV = 0.0
+REM
+REM --- Mirror valve command to feedback position AV ---
+RH-VLV-POS = RH-VLV
 """
 
 
@@ -75,9 +63,9 @@ def build():
 
         values=[
             ValuePoint(34, "RH-VLV-POS",  "AV", 0.0,   "Reheat Valve Position (tracked)", "%"),
-            ValuePoint(36, "DAT-MAX-SP",   "AV", 102.5, "Max DAT Setpoint",                "deg.F"),
+            ValuePoint(57, "DAT-MAX-SP",   "AV", 102.5, "Max DAT Setpoint",                "deg.F"),
             ValuePoint(37, "DAT-SP",       "AV", 90.0,  "Active DAT Setpoint (calculated)","deg.F"),
-            ValuePoint(39, "DAT-MIN-SP",   "AV", 70.0,  "Min DAT Setpoint",                "deg.F"),
+            ValuePoint(58, "DAT-MIN-SP",   "AV", 70.0,  "Min DAT Setpoint",                "deg.F"),
             ValuePoint(100,"RH-MAX-DAT",   "AV", 90.0,  "Reheat Max Discharge Air Temp",   "deg.F"),
         ],
 

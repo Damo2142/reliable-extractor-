@@ -40,24 +40,24 @@ REM Reads RMTS array — calculates min/max/avg room temps
 REM Loop bound = CFG-ZONE-COUNT
 REM
 REM --- Initialize ---
-ZN-RMT-MIN = 200.0
-ZN-RMT-MAX = 0.0
-ZN-RMT-AVG = 0.0
-ACT-ZONES = 0
+{device-name}-ZN-RMT-MIN = 200.0
+{device-name}-ZN-RMT-MAX = 0.0
+{device-name}-ZN-RMT-AVG = 0.0
+{device-name}-ACT-ZONES = 0
 REM
 REM --- Loop Through Zones ---
-FOR I = 1 TO CFG-ZONE-COUNT
-  IF AY2[ I ] > 0.0 THEN ACT-ZONES = ACT-ZONES + 1
-  IF AY2[ I ] > 0.0 AND AY2[ I ] < ZN-RMT-MIN THEN ZN-RMT-MIN = AY2[ I ]
-  IF AY2[ I ] > ZN-RMT-MAX THEN ZN-RMT-MAX = AY2[ I ]
-  ZN-RMT-AVG = ZN-RMT-AVG + AY2[ I ]
+FOR I = 1 TO {device-name}-CFG-ZONE-COUNT
+  IF AY2[ I ] > 0.0 THEN {device-name}-ACT-ZONES = {device-name}-ACT-ZONES + 1
+  IF AY2[ I ] > 0.0 AND AY2[ I ] < {device-name}-ZN-RMT-MIN THEN {device-name}-ZN-RMT-MIN = AY2[ I ]
+  IF AY2[ I ] > {device-name}-ZN-RMT-MAX THEN {device-name}-ZN-RMT-MAX = AY2[ I ]
+  {device-name}-ZN-RMT-AVG = {device-name}-ZN-RMT-AVG + AY2[ I ]
 NEXT I
 REM
 REM --- Calculate Average ---
-IF ACT-ZONES > 0 THEN ZN-RMT-AVG = ZN-RMT-AVG / ACT-ZONES
-IF ACT-ZONES = 0 THEN ZN-RMT-AVG = 72.0
-IF ACT-ZONES = 0 THEN ZN-RMT-MIN = 72.0
-IF ACT-ZONES = 0 THEN ZN-RMT-MAX = 72.0
+IF {device-name}-ACT-ZONES > 0 THEN {device-name}-ZN-RMT-AVG = {device-name}-ZN-RMT-AVG / {device-name}-ACT-ZONES
+IF {device-name}-ACT-ZONES = 0 THEN {device-name}-ZN-RMT-AVG = 72.0
+IF {device-name}-ACT-ZONES = 0 THEN {device-name}-ZN-RMT-MIN = 72.0
+IF {device-name}-ACT-ZONES = 0 THEN {device-name}-ZN-RMT-MAX = 72.0
 REM
 """
 
@@ -67,25 +67,25 @@ REM Reads VOTES array — tallies heat/ESM/cool votes
 REM Vote encoding: negative=heat, 0-9=ESM, 10+=cool
 REM
 REM --- Initialize ---
-ZN-TOTAL-VOTES = 0
-ZN-HEAT-VOTES = 0
-ZN-ESM-VOTES = 0
-ZN-COOL-VOTES = 0
+{device-name}-ZN-TOTAL-VOTES = 0
+{device-name}-ZN-HEAT-VOTES = 0
+{device-name}-ZN-ESM-VOTES = 0
+{device-name}-ZN-COOL-VOTES = 0
 REM
 REM --- Loop Through Zones ---
-FOR I = 1 TO CFG-ZONE-COUNT
-  ZN-TOTAL-VOTES = ZN-TOTAL-VOTES + 1
-  IF AY1[ I ] < 0.0 THEN ZN-HEAT-VOTES = ZN-HEAT-VOTES + 1
-  IF AY1[ I ] >= 0.0 AND AY1[ I ] < 10.0 THEN ZN-ESM-VOTES = ZN-ESM-VOTES + 1
-  IF AY1[ I ] >= 10.0 THEN ZN-COOL-VOTES = ZN-COOL-VOTES + 1
+FOR I = 1 TO {device-name}-CFG-ZONE-COUNT
+  {device-name}-ZN-TOTAL-VOTES = {device-name}-ZN-TOTAL-VOTES + 1
+  IF AY1[ I ] < 0.0 THEN {device-name}-ZN-HEAT-VOTES = {device-name}-ZN-HEAT-VOTES + 1
+  IF AY1[ I ] >= 0.0 AND AY1[ I ] < 10.0 THEN {device-name}-ZN-ESM-VOTES = {device-name}-ZN-ESM-VOTES + 1
+  IF AY1[ I ] >= 10.0 THEN {device-name}-ZN-COOL-VOTES = {device-name}-ZN-COOL-VOTES + 1
 NEXT I
 REM
 REM --- Average Deviation ---
-ZN-RMT-AVG-DEV = 0.0
-FOR I = 1 TO CFG-ZONE-COUNT
-  ZN-RMT-AVG-DEV = ZN-RMT-AVG-DEV + AY3[ I ]
+{device-name}-ZN-RMT-AVG-DEV = 0.0
+FOR I = 1 TO {device-name}-CFG-ZONE-COUNT
+  {device-name}-ZN-RMT-AVG-DEV = {device-name}-ZN-RMT-AVG-DEV + AY3[ I ]
 NEXT I
-IF CFG-ZONE-COUNT > 0 THEN ZN-RMT-AVG-DEV = ZN-RMT-AVG-DEV / CFG-ZONE-COUNT
+IF {device-name}-CFG-ZONE-COUNT > 0 THEN {device-name}-ZN-RMT-AVG-DEV = {device-name}-ZN-RMT-AVG-DEV / {device-name}-CFG-ZONE-COUNT
 REM
 """
 
@@ -95,19 +95,19 @@ REM Reads ZN-OCC array — tallies occupancy requests by mode
 REM OCC mode encoding: 1=Occ, 2=Bypass, 3=Standby, 4=Unocc, 5=NSB, 6=NSF
 REM
 REM --- Initialize ---
-OCC-OCC-REQ = 0
-OCC-BYP-REQ = 0
-OCC-UNOCC-REQ = 0
-OCC-NSB-REQ = 0
-OCC-NSF-REQ = 0
+{device-name}-OCC-OCC-REQ = 0
+{device-name}-OCC-BYP-REQ = 0
+{device-name}-OCC-UNOCC-REQ = 0
+{device-name}-OCC-NSB-REQ = 0
+{device-name}-OCC-NSF-REQ = 0
 REM
 REM --- Loop Through Zones ---
-FOR I = 1 TO CFG-ZONE-COUNT
-  IF AY4[ I ] = 1 THEN OCC-OCC-REQ = OCC-OCC-REQ + 1
-  IF AY4[ I ] = 2 THEN OCC-BYP-REQ = OCC-BYP-REQ + 1
-  IF AY4[ I ] = 4 THEN OCC-UNOCC-REQ = OCC-UNOCC-REQ + 1
-  IF AY4[ I ] = 5 THEN OCC-NSB-REQ = OCC-NSB-REQ + 1
-  IF AY4[ I ] = 6 THEN OCC-NSF-REQ = OCC-NSF-REQ + 1
+FOR I = 1 TO {device-name}-CFG-ZONE-COUNT
+  IF AY4[ I ] = 1 THEN {device-name}-OCC-OCC-REQ = {device-name}-OCC-OCC-REQ + 1
+  IF AY4[ I ] = 2 THEN {device-name}-OCC-BYP-REQ = {device-name}-OCC-BYP-REQ + 1
+  IF AY4[ I ] = 4 THEN {device-name}-OCC-UNOCC-REQ = {device-name}-OCC-UNOCC-REQ + 1
+  IF AY4[ I ] = 5 THEN {device-name}-OCC-NSB-REQ = {device-name}-OCC-NSB-REQ + 1
+  IF AY4[ I ] = 6 THEN {device-name}-OCC-NSF-REQ = {device-name}-OCC-NSF-REQ + 1
 NEXT I
 REM
 """
@@ -118,53 +118,41 @@ REM Determines system occupancy mode from zone tallies
 REM Uses master schedule + zone request override
 REM
 REM --- Master Schedule Base ---
-IF OCC-MASTER-SCHED THEN OCC-MODE = 1
-IF NOT OCC-MASTER-SCHED THEN OCC-MODE = 4
+IF {device-name}-OCC-MASTER-SCHED THEN {device-name}-OCC-MODE = 1
+IF NOT {device-name}-OCC-MASTER-SCHED THEN {device-name}-OCC-MODE = 4
 REM
 REM --- Zone Occupied Requests Override ---
 REM If enough zones request occupied, system goes occupied
-IF OCC-OCC-REQ >= CFG-OCC-MIN-ENA-REQ THEN OCC-MODE = 1
-IF OCC-BYP-REQ >= CFG-OCC-MIN-ENA-REQ THEN OCC-MODE = 1
+IF {device-name}-OCC-OCC-REQ >= {device-name}-CFG-OCC-MIN-ENA-REQ THEN {device-name}-OCC-MODE = 1
+IF {device-name}-OCC-BYP-REQ >= {device-name}-CFG-OCC-MIN-ENA-REQ THEN {device-name}-OCC-MODE = 1
 REM
 REM --- NSB/NSF Override ---
-IF OCC-MODE = 4 AND OCC-NSB-REQ > 0 THEN OCC-MODE = 5
-IF OCC-MODE = 4 AND OCC-NSF-REQ > 0 THEN OCC-MODE = 6
+IF {device-name}-OCC-MODE = 4 AND {device-name}-OCC-NSB-REQ > 0 THEN {device-name}-OCC-MODE = 5
+IF {device-name}-OCC-MODE = 4 AND {device-name}-OCC-NSF-REQ > 0 THEN {device-name}-OCC-MODE = 6
 REM
 REM --- Update Occupancy Display ---
-IF OCC-MODE = 1 THEN VIEW-OCC-S = 1
-IF OCC-MODE = 4 THEN VIEW-OCC-S = 0
+IF {device-name}-OCC-MODE = 1 THEN {device-name}-VIEW-OCC-S = 1
+IF {device-name}-OCC-MODE = 4 THEN {device-name}-VIEW-OCC-S = 0
 REM
 """
 
 _PRG05_HVAC_MODE = """\
 REM --- HVAC-MODE-PRG ---
-REM Determines system HVAC mode from vote tallies
-REM Enforces CFG-HVAC-MODE-MIN-TIME before switching
-REM 1=Ventilation, 2=Cool, 3=Reheat, 4=Heat, 5=Initialize
+REM Determines system HVAC mode from vote tallies.
+REM Enforces CFG-HVAC-MODE-MIN-TIME before switching mode by vote.
+REM Modes: 1=Ventilation, 2=Cool, 3=Reheat, 4=Heat, 5=Initialize
 REM
-REM --- Track Mode Active Time ---
+REM --- Track time the current mode has been active ---
 MODE-ACTIVE-TIME = TIME-ON( HVAC-MODE = HVAC-MODE )
 REM
-REM --- Minimum Time Check ---
-REM Don't switch modes until minimum time has elapsed
-IF MODE-ACTIVE-TIME < CFG-HVAC-MODE-MIN-TIME THEN GOTO 999
+REM --- Vote-driven mode change (only after min time has elapsed) ---
+IF MODE-ACTIVE-TIME >= CFG-HVAC-MODE-MIN-TIME AND ZN-HEAT-VOTES > ZN-COOL-VOTES AND ZN-HEAT-VOTES > ZN-ESM-VOTES THEN HVAC-MODE = 4
+IF MODE-ACTIVE-TIME >= CFG-HVAC-MODE-MIN-TIME AND ZN-COOL-VOTES > ZN-HEAT-VOTES AND ZN-COOL-VOTES > ZN-ESM-VOTES THEN HVAC-MODE = 2
+IF MODE-ACTIVE-TIME >= CFG-HVAC-MODE-MIN-TIME AND ZN-ESM-VOTES >= ZN-HEAT-VOTES AND ZN-ESM-VOTES >= ZN-COOL-VOTES THEN HVAC-MODE = 1
 REM
-REM --- Determine New Mode ---
-REM Priority: most votes wins
-REM Heat if heating votes > cooling votes AND heat votes > ESM votes
-IF ZN-HEAT-VOTES > ZN-COOL-VOTES AND ZN-HEAT-VOTES > ZN-ESM-VOTES THEN HVAC-MODE = 4
-REM Cool if cooling votes > heating votes AND cool votes > ESM votes
-IF ZN-COOL-VOTES > ZN-HEAT-VOTES AND ZN-COOL-VOTES > ZN-ESM-VOTES THEN HVAC-MODE = 2
-REM ESM if ESM votes are highest (or tied)
-IF ZN-ESM-VOTES >= ZN-HEAT-VOTES AND ZN-ESM-VOTES >= ZN-COOL-VOTES THEN HVAC-MODE = 1
-REM
-REM --- Unoccupied Override ---
+REM --- Unoccupied + Global ESM both force ventilation ---
 IF OCC-MODE = 4 THEN HVAC-MODE = 1
-REM
-REM --- ESM Override ---
 IF MODE-GLOBAL-ESM AND OCC-MODE <= 3 THEN HVAC-MODE = 1
-REM
-999 REM End
 """
 
 _PRG06_SF = """\
@@ -173,131 +161,83 @@ REM Supply fan start/stop with delay timer
 REM
 REM --- Fan Enable ---
 REM Fan runs when occupied or bypass or standby or NSB/NSF
-IF OCC-MODE <= 3 THEN SF-REQ = 2
-IF OCC-MODE = 5 OR OCC-MODE = 6 THEN SF-REQ = 2
-IF OCC-MODE = 4 THEN SF-REQ = 1
+IF {device-name}-OCC-MODE <= 3 THEN {device-name}-SF-REQ = 2
+IF {device-name}-OCC-MODE = 5 OR {device-name}-OCC-MODE = 6 THEN {device-name}-SF-REQ = 2
+IF {device-name}-OCC-MODE = 4 THEN {device-name}-SF-REQ = 1
 REM
 REM --- Fan Start with Delay ---
-IF SF-REQ >= 2 AND TIME-ON( SF-REQ >= 2 ) > CFG-SF-DELAY THEN START SF-CMD
-IF SF-REQ = 1 THEN STOP SF-CMD
+IF {device-name}-SF-REQ >= 2 AND TIME-ON( {device-name}-SF-REQ >= 2 ) > {device-name}-CFG-SF-DELAY THEN START {device-name}-SF-CMD
+IF {device-name}-SF-REQ = 1 THEN STOP {device-name}-SF-CMD
 REM
 REM --- Fan Status ---
-IF SF-STS THEN VIEW-FAN-S = 3
-IF NOT SF-STS THEN VIEW-FAN-S = 1
-IF SF-CMD AND NOT SF-STS AND TIME-ON( SF-CMD AND NOT SF-STS ) > 0:01:00 THEN VIEW-FAN-S = 4
+IF {device-name}-SF-STS THEN {device-name}-VIEW-FAN-S = 3
+IF NOT {device-name}-SF-STS THEN {device-name}-VIEW-FAN-S = 1
+IF {device-name}-SF-CMD AND NOT {device-name}-SF-STS AND TIME-ON( {device-name}-SF-CMD AND NOT {device-name}-SF-STS ) > 0:01:00 THEN {device-name}-VIEW-FAN-S = 4
 REM
 """
 
 _PRG07_HTG = """\
 REM --- HTG-PRG ---
-REM Heating staging: OAT enable, DAT high limit, vote-based, min timers
-REM Checks BYP-HTG-LOCKOUT before staging
+REM Heating staging: OAT enable, DAT high limit, BYP lockout, vote-based,
+REM minimum timers. HTG-ENABLE doubles as the gate flag: 1=disabled, 2=enabled.
+REM HTG-DEMAND levels: 1=off, 2=Stage 1 demand, 3=Stage 2 demand.
 REM
-REM --- Heating Enable Check ---
-REM OAT must be below heating enable setpoint
-IF CFG-ACT-OAT > CFG-HTG-ENA-SP THEN HTG-ENABLE = 1
-IF CFG-ACT-OAT > CFG-HTG-ENA-SP THEN GOTO 800
-REM
-REM --- Bypass Heating Lockout ---
-IF BYP-HTG-LOCKOUT THEN HTG-ENABLE = 1
-IF BYP-HTG-LOCKOUT THEN GOTO 800
-REM
-REM --- DAT High Limit ---
-IF DAT > CFG-DAT-HI-LIMIT THEN HTG-ENABLE = 1
-IF DAT > CFG-DAT-HI-LIMIT THEN GOTO 800
-REM
-REM --- HVAC Mode Check ---
-IF HVAC-MODE <> 4 THEN HTG-ENABLE = 1
-IF HVAC-MODE <> 4 THEN GOTO 800
-REM
-REM --- Heating Enabled ---
+REM --- Default: heating allowed; downgrade to 1 (disabled) for any block reason ---
 HTG-ENABLE = 2
+IF CFG-ACT-OAT > CFG-HTG-ENA-SP THEN HTG-ENABLE = 1
+IF BYP-HTG-LOCKOUT THEN HTG-ENABLE = 1
+IF DAT > CFG-DAT-HI-LIMIT THEN HTG-ENABLE = 1
+IF HVAC-MODE <> 4 THEN HTG-ENABLE = 1
+IF NOT SF-STS THEN HTG-ENABLE = 1
 REM
-REM --- Fan Must Be Running ---
-IF NOT SF-STS THEN GOTO 800
+REM --- Demand level when enabled ---
+IF HTG-ENABLE = 2 AND HTG-DEMAND < 2 THEN HTG-DEMAND = 2
+IF HTG-ENABLE = 2 AND TIME-ON( W1 ) > CFG-HTG-MIN-ON AND TIME-ON( W1 ) > CFG-HTG-INSTG AND CFG-ACT-OAT <= CFG-HTG-STG02-ENA-SP AND ZN-HEAT-VOTES > ( CFG-ZONE-COUNT / 2 ) THEN HTG-DEMAND = 3
 REM
-REM --- Stage 1 ---
-REM On: heating enabled and fan proven
-REM Off: minimum on time expired and mode changed
-IF HTG-DEMAND < 2 AND HVAC-MODE = 4 THEN HTG-DEMAND = 2
-IF HTG-DEMAND >= 2 THEN START W1
-IF HTG-DEMAND >= 2 AND TIME-ON( W1 ) > CFG-HTG-MIN-ON THEN GOTO 300
-IF HVAC-MODE <> 4 AND TIME-ON( W1 ) > CFG-HTG-MIN-ON THEN STOP W1
+REM --- Drive stages from demand ---
+IF HTG-ENABLE = 2 AND HTG-DEMAND >= 2 THEN START W1
+IF HTG-ENABLE = 2 AND HTG-DEMAND >= 3 THEN START W2
+REM
+REM --- Drop demand back to 1 once Stage 1 min-on elapsed AND mode left heating ---
 IF HVAC-MODE <> 4 AND TIME-ON( W1 ) > CFG-HTG-MIN-ON THEN HTG-DEMAND = 1
-GOTO 900
-REM
-REM --- Stage 2 ---
-300 REM Stage 2 enable: OAT below stage 2 setpoint + interstage delay
-IF CFG-ACT-OAT > CFG-HTG-STG02-ENA-SP THEN GOTO 900
-IF TIME-ON( W1 ) < CFG-HTG-INSTG THEN GOTO 900
-IF ZN-HEAT-VOTES > ( CFG-ZONE-COUNT / 2 ) THEN HTG-DEMAND = 3
-IF HTG-DEMAND >= 3 THEN START W2
 IF HVAC-MODE <> 4 THEN STOP W2
-IF HVAC-MODE <> 4 THEN HTG-DEMAND = 2
-GOTO 900
 REM
-REM --- All Off ---
-800 REM Turn off all heating
-STOP W1
-STOP W2
-HTG-DEMAND = 1
-REM
-900 REM End
+REM --- All-off override when disabled ---
+IF HTG-ENABLE = 1 THEN STOP W1
+IF HTG-ENABLE = 1 THEN STOP W2
+IF HTG-ENABLE = 1 THEN HTG-DEMAND = 1
 """
 
 _PRG08_CLG = """\
 REM --- CLG-PRG ---
-REM Cooling staging: OAT enable, DAT low limit, vote-based, min timers
-REM Checks BYP-CLG-LOCKOUT before staging
+REM Cooling staging: OAT enable, DAT low limit, BYP lockout, vote-based,
+REM minimum timers. CLG-ENABLE doubles as the gate flag: 1=disabled, 2=enabled.
+REM CLG-DEMAND levels: 1=off, 2=Stage 1 demand, 3=Stage 2 demand.
 REM
-REM --- Cooling Enable Check ---
-REM OAT must be above cooling enable setpoint
-IF CFG-ACT-OAT < CFG-CLG-ENA-SP THEN CLG-ENABLE = 1
-IF CFG-ACT-OAT < CFG-CLG-ENA-SP THEN GOTO 800
-REM
-REM --- Bypass Cooling Lockout ---
-IF BYP-CLG-LOCKOUT THEN CLG-ENABLE = 1
-IF BYP-CLG-LOCKOUT THEN GOTO 800
-REM
-REM --- DAT Low Limit ---
-IF DAT < CFG-DAT-LO-LIMIT THEN CLG-ENABLE = 1
-IF DAT < CFG-DAT-LO-LIMIT THEN GOTO 800
-REM
-REM --- HVAC Mode Check ---
-IF HVAC-MODE <> 2 THEN CLG-ENABLE = 1
-IF HVAC-MODE <> 2 THEN GOTO 800
-REM
-REM --- Cooling Enabled ---
+REM --- Default: cooling allowed; downgrade to 1 (disabled) for any block reason ---
 CLG-ENABLE = 2
+IF CFG-ACT-OAT < CFG-CLG-ENA-SP THEN CLG-ENABLE = 1
+IF BYP-CLG-LOCKOUT THEN CLG-ENABLE = 1
+IF DAT < CFG-DAT-LO-LIMIT THEN CLG-ENABLE = 1
+IF HVAC-MODE <> 2 THEN CLG-ENABLE = 1
+IF NOT SF-STS THEN CLG-ENABLE = 1
 REM
-REM --- Fan Must Be Running ---
-IF NOT SF-STS THEN GOTO 800
+REM --- Demand level when enabled ---
+IF CLG-ENABLE = 2 AND CLG-DEMAND < 2 THEN CLG-DEMAND = 2
+IF CLG-ENABLE = 2 AND TIME-ON( Y1 ) > CFG-CLG-MIN-ON AND TIME-ON( Y1 ) > CFG-CLG-INSTG AND CFG-ACT-OAT >= CFG-CLG-STG02-ENA-SP AND ZN-COOL-VOTES > ( CFG-ZONE-COUNT / 2 ) THEN CLG-DEMAND = 3
 REM
-REM --- Stage 1 ---
-IF CLG-DEMAND < 2 AND HVAC-MODE = 2 THEN CLG-DEMAND = 2
-IF CLG-DEMAND >= 2 THEN START Y1
-IF CLG-DEMAND >= 2 AND TIME-ON( Y1 ) > CFG-CLG-MIN-ON THEN GOTO 300
-IF HVAC-MODE <> 2 AND TIME-ON( Y1 ) > CFG-CLG-MIN-ON THEN STOP Y1
+REM --- Drive stages from demand ---
+IF CLG-ENABLE = 2 AND CLG-DEMAND >= 2 THEN START Y1
+IF CLG-ENABLE = 2 AND CLG-DEMAND >= 3 THEN START Y2
+REM
+REM --- Drop demand back once Stage 1 min-on elapsed AND mode left cooling ---
 IF HVAC-MODE <> 2 AND TIME-ON( Y1 ) > CFG-CLG-MIN-ON THEN CLG-DEMAND = 1
-GOTO 900
-REM
-REM --- Stage 2 ---
-300 REM Stage 2: OAT above stage 2 setpoint + interstage delay
-IF CFG-ACT-OAT < CFG-CLG-STG02-ENA-SP THEN GOTO 900
-IF TIME-ON( Y1 ) < CFG-CLG-INSTG THEN GOTO 900
-IF ZN-COOL-VOTES > ( CFG-ZONE-COUNT / 2 ) THEN CLG-DEMAND = 3
-IF CLG-DEMAND >= 3 THEN START Y2
 IF HVAC-MODE <> 2 THEN STOP Y2
-IF HVAC-MODE <> 2 THEN CLG-DEMAND = 2
-GOTO 900
 REM
-REM --- All Off ---
-800 REM Turn off all cooling
-STOP Y1
-STOP Y2
-CLG-DEMAND = 1
-REM
-900 REM End
+REM --- All-off override when disabled ---
+IF CLG-ENABLE = 1 THEN STOP Y1
+IF CLG-ENABLE = 1 THEN STOP Y2
+IF CLG-ENABLE = 1 THEN CLG-DEMAND = 1
 """
 
 _PRG09_ALARMS = """\
@@ -306,20 +246,20 @@ REM Sensor failures, fan failure, DAT limits
 REM DALARM for delayed annunciation
 REM
 REM --- Sensor Failures ---
-IF SENSOR-ON( DAT ) THEN DALARM DAT, 0:05:00
-IF SENSOR-OFF( DAT ) THEN DALARM DAT, 0:05:00
-IF SENSOR-ON( RAT ) THEN DALARM RAT, 0:05:00
-IF SENSOR-OFF( RAT ) THEN DALARM RAT, 0:05:00
-IF SENSOR-ON( OAT ) THEN DALARM OAT, 0:05:00
-IF SENSOR-OFF( OAT ) THEN DALARM OAT, 0:05:00
+IF SENSOR-ON( {device-name}-DAT ) THEN DALARM {device-name}-DAT, 0:05:00
+IF SENSOR-OFF( {device-name}-DAT ) THEN DALARM {device-name}-DAT, 0:05:00
+IF SENSOR-ON( {device-name}-RAT ) THEN DALARM {device-name}-RAT, 0:05:00
+IF SENSOR-OFF( {device-name}-RAT ) THEN DALARM {device-name}-RAT, 0:05:00
+IF SENSOR-ON( {device-name}-OAT ) THEN DALARM {device-name}-OAT, 0:05:00
+IF SENSOR-OFF( {device-name}-OAT ) THEN DALARM {device-name}-OAT, 0:05:00
 REM
 REM --- Fan Failure ---
 REM Fan commanded on but no status after 60 seconds
-IF SF-CMD AND NOT SF-STS AND TIME-ON( SF-CMD AND NOT SF-STS ) > 0:01:00 THEN ALARM = 1
+IF {device-name}-SF-CMD AND NOT {device-name}-SF-STS AND TIME-ON( {device-name}-SF-CMD AND NOT {device-name}-SF-STS ) > 0:01:00 THEN ALARM = 1
 REM
 REM --- DAT Limits ---
-IF DAT > CFG-DAT-HI-LIMIT THEN ALARM = 2
-IF DAT < CFG-DAT-LO-LIMIT THEN ALARM = 3
+IF {device-name}-DAT > {device-name}-CFG-DAT-HI-LIMIT THEN ALARM = 2
+IF {device-name}-DAT < {device-name}-CFG-DAT-LO-LIMIT THEN ALARM = 3
 REM
 """
 
@@ -330,30 +270,22 @@ REM VIEW-SYSTEM-S: 1=Off, 2=Starting, 3=Running, 4=Alarm
 REM VIEW-FAN-S: 1=Off, 2=Starting, 3=Running, 4=Alarm
 REM
 REM --- System Status ---
-IF OCC-MODE = 4 THEN VIEW-SYSTEM-S = 1
-IF OCC-MODE <= 3 AND NOT SF-STS THEN VIEW-SYSTEM-S = 2
-IF OCC-MODE <= 3 AND SF-STS THEN VIEW-SYSTEM-S = 3
+IF {device-name}-OCC-MODE = 4 THEN {device-name}-VIEW-SYSTEM-S = 1
+IF {device-name}-OCC-MODE <= 3 AND NOT {device-name}-SF-STS THEN {device-name}-VIEW-SYSTEM-S = 2
+IF {device-name}-OCC-MODE <= 3 AND {device-name}-SF-STS THEN {device-name}-VIEW-SYSTEM-S = 3
 REM
 """
 
 _PRG11_WU = """\
 REM --- WU-PRG ---
-REM Warmup mode: if OAT below heating enable and first occupied transition
-REM Sets MODE-GLOBAL-ESM = False during warmup, BV23 WU-MODE active
+REM Warmup: enter ESM=0 on transition to occupied while OAT is cold.
+REM Exit warmup (ESM=1) once zone average reaches 68°F.
 REM
-REM --- Warmup Check ---
-REM Only on transition to occupied
-IF+ OCC-MODE <= 3 THEN GOTO 100
-GOTO 999
+REM --- Enter warmup on transition to occupied AND cold OAT ---
+IF+ OCC-MODE <= 3 AND CFG-ACT-OAT <= CFG-HTG-ENA-SP THEN MODE-GLOBAL-ESM = 0
 REM
-100 REM Check if warmup needed
-IF CFG-ACT-OAT > CFG-HTG-ENA-SP THEN GOTO 999
-REM Warmup active for configurable period
-MODE-GLOBAL-ESM = 0
-REM Warmup runs until zone temps reach setpoints
-IF ZN-RMT-AVG > 68.0 THEN MODE-GLOBAL-ESM = 1
-REM
-999 REM End
+REM --- Exit warmup once zones reach 68°F average ---
+IF MODE-GLOBAL-ESM = 0 AND ZN-RMT-AVG > 68.0 THEN MODE-GLOBAL-ESM = 1
 """
 
 _PRG12_PAGE1 = """\

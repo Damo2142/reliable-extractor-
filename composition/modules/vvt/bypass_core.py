@@ -11,14 +11,14 @@ AI1 = STATIC-P (duct static pressure sensor)
 AI2 = BYP-DAT (bypass duct discharge air temperature)
 
 Lockout logic:
-  BYP-CLG-LOCKOUT: bypass DAT too low → SAT is cold → cooling lockout
-  BYP-HTG-LOCKOUT: bypass DAT too high → SAT is hot → heating lockout
-  Both published TO {parent} MPV via network writes.
+  Bypass DAT too low → SAT is cold → cooling lockout → set {parent}BV21=1
+  Bypass DAT too high → SAT is hot → heating lockout → set {parent}BV20=1
+  MPV ValuePoints: BV20=BYP-HTG-LOCKOUT, BV21=BYP-CLG-LOCKOUT (see mpv_core.py).
+  Cross-device writes happen inside DMP-PRG — no separate publish step.
 
-Parent MPV instance mappings (NET-PRG):
+Parent MPV cross-device references (NET-PRG):
   {parent}DEV vendor-id  → local AV12  NET-RTU-S
   {parent}BI1            → local BV13  NET-RTU-SF-S
-  Writes: local BV1 → {parent}BV20, local BV2 → {parent}BV21
 """
 
 from composition.models import (
@@ -33,70 +33,50 @@ from composition.models import (
 
 _PRG01_NET = """\
 REM --- NET-PRG ---
-REM Network reads from MPV + publish lockout flags
-REM {parent} = BACnet device ID of the MPV RTU
-REM Set {parent} to the MPV device instance at commissioning
+REM Network reads from MPV — RTU status and supply fan status.
+REM Lockout publishing happens directly in DMP-PRG (cross-device write).
+REM {parent} = BACnet device ID of the MPV RTU.
+REM Set {parent} to the MPV device instance at commissioning.
 REM
-REM --- Read RTU Status ---
-REM Vendor ID property check — confirms RTU is communicating
+REM --- Read RTU Status (vendor ID property — confirms RTU is communicating) ---
 NET-RTU-S = {parent}DEV4194303:121
 REM
-REM --- Read Supply Fan Status ---
+REM --- Read Supply Fan Status from MPV ---
 NET-RTU-SF-S = {parent}BI1
-REM
-REM --- Publish Lockout Flags to MPV ---
-REM BYP-CLG-LOCKOUT → MPV BV20 (bypass cooling lockout)
-REM BYP-HTG-LOCKOUT → MPV BV21 (bypass heating lockout)
-{parent}BV20 = BYP-CLG-LOCKOUT
-{parent}BV21 = BYP-HTG-LOCKOUT
-REM
 """
 
 _PRG02_DMP = """\
 REM --- DMP-PRG ---
-REM Bypass damper control: pressure relief via MO7
-REM Only runs when supply fan is proven running
+REM Bypass damper: pressure relief via MO7 + cross-device lockout publish.
+REM Flat precedence — defaults to normal control, overridden last-write-wins.
 REM
-REM --- Disable Firmware Flow Control ---
-REM Bypass uses pressure control, not flow control
+REM --- Disable Firmware Flow Control (bypass uses pressure, not flow) ---
 STOP BV6
 BV6 = 0
 REM
-REM --- RTU Communication Check ---
-REM If RTU not communicating, go to RTU-fail position
-IF NET-RTU-S < 30.0 THEN DMP-REQ = CFG-DMP-RTU-FAIL
-IF NET-RTU-S < 30.0 THEN GOTO 500
-REM
-REM --- Supply Fan Status Check ---
-REM If supply fan not running, go to unoccupied position
-IF NOT NET-RTU-SF-S THEN DMP-REQ = CFG-DMP-UNOCC
-IF NOT NET-RTU-SF-S THEN GOTO 500
-REM
-REM --- Normal Pressure Control ---
-REM DMP-LOOP output drives bypass damper position
-REM Reverse action: pressure rises → damper opens (relieves pressure)
+REM --- Default: Normal Pressure Control ---
+REM DMP-LOOP reverse-acting: pressure rises → damper opens (relieves pressure)
 DMP-REQ = DMP-LOOP
-DMP-REQ = LIMIT( DMP-REQ, CFG-DMP-MIN, CFG-DMP-MAX )
+DMP-REQ = LIMIT( DMP-REQ , CFG-DMP-MIN , CFG-DMP-MAX )
 REM
-REM --- DAT Cooling Lockout ---
-REM If bypass DAT is too cold, SAT is in cooling mode
-REM Lock out further cooling staging at MPV
-IF BYP-DAT < CFG-BYP-DAT-CLG-LO THEN BYP-CLG-LOCKOUT = 1
-IF BYP-DAT > CFG-BYP-DAT-CLG-HI THEN BYP-CLG-LOCKOUT = 0
+REM --- Override: supply fan off → unoccupied position ---
+IF NOT NET-RTU-SF-S THEN DMP-REQ = CFG-DMP-UNOCC
 REM
-REM --- DAT Heating Lockout ---
-REM If bypass DAT is too hot, SAT is in heating mode
-REM Lock out further heating staging at MPV
-IF BYP-DAT > CFG-BYP-DAT-HTG-HI THEN BYP-HTG-LOCKOUT = 1
-IF BYP-DAT < CFG-BYP-DAT-HTG-LO THEN BYP-HTG-LOCKOUT = 0
+REM --- Override: RTU not communicating → fail-safe position ---
+IF NET-RTU-S < 30.0 THEN DMP-REQ = CFG-DMP-RTU-FAIL
 REM
-REM --- MO7 Modulation ---
-500 REM Drive MO7 to requested position
-REM Use RAMP for slow close via INTERVAL to prevent pressure spikes
+REM --- Publish DAT Lockouts Directly to MPV ---
+REM MPV BV21 = BYP-CLG-LOCKOUT, MPV BV20 = BYP-HTG-LOCKOUT (per mpv_core.py).
+REM Hysteresis prevents cycling — set on the inner band, clear on the outer.
+IF BYP-DAT < CFG-BYP-DAT-CLG-LO THEN {parent}BV21 = 1
+IF BYP-DAT > CFG-BYP-DAT-CLG-HI THEN {parent}BV21 = 0
+IF BYP-DAT > CFG-BYP-DAT-HTG-HI THEN {parent}BV20 = 1
+IF BYP-DAT < CFG-BYP-DAT-HTG-LO THEN {parent}BV20 = 0
+REM
+REM --- Drive MO7 with Deadband ---
 IF DMP-POS < ( DMP-REQ - CFG-DMP-DB ) THEN START MO7:OPEN
 IF DMP-POS > ( DMP-REQ + CFG-DMP-DB ) THEN START MO7:CLOSE
 IF ABS( DMP-POS - DMP-REQ ) <= CFG-DMP-DB THEN START MO7:IDLE
-REM
 """
 
 
@@ -162,8 +142,8 @@ def build():
             ValuePoint(24, "CFG-BYP-DAT-HTG-LO", "AV", 130.0, "Bypass DAT Heating Lockout Low",  "deg.F"),
 
             # ── Binary values ──
-            ValuePoint(1,  "BYP-CLG-LOCKOUT",  "BV", False, "Bypass Cooling Lockout (to MPV)"),
-            ValuePoint(2,  "BYP-HTG-LOCKOUT",  "BV", False, "Bypass Heating Lockout (to MPV)"),
+            # (BYP-CLG-LOCKOUT and BYP-HTG-LOCKOUT are written directly to MPV
+            #  cross-device — no local copy needed.)
             ValuePoint(13, "NET-RTU-SF-S",     "BV", False, "Network RTU Supply Fan Status"),
         ],
 

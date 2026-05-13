@@ -29,6 +29,8 @@ HEADER_FONT = Font(name="Calibri", bold=True, size=11, color="FFFFFF")
 HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
 DATA_FONT = Font(name="Calibri", size=10)
 UNUSED_FILL = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+FACTORY_FILL = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+FACTORY_FONT = Font(name="Calibri", size=10, italic=True, color="888888")
 THIN_BORDER = Border(
     left=Side(style="thin"),
     right=Side(style="thin"),
@@ -97,29 +99,38 @@ def _build_inputs_tab(wb, config: ControllerConfig):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    # Build lookup by row
+    # Build lookup by row — include factory points in range
     input_by_row = {pt.row: pt for pt in config.inputs}
-    max_row = config.highest_input_row
+    max_row = getattr(config, 'display_max_input_row', config.highest_input_row)
+    if input_by_row:
+        max_row = max(max_row, max(input_by_row.keys()))
 
     for row_num in range(1, max_row + 1):
         r = start + row_num
         if row_num in input_by_row:
             pt = input_by_row[row_num]
+            is_factory = pt.module == "FACTORY"
             ws.cell(row=r, column=1, value=row_num)
             ws.cell(row=r, column=2, value=f"{config.device_name}-{pt.name}")
             ws.cell(row=r, column=3, value=pt.point_type)
             ws.cell(row=r, column=4, value="")  # Present value placeholder
             ws.cell(row=r, column=5, value=pt.units)
-            ws.cell(row=r, column=6, value=pt.range_code)
-            ws.cell(row=r, column=7, value=pt.description)
-            ws.cell(row=r, column=8, value=pt.module)
+            ws.cell(row=r, column=6, value=pt.range_code if not is_factory else "")
+            ws.cell(row=r, column=7, value="Factory Reserved" if is_factory else pt.description)
+            ws.cell(row=r, column=8, value="FACTORY" if is_factory else pt.module)
+            if is_factory:
+                for c in range(1, len(headers) + 1):
+                    ws.cell(row=r, column=c).fill = FACTORY_FILL
+                    ws.cell(row=r, column=c).font = FACTORY_FONT
+            else:
+                _style_data(ws, r, len(headers))
         else:
             # Empty row — unused terminal (intentional, never fill)
             ws.cell(row=r, column=1, value=row_num)
             ws.cell(row=r, column=2, value=f"--- IN{row_num} unused ---")
             for c in range(1, len(headers) + 1):
                 ws.cell(row=r, column=c).fill = UNUSED_FILL
-        _style_data(ws, r, len(headers))
+            _style_data(ws, r, len(headers))
 
     # Column widths
     ws.column_dimensions["A"].width = 10
@@ -142,28 +153,37 @@ def _build_outputs_tab(wb, config: ControllerConfig):
     _style_header(ws, start, len(headers))
 
     output_by_row = {pt.row: pt for pt in config.outputs}
-    max_row = config.highest_output_row
+    max_row = getattr(config, 'display_max_output_row', config.highest_output_row)
+    if output_by_row:
+        max_row = max(max_row, max(output_by_row.keys()))
 
     for row_num in range(1, max_row + 1):
         r = start + row_num
         if row_num in output_by_row:
             pt = output_by_row[row_num]
+            is_factory = pt.module == "FACTORY"
             ws.cell(row=r, column=1, value=row_num)
             ws.cell(row=r, column=2, value=f"{config.device_name}-{pt.name}")
             ws.cell(row=r, column=3, value=pt.point_type)
             ws.cell(row=r, column=4, value="")
-            ws.cell(row=r, column=5, value=pt.units)
-            ws.cell(row=r, column=6, value=pt.range_code)
-            ws.cell(row=r, column=7, value=pt.min_v)
-            ws.cell(row=r, column=8, value=pt.max_v)
-            ws.cell(row=r, column=9, value=pt.description)
-            ws.cell(row=r, column=10, value=pt.module)
+            ws.cell(row=r, column=5, value=pt.units if not is_factory else "")
+            ws.cell(row=r, column=6, value=pt.range_code if not is_factory else "")
+            ws.cell(row=r, column=7, value=pt.min_v if not is_factory else "")
+            ws.cell(row=r, column=8, value=pt.max_v if not is_factory else "")
+            ws.cell(row=r, column=9, value="Factory Reserved" if is_factory else pt.description)
+            ws.cell(row=r, column=10, value="FACTORY" if is_factory else pt.module)
+            if is_factory:
+                for c in range(1, len(headers) + 1):
+                    ws.cell(row=r, column=c).fill = FACTORY_FILL
+                    ws.cell(row=r, column=c).font = FACTORY_FONT
+            else:
+                _style_data(ws, r, len(headers))
         else:
             ws.cell(row=r, column=1, value=row_num)
             ws.cell(row=r, column=2, value=f"--- OUT{row_num} unused ---")
             for c in range(1, len(headers) + 1):
                 ws.cell(row=r, column=c).fill = UNUSED_FILL
-        _style_data(ws, r, len(headers))
+            _style_data(ws, r, len(headers))
 
     ws.column_dimensions["A"].width = 10
     ws.column_dimensions["B"].width = 38
@@ -186,45 +206,56 @@ def _build_values_tab(wb, config: ControllerConfig):
         ws.cell(row=start, column=c, value=h)
     _style_header(ws, start, len(headers))
 
-    # Build single lookup by instance across ALL value types (AV/BV/MV share instance space)
-    val_by_inst = {v.instance: v for v in config.values}
-    max_inst = max(val_by_inst.keys()) if val_by_inst else 0
+    # Build lookup keyed by (point_type, instance) — AV20, BV20, MV20 are
+    # independent BACnet objects and MUST NOT share a dict slot. Bug B fix.
+    val_by_key = {(v.point_type, v.instance): v for v in config.values}
 
-    for inst in range(1, max_inst + 1):
-        r = start + inst
-        if inst in val_by_inst:
-            val = val_by_inst[inst]
-            prefix = {"AV": "AV", "BV": "BV", "MV": "MV"}.get(val.point_type, "AV")
-            ws.cell(row=r, column=1, value=f"{prefix}{inst}")
-            ws.cell(row=r, column=2, value=f"{config.device_name}-{val.name}")
-            ws.cell(row=r, column=3, value=val.point_type)
-            if val.point_type == "MV" and val.states:
-                state_str = "/".join([f"{k}-{v}" for k, v in sorted(val.states.items())])
-                default_text = val.states.get(val.default, str(val.default)) if val.default else ""
-                ws.cell(row=r, column=4, value=default_text)
-                ws.cell(row=r, column=5, value=state_str)
-                ws.cell(row=r, column=6, value=state_str)
-            elif val.point_type == "BV":
-                ws.cell(row=r, column=4, value="Off" if not val.default else "On")
-                ws.cell(row=r, column=5, value="Off/On")
-                ws.cell(row=r, column=6, value="Off/On")
+    # Compute per-type max instance for the filler-rows display range.
+    max_by_type = {
+        "AV": max((i for (t, i) in val_by_key if t == "AV"), default=0),
+        "BV": max((i for (t, i) in val_by_key if t == "BV"), default=0),
+        "MV": max((i for (t, i) in val_by_key if t == "MV"), default=0),
+    }
+
+    r = start
+    for ptype in ("AV", "BV", "MV"):
+        mx = max_by_type[ptype]
+        if mx <= 0:
+            continue
+        for inst in range(1, mx + 1):
+            r += 1
+            if (ptype, inst) in val_by_key:
+                val = val_by_key[(ptype, inst)]
+                ws.cell(row=r, column=1, value=f"{ptype}{inst}")
+                ws.cell(row=r, column=2, value=f"{config.device_name}-{val.name}")
+                ws.cell(row=r, column=3, value=val.point_type)
+                if val.point_type == "MV" and val.states:
+                    state_str = "/".join([f"{k}-{v}" for k, v in sorted(val.states.items())])
+                    default_text = val.states.get(val.default, str(val.default)) if val.default else ""
+                    ws.cell(row=r, column=4, value=default_text)
+                    ws.cell(row=r, column=5, value=state_str)
+                    ws.cell(row=r, column=6, value=state_str)
+                elif val.point_type == "BV":
+                    ws.cell(row=r, column=4, value="Off" if not val.default else "On")
+                    ws.cell(row=r, column=5, value="Off/On")
+                    ws.cell(row=r, column=6, value="Off/On")
+                else:
+                    ws.cell(row=r, column=4, value=str(val.default))
+                    ws.cell(row=r, column=5, value=val.units or "")
+                    ws.cell(row=r, column=6, value="")
+                ws.cell(row=r, column=7, value=val.min_val if val.min_val is not None else "")
+                ws.cell(row=r, column=8, value=val.max_val if val.max_val is not None else "")
+                if val.point_type == "MV" and val.states:
+                    ws.cell(row=r, column=9, value=state_str)
+                else:
+                    ws.cell(row=r, column=9, value=val.description)
+                ws.cell(row=r, column=10, value=val.module)
             else:
-                ws.cell(row=r, column=4, value=str(val.default))
-                ws.cell(row=r, column=5, value=val.units or "")
-                ws.cell(row=r, column=6, value="")
-            ws.cell(row=r, column=7, value=val.min_val if val.min_val is not None else "")
-            ws.cell(row=r, column=8, value=val.max_val if val.max_val is not None else "")
-            if val.point_type == "MV" and val.states:
-                ws.cell(row=r, column=9, value=state_str)
-            else:
-                ws.cell(row=r, column=9, value=val.description)
-            ws.cell(row=r, column=10, value=val.module)
-        else:
-            # Empty filler row — use AV as default type label
-            ws.cell(row=r, column=1, value=f"AV{inst}")
-            for c in range(1, len(headers) + 1):
-                ws.cell(row=r, column=c).fill = UNUSED_FILL
-        _style_data(ws, r, len(headers))
+                # Empty filler row — labeled by ptype so AV/BV/MV gaps are explicit
+                ws.cell(row=r, column=1, value=f"{ptype}{inst}")
+                for c in range(1, len(headers) + 1):
+                    ws.cell(row=r, column=c).fill = UNUSED_FILL
+            _style_data(ws, r, len(headers))
 
     ws.column_dimensions["A"].width = 10
     ws.column_dimensions["B"].width = 38
@@ -324,8 +355,30 @@ def _build_tables_tab(wb, config: ControllerConfig):
 def _build_arrays_tab(wb, config: ControllerConfig):
     ws = wb.create_sheet("Arrays")
     start = _add_title(ws, "ARRAYS", f"{config.device_name}")
-    ws.cell(row=start, column=1, value="(No arrays for this configuration)")
-    ws.cell(row=start, column=1).font = DATA_FONT
+
+    arrays = getattr(config, 'arrays', [])
+    if not arrays:
+        ws.cell(row=start, column=1, value="(No arrays for this configuration)")
+        ws.cell(row=start, column=1).font = DATA_FONT
+        return
+
+    headers = ["Instance", "Name", "Size", "Description"]
+    for c, h in enumerate(headers, 1):
+        ws.cell(row=start, column=c, value=h)
+    _style_header(ws, start, len(headers))
+
+    for i, arr in enumerate(arrays):
+        r = start + 1 + i
+        ws.cell(row=r, column=1, value=arr.instance)
+        ws.cell(row=r, column=2, value=arr.name)
+        ws.cell(row=r, column=3, value=arr.size)
+        ws.cell(row=r, column=4, value=arr.description)
+        _style_data(ws, r, len(headers))
+
+    ws.column_dimensions["A"].width = 10
+    ws.column_dimensions["B"].width = 35
+    ws.column_dimensions["C"].width = 8
+    ws.column_dimensions["D"].width = 40
 
 
 def _build_schedules_tab(wb, config: ControllerConfig):

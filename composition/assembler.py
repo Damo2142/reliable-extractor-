@@ -159,9 +159,12 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
         for pt in mod_values:
             if pt.name in value_names:
                 continue  # same mnemonic already exists — skip entirely
-            if pt.instance not in value_instances:
+            # Dedup key must include point_type — BACnet AV20, BV20 and MV20
+            # are independent objects, so they must NOT collide.
+            key = (pt.point_type, pt.instance)
+            if key not in value_instances:
                 if pt.module != "FACTORY": pt.module = mid
-                value_instances[pt.instance] = pt
+                value_instances[key] = pt
                 value_names.add(pt.name)
 
         for lp in mod_loops:
@@ -197,7 +200,14 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     # Sort by row/instance number
     config.inputs = [input_rows[r] for r in sorted(input_rows.keys())]
     config.outputs = [output_rows[r] for r in sorted(output_rows.keys())]
-    config.values = [value_instances[i] for i in sorted(value_instances.keys())]
+    # Values are keyed by (point_type, instance) — sort by type priority then instance
+    _val_type_order = {"AV": 0, "BV": 1, "MV": 2}
+    config.values = [
+        value_instances[k] for k in sorted(
+            value_instances.keys(),
+            key=lambda k: (_val_type_order.get(k[0], 9), k[1]),
+        )
+    ]
     config.loops = [loop_instances[i] for i in sorted(loop_instances.keys())]
     config.tables = [table_instances[i] for i in sorted(table_instances.keys())]
     config.arrays = [array_instances[i] for i in sorted(array_instances.keys())]

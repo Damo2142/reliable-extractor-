@@ -17,44 +17,27 @@ from composition.models import (
 
 _PRG04_RH = """\
 REM --- RH-PRG ---
-REM Modulating HW reheat: calculate DAT-SP, enable/disable valve
-REM RH-LOOP (Loop 2) controls valve to maintain DAT at DAT-SP
+REM Modulating HW reheat: DAT-SP calc, valve enable/disable.
+REM RH-LOOP controls RH-VLV to maintain DAT at DAT-SP when active.
 REM
-REM --- Reheat Mode ---
-REM In Reheat or Heat mode: calculate DAT setpoint from heating demand
-REM In all other modes: close valve
-REM
-IF HVAC-MODE = 3 THEN GOTO 100
-IF HVAC-MODE = 4 THEN GOTO 100
-REM
-REM --- No Reheat ---
-REM Vent, Cool, or Unoccupied — close valve
-RH-VLV = 0.0
-DAT-SP = DAT-MIN-SP
-RH-VLV-POS = 0.0
-GOTO 999
-REM
-REM --- Reheat Active ---
-100 REM Calculate DAT setpoint based on room temp deviation
-REM More deviation below heating setpoint = higher DAT-SP
-REM SLIDE: room temp from heating SP down to SP-4 maps to DAT-MIN to DAT-MAX
-DAT-SP = SLIDE( RMT-SP-HTG - ACT-RMT, 0.0, 4.0, DAT-MIN-SP, DAT-MAX-SP )
-DAT-SP = LIMIT( DAT-SP, DAT-MIN-SP, DAT-MAX-SP )
-REM
-REM --- Safety Limit ---
-REM Never exceed RH-MAX-DAT regardless of demand
+REM --- DAT Setpoint from room temp deviation (always computed) ---
+REM SLIDE: 0..4°F below heating SP maps to DAT-MIN..DAT-MAX.
+DAT-SP = SLIDE( RMT-SP-HTG - ACT-RMT , 0.0 , 4.0 , DAT-MIN-SP , DAT-MAX-SP )
+DAT-SP = LIMIT( DAT-SP , DAT-MIN-SP , DAT-MAX-SP )
 IF DAT-SP > RH-MAX-DAT THEN DAT-SP = RH-MAX-DAT
 REM
-REM --- HW Available Check ---
-REM If HW system not OK, close valve
+REM --- Park DAT-SP at min when not in Reheat (3) / Heat (4) mode ---
+REM (collapses RH-LOOP error so the valve stays closed)
+IF HVAC-MODE < 3 THEN DAT-SP = DAT-MIN-SP
+IF HVAC-MODE > 4 THEN DAT-SP = DAT-MIN-SP
+REM
+REM --- Force-close valve out of heating mode or when HW unavailable ---
+IF HVAC-MODE < 3 THEN RH-VLV = 0.0
+IF HVAC-MODE > 4 THEN RH-VLV = 0.0
 IF NOT HWS-OK THEN RH-VLV = 0.0
-IF NOT HWS-OK THEN RH-VLV-POS = 0.0
-IF NOT HWS-OK THEN GOTO 999
 REM
-REM --- Track Valve Position ---
+REM --- Mirror valve command to feedback position AV ---
 RH-VLV-POS = RH-VLV
-REM
-999 REM End
 """
 
 

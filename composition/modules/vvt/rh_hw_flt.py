@@ -66,9 +66,9 @@ def build():
         ],
 
         values=[
-            ValuePoint(36, "DAT-MAX-SP",      "AV", 102.5, "Max DAT Setpoint",                "deg.F"),
+            ValuePoint(57, "DAT-MAX-SP",      "AV", 102.5, "Max DAT Setpoint",                "deg.F"),
             ValuePoint(37, "DAT-SP",          "AV", 90.0,  "Active DAT Setpoint (calculated)","deg.F"),
-            ValuePoint(39, "DAT-MIN-SP",      "AV", 70.0,  "Min DAT Setpoint",                "deg.F"),
+            ValuePoint(58, "DAT-MIN-SP",      "AV", 70.0,  "Min DAT Setpoint",                "deg.F"),
             ValuePoint(67, "RH-POS",          "AV", 0.0,   "Actual Valve Position (0-100%)",  "%"),
             ValuePoint(68, "CFG-RH-DRV-TIME", "AV", 150.0, "Valve Full Stroke Drive Time",    "Sec."),
             ValuePoint(69, "CFG-RH-POS-DB",   "AV", 2.0,   "Reheat Position Deadband",        "%"),
