@@ -10,30 +10,26 @@ from composition.models import (
 
 
 def build_ph_hw():
-    """Preheat — hot water coil with modulating valve + pump"""
+    """Preheat — hot water coil with modulating valve (pump is a separate optional module: ph-hw-pump)"""
     return Module(
         id="ph-hw",
         name="Preheat Hot Water",
         category="preheat",
-        description="HW preheat coil with modulating valve, pump, and entering/leaving temps",
+        description="HW preheat coil with modulating valve and entering/leaving water temps",
 
         inputs=[
             InputPoint(16, "PH-LAT",    "AI", "10K -40 ->250", "Preheat Leaving Air Temp",       "°F"),
             InputPoint(35, "PH-EAT",    "AI", "10K -40 ->250", "Preheat Entering Air Temp",      "°F"),
             InputPoint(39, "PH-SUPW-T", "AI", "10K -40 ->250", "Preheat Coil Supply Water Temp", "°F"),
             InputPoint(40, "PH-RETW-T", "AI", "10K -40 ->250", "Preheat Coil Return Water Temp", "°F"),
-            InputPoint(45, "PH-PMP-S",  "BI", "Off/On",        "Preheat Pump Status"),
         ],
 
         outputs=[
             OutputPoint(8,  "PH-VLV", "AO", "0.0 ->100%", "Preheat Valve (reverse)", 10.0, 2.0, True),
-            OutputPoint(17, "PH-PMP", "BO", "Stop/Start", "Preheat Pump Command"),
         ],
 
         values=[
             ValuePoint(230, "PH-SAT-SP",      "AV", 55.0,  "Preheat LAT Setpoint",           "°F"),
-            ValuePoint(231, "PH-PMP-FAIL",     "BV", False, "Preheat Pump Failure Alarm"),
-            ValuePoint(232, "PH-PMP-DELAY",    "AV", 30.0,  "Preheat Pump Fail Delay",        "Sec"),
         ],
 
         loops=[
@@ -44,17 +40,16 @@ def build_ph_hw():
 
         programs=[
             ProgramDef(40, "PH-PRG", "PRG40-PH-HW.bas", "", True,
-                       "Preheat HW valve + pump control",
+                       "Preheat HW valve modulation",
                        exec_order=40),
         ],
 
         soo_paragraph="""A hot water preheat coil shall be provided upstream of the mixing section.
 The preheat valve shall modulate to maintain preheat leaving air temperature
 setpoint. The valve actuator shall be reverse-acting (fail-open) for freeze
-protection. A dedicated preheat pump shall run when the preheat valve output
-is greater than 0% or when outdoor air temperature is below the freeze
-protection setpoint. Pump failure shall be alarmed if commanded on with no
-status after 30 seconds.""",
+protection. If a dedicated preheat pump is required, the optional
+ph-hw-pump module shall be selected to add pump command/status hardware
+and the pump control program.""",
 
         requires=["core"],
         conflicts=["ph-elec", "ph-stm", "ph-glycol"],
@@ -100,27 +95,24 @@ preheat enable setpoint.""",
 
 
 def build_ph_glycol():
-    """Preheat — glycol coil with pump"""
+    """Preheat — glycol coil with modulating valve (pump is a separate optional module: ph-hw-pump)"""
     return Module(
         id="ph-glycol",
         name="Preheat Glycol",
         category="preheat",
-        description="Glycol preheat coil with pump and valve",
+        description="Glycol preheat coil with modulating valve",
 
         inputs=[
-            InputPoint(16, "PH-LAT",    "AI", "10K -40 ->250", "Preheat Leaving Air Temp",       "°F"),
-            InputPoint(35, "PH-EAT",    "AI", "10K -40 ->250", "Preheat Entering Air Temp",      "°F"),
-            InputPoint(45, "PH-PMP-S",  "BI", "Off/On",        "Preheat Pump Status"),
+            InputPoint(16, "PH-LAT", "AI", "10K -40 ->250", "Preheat Leaving Air Temp",  "°F"),
+            InputPoint(35, "PH-EAT", "AI", "10K -40 ->250", "Preheat Entering Air Temp", "°F"),
         ],
 
         outputs=[
-            OutputPoint(8,  "PH-VLV", "AO", "0.0 ->100%",   "Preheat Glycol Valve (reverse)", 10.0, 2.0, True),
-            OutputPoint(17, "PH-PMP", "BO", "Stop/Start", "Preheat Glycol Pump Command"),
+            OutputPoint(8, "PH-VLV", "AO", "0.0 ->100%", "Preheat Glycol Valve (reverse)", 10.0, 2.0, True),
         ],
 
         values=[
-            ValuePoint(230, "PH-SAT-SP",   "AV", 55.0,  "Preheat LAT Setpoint",       "°F"),
-            ValuePoint(231, "PH-PMP-FAIL", "BV", False,  "Preheat Pump Failure Alarm"),
+            ValuePoint(230, "PH-SAT-SP", "AV", 55.0, "Preheat LAT Setpoint", "°F"),
         ],
 
         loops=[
@@ -131,14 +123,15 @@ def build_ph_glycol():
 
         programs=[
             ProgramDef(40, "PH-PRG", "PRG40-PH-GLYCOL.bas", "", True,
-                       "Preheat glycol valve + pump control",
+                       "Preheat glycol valve modulation",
                        exec_order=40),
         ],
 
         soo_paragraph="""A glycol preheat coil shall be provided upstream of the mixing section.
 The preheat valve shall modulate to maintain leaving air temperature setpoint.
-A dedicated glycol pump shall circulate whenever the valve is open or outdoor
-temperature is below freeze protection setpoint.""",
+If a dedicated glycol circulation pump is required, the optional
+ph-hw-pump module shall be selected to add pump command/status hardware
+and the pump control program.""",
 
         requires=["core"],
         conflicts=["ph-hw", "ph-elec", "ph-stm"],

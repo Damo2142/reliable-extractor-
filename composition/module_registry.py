@@ -5,7 +5,7 @@ Central registry of all available modules. Builds and caches module instances.
 """
 
 from composition.modules import (
-    core, dsp_ctrl, sz_vav_fan_ctrl, fan_supply, fan_return_exhaust, heating, cooling,
+    core, core_stubs, dsp_ctrl, sz_vav_fan_ctrl, fan_supply, fan_return_exhaust, heating, cooling,
     economizer, erw, ventilation, optimum_start, safety, preheat, humidity, pump,
     dual_duct
 )
@@ -46,15 +46,6 @@ from composition.modules.vav import build_stat_comm as vav_build_stat_comm
 from composition.modules.vav import build_stat_comm_co2 as vav_build_stat_comm_co2
 from composition.modules.vav import build_stat_comm_hum as vav_build_stat_comm_hum
 from composition.modules.vav import build_stat_comm_occ as vav_build_stat_comm_occ
-from composition.modules.vvt import (
-    build_zone_core as vvt_build_zone_core,
-    build_bypass_core as vvt_build_bypass_core,
-    build_mpv_core as vvt_build_mpv_core,
-    build_rh_hw_mod as vvt_build_rh_hw_mod,
-    build_rh_hw_flt as vvt_build_rh_hw_flt,
-    build_rh_elec_1 as vvt_build_rh_elec_1,
-    build_rh_elec_2 as vvt_build_rh_elec_2,
-)
 from composition.modules.fcu import (
     build_fcu_core, build_fcu_fan_cv, build_fcu_fan_ms, build_fcu_fan_vfd,
     build_fcu_chw_mod, build_fcu_chw_flt, build_fcu_hw_mod, build_fcu_hw_flt,
@@ -82,6 +73,7 @@ def _register(module_id, builder_fn):
 
 # Core
 _register("core", core.build)
+_register("core-stubs", core_stubs.build)
 _register("dsp-ctrl", dsp_ctrl.build)
 _register("sz-vav-fan-ctrl", sz_vav_fan_ctrl.build)
 
@@ -189,15 +181,6 @@ _register("vav-stat-comm", vav_build_stat_comm)
 _register("vav-stat-comm-co2", vav_build_stat_comm_co2)
 _register("vav-stat-comm-hum", vav_build_stat_comm_hum)
 _register("vav-stat-comm-occ", vav_build_stat_comm_occ)
-
-# VVT Terminal Units
-_register("vvt-zone-core", vvt_build_zone_core)
-_register("vvt-bypass-core", vvt_build_bypass_core)
-_register("vvt-mpv-core", vvt_build_mpv_core)
-_register("vvt-rh-hw-mod", vvt_build_rh_hw_mod)
-_register("vvt-rh-hw-flt", vvt_build_rh_hw_flt)
-_register("vvt-rh-elec-1", vvt_build_rh_elec_1)
-_register("vvt-rh-elec-2", vvt_build_rh_elec_2)
 
 # FCU modules
 _register("fcu-core", build_fcu_core)
@@ -317,10 +300,6 @@ FAMILY_CORES = {
     'VAV-DD-CLG':       ['vav-core'],
     'VAV-DD-HW-MOD':    ['vav-core'],
     'VAV-DD-HW-FLT':    ['vav-core'],
-    # VVT System controllers
-    'VVT-MPV':          ['vvt-mpv-core'],
-    'VVT-ZONE':         ['vvt-zone-core'],
-    'VVT-BYPASS':       ['vvt-bypass-core'],
     # FCU families
     'FCU-2P-SW':        ['fcu-core'],
     'FCU-2P-CHW':       ['fcu-core'],
@@ -601,16 +580,6 @@ EQUIPMENT_FAMILIES = {
         "available_categories": ["thermostat", "thermostat-addon"],
         "notes": "Dual duct + floating HW valve on hot deck. RC-FLEXair-36-A-F.",
     },
-    # ── VVT System ──
-    "VVT-SYSTEM": {
-        "name": "VVT System",
-        "description": "Variable Volume Temperature system — MPV master RTU + zone dampers + bypass. Generates all controllers in one package.",
-        "prefix": "SBS-VVT",
-        "required_modules": ["vvt-mpv-core"],
-        "available_categories": [],
-        "notes": "Wizard-based. Generates MPV (ProView LCD), zone controllers (RC-FLEXair), and optional bypass controller.",
-        "wizard": True,
-    },
     # ── FCU Families ──
     "FCU-2P-SW": {
         "name": "FCU 2-Pipe Switchover",
@@ -846,7 +815,7 @@ STANDARD_CONFIGS = {
         "description": "CHW/HW with hot water preheat coil + pump",
         "modules": [
             "core", "fan-sf-vfd",
-            "clg-chw", "htg-hw", "ph-hw", "econ-enth",
+            "clg-chw", "htg-hw", "ph-hw", "ph-hw-pump", "econ-enth",
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },
@@ -856,7 +825,7 @@ STANDARD_CONFIGS = {
         "description": "Full preheat config: CHW, HW, preheat, ERW, exhaust fan",
         "modules": [
             "core", "fan-sf-vfd", "fan-ef-vfd",
-            "clg-chw", "htg-hw", "ph-hw", "econ-enth", "erw",
+            "clg-chw", "htg-hw", "ph-hw", "ph-hw-pump", "econ-enth", "erw",
             "vent-ams", "opt-start",
         ] + _SAFETY_FULL_EA,
     },
@@ -886,7 +855,7 @@ STANDARD_CONFIGS = {
         "description": "Maximum VAV AHU: every feature enabled",
         "modules": [
             "core", "fan-sf-vfd", "fan-ef-vfd",
-            "clg-chw", "htg-hw", "ph-hw",
+            "clg-chw", "htg-hw", "ph-hw", "ph-hw-pump",
             "econ-enth", "erw",
             "dcv-co2", "hum-stm", "dehum-sc",
             "opt-start",
@@ -1016,7 +985,7 @@ STANDARD_CONFIGS = {
         "description": "Standard DOAS: CHW cooling, HW preheat, energy recovery wheel",
         "modules": [
             "core", "fan-sf-vfd",
-            "clg-chw", "ph-hw", "erw",
+            "clg-chw", "ph-hw", "ph-hw-pump", "erw",
             "vent-100",
         ] + _SAFETY_FULL,
     },
@@ -1026,7 +995,7 @@ STANDARD_CONFIGS = {
         "description": "DX DOAS: 2-stage DX, HW preheat, energy recovery wheel",
         "modules": [
             "core", "fan-sf-vfd",
-            "clg-dx-2", "ph-hw", "erw",
+            "clg-dx-2", "ph-hw", "ph-hw-pump", "erw",
             "vent-100",
         ] + _SAFETY_FULL,
     },
@@ -1036,7 +1005,7 @@ STANDARD_CONFIGS = {
         "description": "DOAS with humidifier: CHW, HW preheat, ERW, steam humidifier",
         "modules": [
             "core", "fan-sf-vfd",
-            "clg-chw", "ph-hw", "erw", "hum-stm",
+            "clg-chw", "ph-hw", "ph-hw-pump", "erw", "hum-stm",
             "vent-100",
         ] + _SAFETY_FULL,
     },
@@ -1190,7 +1159,7 @@ STANDARD_CONFIGS = {
         "description": "Full single zone VAV: CHW, HW, preheat, ERW, enthalpy econ",
         "modules": [
             "core", "fan-sf-vfd",
-            "clg-chw", "htg-hw", "ph-hw", "econ-enth", "erw",
+            "clg-chw", "htg-hw", "ph-hw", "ph-hw-pump", "econ-enth", "erw",
             "vent-fix", "opt-start",
         ] + _SAFETY_FULL,
     },

@@ -103,8 +103,15 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
     schedule_instances = {}
     system_group_names = {}
 
-    for mid in sorted(all_ids):
+    # Stub-fallback modules are processed AFTER all real modules so their
+    # points only fill gaps left by real modules. Within each bucket we keep
+    # the existing alphabetical order so behavior is unchanged for non-stubs.
+    def _mod_sort_key(mid):
+        return (1 if getattr(modules[mid], "is_stub_fallback", False) else 0, mid)
+
+    for mid in sorted(all_ids, key=_mod_sort_key):
         mod = modules[mid]
+        is_stub = getattr(mod, "is_stub_fallback", False)
 
         # Deep-copy all module points before mutating (.row, .module, .instance)
         # to prevent corrupting the cached module singleton across requests.
@@ -121,6 +128,10 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
         for pt in mod_inputs:
             if pt.name in input_names:
                 continue  # same mnemonic already exists — skip entirely
+            # Stub fallback: never add an input whose name is already provided
+            # by another module under any category (input/output/value).
+            if is_stub and (pt.name in output_names or pt.name in value_names):
+                continue
             if pt.row not in input_rows:
                 if pt.module != "FACTORY": pt.module = mid
                 input_rows[pt.row] = pt
@@ -140,6 +151,8 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
         for pt in mod_outputs:
             if pt.name in output_names:
                 continue  # same mnemonic already exists — skip entirely
+            if is_stub and (pt.name in input_names or pt.name in value_names):
+                continue
             if pt.row not in output_rows:
                 if pt.module != "FACTORY": pt.module = mid
                 output_rows[pt.row] = pt
@@ -159,6 +172,10 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
         for pt in mod_values:
             if pt.name in value_names:
                 continue  # same mnemonic already exists — skip entirely
+            # Stub fallback: never add a value whose name is already provided
+            # as an input or output by another module.
+            if is_stub and (pt.name in input_names or pt.name in output_names):
+                continue
             # Dedup key must include point_type — BACnet AV20, BV20 and MV20
             # are independent objects, so they must NOT collide.
             key = (pt.point_type, pt.instance)
@@ -468,7 +485,7 @@ def _select_controller(config: ControllerConfig, model_override: str = "auto"):
 
     # Auto-select: VAV terminal unit families use RC-FLEXair
     # VAV-AHU is an AHU family (not a terminal unit) — exclude it
-    _VAV_TERMINAL_FAMILIES = ("VAV-SD-", "VAV-PF-", "VAV-SF-", "VAV-DD-", "VVT-ZONE", "VVT-BYPASS")
+    _VAV_TERMINAL_FAMILIES = ("VAV-SD-", "VAV-PF-", "VAV-SF-", "VAV-DD-")
     if config.equipment_family.startswith(_VAV_TERMINAL_FAMILIES):
         # Check if any AO outputs exist — RCFA-12 has no AO
         has_ao = any(o.point_type == "AO" for o in config.outputs)
@@ -488,13 +505,6 @@ def _select_controller(config: ControllerConfig, model_override: str = "auto"):
                 return
         # Fallback to largest RCFA
         config.controller_model = "RCFA-36"
-        config.expansion_count = 0
-        config.expansion_model = ""
-        return
-
-    # Auto-select: VVT-MPV uses MACH-ProView LCD (or MPZ-88)
-    if config.equipment_family == "VVT-MPV":
-        config.controller_model = "MPV-LCD"
         config.expansion_count = 0
         config.expansion_model = ""
         return

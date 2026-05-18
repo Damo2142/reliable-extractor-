@@ -100,9 +100,9 @@ def build_ph_pump():
         ],
 
         programs=[
-            ProgramDef(40, "PH-PMP-PRG", "PRG40-PH-PMP.bas", "", True,
+            ProgramDef(49, "PH-PMP-PRG", "PRG49-PH-PMP.bas", "", True,
                        "Preheat pump — valve open or freeze protection",
-                       exec_order=40),
+                       exec_order=49),
         ],
 
         soo_paragraph="""A dedicated preheat coil pump shall be provided. The pump shall run
