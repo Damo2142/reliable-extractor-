@@ -61,6 +61,11 @@ from composition.modules.uv import (
     build_uv_chw_mod, build_uv_chw_flt, build_uv_dx_1, build_uv_dx_2,
     build_uv_dcv, build_uv_freezestat,
 )
+from composition.modules.rhc import (
+    build_rhc_core, build_rhc_hw_mod, build_rhc_hw_flt,
+)
+from composition.modules.vav.rad_aux import build_rad_aux_mod, build_rad_aux_flt
+from composition.modules.rad import build_rad_core, build_rad_heaters
 
 
 # Registry: module_id -> builder function
@@ -97,6 +102,9 @@ _register("htg-elec-2", heating.build_htg_elec_2)
 _register("htg-elec-3", heating.build_htg_elec_3)
 _register("htg-elec-scr", heating.build_htg_elec_scr)
 _register("htg-gas", heating.build_htg_gas)
+_register("htg-gas-2", heating.build_htg_gas_2)
+_register("htg-gas-3", heating.build_htg_gas_3)
+_register("htg-gas-4", heating.build_htg_gas_4)
 _register("htg-gas-mod", heating.build_htg_gas_mod)
 
 # Cooling
@@ -224,6 +232,39 @@ _register("uv-dx-2", build_uv_dx_2)
 _register("uv-dcv", build_uv_dcv)
 _register("uv-freezestat", build_uv_freezestat)
 
+# RHC — Standalone Duct Reheat Coil (SBS-RHC-801)
+_register("rhc-core", build_rhc_core)
+_register("rhc-hw-mod", build_rhc_hw_mod)
+_register("rhc-hw-flt", build_rhc_hw_flt)
+
+# VAV Auxiliary Radiant Heat (optional module on reheat-capable VAV families)
+_register("vav-rad-aux-mod", build_rad_aux_mod)
+_register("vav-rad-aux-flt", build_rad_aux_flt)
+
+# RAD — Standalone Radiant Heater (SBS-RAD-901..908)
+_register("rad-core", build_rad_core)
+
+# Per-family radiant heater configurations: (config_id, num_heaters, mode, valve)
+# Modes: a=individual sensor, b=shared sensor, c=outdoor reset. Valves: mod | flt.
+# Spread across families to cover every mode x valve combination at least once.
+_RAD_FAMILY_CONFIGS = [
+    ("SBS-RAD-901",       1, "b", "flt"),
+    ("SBS-RAD-902",       2, "a", "flt"),
+    ("SBS-RAD-903",       3, "b", "mod"),
+    ("SBS-RAD-904",       4, "c", "mod"),
+    ("SBS-RAD-905",       5, "a", "mod"),
+    ("SBS-RAD-906",       6, "b", "mod"),
+    ("SBS-RAD-907",       7, "c", "mod"),
+    ("SBS-RAD-908",       8, "c", "mod"),
+    ("SBS-RAD-901-C-FLT", 1, "c", "flt"),
+]
+
+# Register a heaters builder for each distinct (num, mode, valve) combination.
+for _cid, _num, _mode, _valve in _RAD_FAMILY_CONFIGS:
+    _hid = f"rad-htrs-{_num}-{_mode}-{_valve}"
+    if _hid not in _BUILDERS:
+        _register(_hid, (lambda n, m, v: lambda: build_rad_heaters(n, m, v))(_num, _mode, _valve))
+
 
 # Cache built modules
 _CACHE = {}
@@ -319,6 +360,17 @@ FAMILY_CORES = {
     'UV-CHW-HW-FBP':    ['uv-core'],
     'UV-DX-HW-OAD':     ['uv-core'],
     'UV-DX-HW-FBP':     ['uv-core'],
+    # Standalone Duct Reheat Coil
+    'SBS-RHC-801':      ['rhc-core'],
+    # Standalone Radiant Heater (1-8 heaters per family)
+    'SBS-RAD-901':      ['rad-core'],
+    'SBS-RAD-902':      ['rad-core'],
+    'SBS-RAD-903':      ['rad-core'],
+    'SBS-RAD-904':      ['rad-core'],
+    'SBS-RAD-905':      ['rad-core'],
+    'SBS-RAD-906':      ['rad-core'],
+    'SBS-RAD-907':      ['rad-core'],
+    'SBS-RAD-908':      ['rad-core'],
 }
 
 
@@ -711,7 +763,42 @@ EQUIPMENT_FAMILIES = {
         "notes": "Wizard-based. Water cooled chillers with cooling towers, CW pumps, and optional tower bypass.",
         "wizard": True,
     },
+    # ── Standalone Duct Reheat Coil ──
+    "SBS-RHC-801": {
+        "name": "Standalone Duct Reheat Coil",
+        "description": "Duct-mounted HW reheat coil — cascade space/DAT control, no fan. MPZ-44.",
+        "prefix": "SBS-RHC",
+        "required_modules": ["rhc-core", "rhc-hw-mod", "vav-stat-hardwired"],
+        "available_categories": ["heating", "thermostat", "thermostat-addon"],
+        "notes": "AI1=DAT mandatory. Zone sensor hard-wired (vav-stat-hardwired) or Smart-Net (vav-stat-comm). Valve modulating (rhc-hw-mod) or floating (rhc-hw-flt).",
+    },
 }
+
+# ── Standalone Radiant Heater families (SBS-RAD-901..908) ──
+# One family per heater count; controller auto-selected by count (MPZ-44 / MPZ-88).
+for _n in range(1, 9):
+    _ctrl = "MPZ-44" if _n <= 4 else "MPZ-88"
+    EQUIPMENT_FAMILIES[f"SBS-RAD-90{_n}"] = {
+        "name": f"Standalone Radiant Heater — {_n} Heater{'s' if _n > 1 else ''}",
+        "description": f"{_n} radiant heating valve(s). Modes: individual sensor / shared sensor / outdoor reset. {_ctrl}.",
+        "prefix": "SBS-RAD",
+        "required_modules": ["rad-core"],
+        "available_categories": ["radiant"],
+        "notes": f"{_n} heater(s). OAT sensor required. Valves modulating or floating. {_ctrl} controller.",
+    }
+
+# ── Make the vav-rad-aux module available on every reheat-capable VAV family ──
+# (single-duct HW/electric, fan-powered, dual-duct reheat — NOT cooling only).
+_VAV_REHEAT_MODULE_IDS = {
+    "vav-rh-hw-mod", "vav-rh-hw-flt",
+    "vav-rh-elec-1", "vav-rh-elec-2", "vav-rh-elec-scr",
+}
+for _fam, _info in EQUIPMENT_FAMILIES.items():
+    if _info.get("prefix") == "SBS-VAV" and any(
+        m in _VAV_REHEAT_MODULE_IDS for m in _info.get("required_modules", [])
+    ):
+        if "aux-heat" not in _info["available_categories"]:
+            _info["available_categories"].append("aux-heat")
 
 STANDARD_CONFIGS = {
     # ═══════════════════════════════════════════════════════════════════════
@@ -1628,7 +1715,79 @@ STANDARD_CONFIGS = {
         "modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod-fbp", "uv-fbp-mod"],
         "controller": "MPZ",
     },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  RHC — Standalone Duct Reheat Coil — SBS-RHC-801 to 804
+    #  Controller: MPZ-44. Cascade space/DAT control, no fan.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-RHC-801": {
+        "family": "SBS-RHC-801",
+        "name": "Duct Reheat Coil — Modulating HW, Hard-Wired Stat",
+        "description": "Modulating HW reheat valve, hard-wired room sensor. MPZ-44.",
+        "modules": ["rhc-core", "rhc-hw-mod", "vav-stat-hardwired"],
+        "controller": "MPZ",
+    },
+    "SBS-RHC-802": {
+        "family": "SBS-RHC-801",
+        "name": "Duct Reheat Coil — Floating HW, Hard-Wired Stat",
+        "description": "Floating HW reheat valve (FLOAT()), hard-wired room sensor. MPZ-44.",
+        "modules": ["rhc-core", "rhc-hw-flt", "vav-stat-hardwired"],
+        "controller": "MPZ",
+    },
+    "SBS-RHC-803": {
+        "family": "SBS-RHC-801",
+        "name": "Duct Reheat Coil — Modulating HW, Smart-Net Stat",
+        "description": "Modulating HW reheat valve, Smart-Net communicating sensor. MPZ-44.",
+        "modules": ["rhc-core", "rhc-hw-mod", "vav-stat-comm"],
+        "controller": "MPZ",
+    },
+    "SBS-RHC-804": {
+        "family": "SBS-RHC-801",
+        "name": "Duct Reheat Coil — Floating HW, Smart-Net Stat",
+        "description": "Floating HW reheat valve (FLOAT()), Smart-Net communicating sensor. MPZ-44.",
+        "modules": ["rhc-core", "rhc-hw-flt", "vav-stat-comm"],
+        "controller": "MPZ",
+    },
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  VAV Auxiliary Radiant Heat — demonstration configs (SBS-VAV-518/519)
+    #  vav-rad-aux added to a reheat-capable VAV family.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    "SBS-VAV-518": {
+        "family": "VAV-SD-HW-MOD",
+        "name": "Single Duct — Mod HW Reheat + Modulating Aux Radiant",
+        "description": "Mod HW reheat (stage 2) + modulating aux radiant valve (stage 1). RC-FLEXair.",
+        "modules": ["vav-core", "vav-rh-hw-mod", "vav-rad-aux-mod", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-519": {
+        "family": "VAV-SD-HW-FLT",
+        "name": "Single Duct — Floating HW Reheat + Floating Aux Radiant",
+        "description": "Floating HW reheat + floating aux radiant valve. RC-FLEXair.",
+        "modules": ["vav-core", "vav-rh-hw-flt", "vav-rad-aux-flt", "vav-stat-hardwired"],
+    },
+    "SBS-VAV-520": {
+        "family": "VAV-SD-HW-MOD",
+        "name": "Single Duct — Aux Radiant Only (no reheat, radiant stage 1)",
+        "description": "Modulating aux radiant as the only heat (stage 1), reheat module omitted. RC-FLEXair.",
+        "modules": ["vav-core", "vav-rad-aux-mod", "vav-stat-hardwired"],
+    },
 }
+
+# ── Standalone Radiant Heater standard configs (generated from _RAD_FAMILY_CONFIGS) ──
+for _cid, _num, _mode, _valve in _RAD_FAMILY_CONFIGS:
+    _fam = f"SBS-RAD-90{_num}"
+    _mode_name = {"a": "Individual Sensor", "b": "Shared Sensor", "c": "Outdoor Reset"}[_mode]
+    _valve_name = "Floating" if _valve == "flt" else "Modulating"
+    _ctrl = "MPZ-44" if _num <= 4 else "MPZ-88"
+    STANDARD_CONFIGS[_cid] = {
+        "family": _fam,
+        "name": f"Radiant Heater x{_num} — {_mode_name}, {_valve_name}",
+        "description": f"{_num} radiant heater(s), {_mode_name.lower()} mode, {_valve_name.lower()} valves. {_ctrl}.",
+        "modules": ["rad-core", f"rad-htrs-{_num}-{_mode}-{_valve}"],
+        "controller": "MPZ",
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════

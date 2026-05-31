@@ -483,6 +483,33 @@ def _select_controller(config: ControllerConfig, model_override: str = "auto"):
         config.expansion_model = "MPP-IO-U" if expansion_count > 0 else ""
         return
 
+    # Auto-select: families with a fixed MACH-ProZone controller.
+    # RHC (duct reheat coil) is always MPZ-44. RAD (radiant heater) uses
+    # MPZ-44 for 1-4 heaters (SBS-RAD-901..904) and MPZ-88 for 5-8 (905..908).
+    fam = config.equipment_family
+    fixed_model = None
+    if fam == "SBS-RHC-801":
+        fixed_model = "MPZ-44"
+    elif fam.startswith("SBS-RAD-90"):
+        try:
+            n = int(fam[len("SBS-RAD-90"):])  # heater count: SBS-RAD-90N -> N
+            fixed_model = "MPZ-44" if n <= 4 else "MPZ-88"
+        except (ValueError, IndexError):
+            fixed_model = "MPZ-88"
+    if fixed_model and fixed_model in CONTROLLER_SPECS:
+        spec = CONTROLLER_SPECS[fixed_model]
+        max_exp = spec["max_exp"]
+        if max_exp > 0:
+            exp_for_in = max(0, (hi_in - spec["base_in"] + exp_in_per - 1) // exp_in_per) if hi_in > spec["base_in"] else 0
+            exp_for_out = max(0, (hi_out - spec["base_out"] + exp_out_per - 1) // exp_out_per) if hi_out > spec["base_out"] else 0
+            expansion_count = min(max(exp_for_in, exp_for_out), max_exp)
+        else:
+            expansion_count = 0
+        config.controller_model = fixed_model
+        config.expansion_count = expansion_count
+        config.expansion_model = "MPP-IO-U" if expansion_count > 0 else ""
+        return
+
     # Auto-select: VAV terminal unit families use RC-FLEXair
     # VAV-AHU is an AHU family (not a terminal unit) — exclude it
     _VAV_TERMINAL_FAMILIES = ("VAV-SD-", "VAV-PF-", "VAV-SF-", "VAV-DD-")
