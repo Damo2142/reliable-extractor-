@@ -74,7 +74,8 @@ the plant controller before heating is enabled.""",
 
         requires=["core"],
         conflicts=["htg-elec", "htg-elec-2", "htg-elec-3", "htg-elec-scr",
-                   "htg-gas", "htg-gas-2", "htg-gas-mod", "htg-stm"],
+                   "htg-gas", "htg-gas-2", "htg-gas-3", "htg-gas-4",
+                   "htg-gas-mod", "htg-stm"],
         mutually_exclusive_group="heating",
     )
 
@@ -113,7 +114,8 @@ setpoint. The heater shall be de-energized during cooling lockout and
 upon any safety shutdown condition.""",
 
         requires=["core"],
-        conflicts=["htg-hw", "htg-gas", "htg-stm"],
+        conflicts=["htg-hw", "htg-gas", "htg-gas-2", "htg-gas-3", "htg-gas-4",
+                   "htg-gas-mod", "htg-stm"],
         mutually_exclusive_group="heating",
     )
 
@@ -154,7 +156,8 @@ temperature drops more than the stage 2 offset below setpoint. Stages
 shall de-energize during cooling lockout and upon any safety shutdown.""",
 
         requires=["core"],
-        conflicts=["htg-hw", "htg-elec", "htg-gas", "htg-stm"],
+        conflicts=["htg-hw", "htg-elec", "htg-gas", "htg-gas-2", "htg-gas-3",
+                   "htg-gas-4", "htg-gas-mod", "htg-stm"],
         mutually_exclusive_group="heating",
     )
 
@@ -197,7 +200,8 @@ Each stage adds when the previous stage cannot satisfy the load.
 All stages de-energize during cooling lockout and safety shutdown.""",
 
         requires=["core"],
-        conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-gas", "htg-stm"],
+        conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-gas", "htg-gas-2",
+                   "htg-gas-3", "htg-gas-4", "htg-gas-mod", "htg-stm"],
         mutually_exclusive_group="heating",
     )
 
@@ -236,7 +240,8 @@ The heating output shall modulate 0-100% to maintain supply air
 temperature setpoint during heating mode.""",
 
         requires=["core"],
-        conflicts=["htg-hw", "htg-elec", "htg-gas", "htg-stm"],
+        conflicts=["htg-hw", "htg-elec", "htg-gas", "htg-gas-2", "htg-gas-3",
+                   "htg-gas-4", "htg-gas-mod", "htg-stm"],
         mutually_exclusive_group="heating",
     )
 
@@ -254,7 +259,7 @@ def build_htg_gas():
         ],
 
         outputs=[
-            OutputPoint(25, "GAS-VLV", "BO", "Stop/Start", "Gas Valve"),
+            OutputPoint(25, "GAS-VLV-1", "BO", "Stop/Start", "Gas Valve Stage 1"),
         ],
 
         values=[
@@ -262,6 +267,7 @@ def build_htg_gas():
             ValuePoint(56, "HTG-LOCKOUT",   "BV", True,  "Heating Lockout Active"),
             ValuePoint(58, "CLG-LO-SP",     "AV", 55.0,  "Cooling Lockout OAT SP",  "°F"),
             ValuePoint(59, "CLG-LOCKOUT",   "BV", False, "Cooling Lockout Active"),
+            ValuePoint(61, "GAS-FAIL",      "BV", False, "Gas Heat Failure Alarm"),
         ],
 
         programs=[
@@ -279,7 +285,8 @@ pressure switch shall be monitored — loss of gas pressure shall prevent
 heater operation and generate an alarm.""",
 
         requires=["core"],
-        conflicts=["htg-hw", "htg-elec", "htg-stm"],
+        conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-elec-3", "htg-elec-scr",
+                   "htg-gas-2", "htg-gas-3", "htg-gas-4", "htg-gas-mod", "htg-stm"],
         mutually_exclusive_group="heating",
     )
 
@@ -297,8 +304,8 @@ def build_htg_gas_mod():
         ],
 
         outputs=[
-            OutputPoint(25, "GAS-VLV", "BO", "Stop/Start", "Gas Valve Enable"),
-            OutputPoint(29, "GAS-MOD", "AO", "0.0 ->100%",    "Gas Modulating Output", 2.0, 10.0),
+            OutputPoint(25, "GAS-VLV-1", "BO", "Stop/Start", "Gas Valve Enable"),
+            OutputPoint(29, "GAS-MOD",   "AO", "0.0 ->100%",  "Gas Modulating Output", 2.0, 10.0),
         ],
 
         values=[
@@ -306,6 +313,7 @@ def build_htg_gas_mod():
             ValuePoint(56, "HTG-LOCKOUT",   "BV", True,  "Heating Lockout Active"),
             ValuePoint(58, "CLG-LO-SP",     "AV", 55.0,  "Cooling Lockout OAT SP",  "°F"),
             ValuePoint(59, "CLG-LOCKOUT",   "BV", False, "Cooling Lockout Active"),
+            ValuePoint(61, "GAS-FAIL",      "BV", False, "Gas Heat Failure Alarm"),
             ValuePoint(150,"HTG-RAMP",      "AV", 0.5,   "Heating Ramp Time",       "Min."),
         ],
 
@@ -323,7 +331,166 @@ enable in heating mode and the modulating output shall control firing rate
 to maintain supply air temperature setpoint.""",
 
         requires=["core"],
-        conflicts=["htg-hw", "htg-elec", "htg-gas", "htg-stm"],
+        conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-elec-3", "htg-elec-scr",
+                   "htg-gas", "htg-gas-2", "htg-gas-3", "htg-gas-4", "htg-stm"],
+        mutually_exclusive_group="heating",
+    )
+
+
+def build_htg_gas_2():
+    """Gas heat — 2 stages"""
+    return Module(
+        id="htg-gas-2",
+        name="Gas Heat 2-Stage",
+        category="heating",
+        description="Two stage gas-fired heat with loop-output staging",
+
+        inputs=[
+            InputPoint(44, "GAS-PRSR", "BI", "Normal/Alarm", "Gas Pressure Switch"),
+        ],
+
+        outputs=[
+            OutputPoint(25, "GAS-VLV-1", "BO", "Stop/Start", "Gas Valve Stage 1"),
+            OutputPoint(26, "GAS-VLV-2", "BO", "Stop/Start", "Gas Valve Stage 2"),
+        ],
+
+        values=[
+            ValuePoint(55, "HTG-LO-SP",     "AV", 65.0,  "Heating Lockout OAT SP",   "°F"),
+            ValuePoint(56, "HTG-LOCKOUT",    "BV", True,  "Heating Lockout Active"),
+            ValuePoint(58, "CLG-LO-SP",      "AV", 55.0,  "Cooling Lockout OAT SP",   "°F"),
+            ValuePoint(59, "CLG-LOCKOUT",    "BV", False, "Cooling Lockout Active"),
+            ValuePoint(61, "GAS-FAIL",       "BV", False, "Gas Heat Failure Alarm"),
+            ValuePoint(202,"GAS-STG2-SP",    "AV", 50.0,  "Stage 2 Loop Enable %",    "%"),
+        ],
+
+        programs=[
+            ProgramDef(39, "GAS-HTR-PRG", "PRG39-GAS-HTR-2STG.bas", "", True,
+                       "Gas heat 2-stage loop-threshold control",
+                       exec_order=39),
+            ProgramDef(6, "HTG-CLG-LO-PRG", "PRG06-HTG-CLG-LO.bas", "", True,
+                       "Heating/cooling lockout",
+                       exec_order=6),
+        ],
+
+        soo_paragraph="""Two-stage gas-fired heating shall be provided. Stage 1 shall energize
+when the heating loop output exceeds 25% in heating mode. Stage 2 shall
+energize when the heating loop output exceeds the Stage 2 enable setpoint
+(default 50%). A shared gas pressure switch shall be monitored — loss of
+gas pressure shall disable both stages and generate a single gas failure
+alarm. Both stages shall de-energize during cooling lockout, fan off, or
+any safety shutdown.""",
+
+        requires=["core"],
+        conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-elec-3", "htg-elec-scr",
+                   "htg-gas", "htg-gas-3", "htg-gas-4", "htg-gas-mod", "htg-stm"],
+        mutually_exclusive_group="heating",
+    )
+
+
+def build_htg_gas_3():
+    """Gas heat — 3 stages"""
+    return Module(
+        id="htg-gas-3",
+        name="Gas Heat 3-Stage",
+        category="heating",
+        description="Three stage gas-fired heat with loop-output staging",
+
+        inputs=[
+            InputPoint(44, "GAS-PRSR", "BI", "Normal/Alarm", "Gas Pressure Switch"),
+        ],
+
+        outputs=[
+            OutputPoint(25, "GAS-VLV-1", "BO", "Stop/Start", "Gas Valve Stage 1"),
+            OutputPoint(26, "GAS-VLV-2", "BO", "Stop/Start", "Gas Valve Stage 2"),
+            OutputPoint(27, "GAS-VLV-3", "BO", "Stop/Start", "Gas Valve Stage 3"),
+        ],
+
+        values=[
+            ValuePoint(55, "HTG-LO-SP",     "AV", 65.0,  "Heating Lockout OAT SP",   "°F"),
+            ValuePoint(56, "HTG-LOCKOUT",    "BV", True,  "Heating Lockout Active"),
+            ValuePoint(58, "CLG-LO-SP",      "AV", 55.0,  "Cooling Lockout OAT SP",   "°F"),
+            ValuePoint(59, "CLG-LOCKOUT",    "BV", False, "Cooling Lockout Active"),
+            ValuePoint(61, "GAS-FAIL",       "BV", False, "Gas Heat Failure Alarm"),
+            ValuePoint(202,"GAS-STG2-SP",    "AV", 50.0,  "Stage 2 Loop Enable %",    "%"),
+            ValuePoint(203,"GAS-STG3-SP",    "AV", 75.0,  "Stage 3 Loop Enable %",    "%"),
+        ],
+
+        programs=[
+            ProgramDef(39, "GAS-HTR-PRG", "PRG39-GAS-HTR-3STG.bas", "", True,
+                       "Gas heat 3-stage loop-threshold control",
+                       exec_order=39),
+            ProgramDef(6, "HTG-CLG-LO-PRG", "PRG06-HTG-CLG-LO.bas", "", True,
+                       "Heating/cooling lockout",
+                       exec_order=6),
+        ],
+
+        soo_paragraph="""Three-stage gas-fired heating shall be provided. Stages shall be
+sequenced based on heating loop output: Stage 1 at 25%, Stage 2 at the
+Stage 2 setpoint (default 50%), Stage 3 at the Stage 3 setpoint (default
+75%). Each stage drops out with hysteresis to prevent short-cycling. A
+shared gas pressure switch shall be monitored — loss of pressure shall
+disable all stages and generate a single gas failure alarm. All stages
+shall de-energize during cooling lockout, fan off, or any safety
+shutdown.""",
+
+        requires=["core"],
+        conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-elec-3", "htg-elec-scr",
+                   "htg-gas", "htg-gas-2", "htg-gas-4", "htg-gas-mod", "htg-stm"],
+        mutually_exclusive_group="heating",
+    )
+
+
+def build_htg_gas_4():
+    """Gas heat — 4 stages"""
+    return Module(
+        id="htg-gas-4",
+        name="Gas Heat 4-Stage",
+        category="heating",
+        description="Four stage gas-fired heat with loop-output staging",
+
+        inputs=[
+            InputPoint(44, "GAS-PRSR", "BI", "Normal/Alarm", "Gas Pressure Switch"),
+        ],
+
+        outputs=[
+            OutputPoint(25, "GAS-VLV-1", "BO", "Stop/Start", "Gas Valve Stage 1"),
+            OutputPoint(26, "GAS-VLV-2", "BO", "Stop/Start", "Gas Valve Stage 2"),
+            OutputPoint(27, "GAS-VLV-3", "BO", "Stop/Start", "Gas Valve Stage 3"),
+            OutputPoint(28, "GAS-VLV-4", "BO", "Stop/Start", "Gas Valve Stage 4"),
+        ],
+
+        values=[
+            ValuePoint(55, "HTG-LO-SP",     "AV", 65.0,  "Heating Lockout OAT SP",   "°F"),
+            ValuePoint(56, "HTG-LOCKOUT",    "BV", True,  "Heating Lockout Active"),
+            ValuePoint(58, "CLG-LO-SP",      "AV", 55.0,  "Cooling Lockout OAT SP",   "°F"),
+            ValuePoint(59, "CLG-LOCKOUT",    "BV", False, "Cooling Lockout Active"),
+            ValuePoint(61, "GAS-FAIL",       "BV", False, "Gas Heat Failure Alarm"),
+            ValuePoint(202,"GAS-STG2-SP",    "AV", 50.0,  "Stage 2 Loop Enable %",    "%"),
+            ValuePoint(203,"GAS-STG3-SP",    "AV", 75.0,  "Stage 3 Loop Enable %",    "%"),
+            ValuePoint(204,"GAS-STG4-SP",    "AV", 87.0,  "Stage 4 Loop Enable %",    "%"),
+        ],
+
+        programs=[
+            ProgramDef(39, "GAS-HTR-PRG", "PRG39-GAS-HTR-4STG.bas", "", True,
+                       "Gas heat 4-stage loop-threshold control",
+                       exec_order=39),
+            ProgramDef(6, "HTG-CLG-LO-PRG", "PRG06-HTG-CLG-LO.bas", "", True,
+                       "Heating/cooling lockout",
+                       exec_order=6),
+        ],
+
+        soo_paragraph="""Four-stage gas-fired heating shall be provided. Stages shall be
+sequenced based on heating loop output: Stage 1 at 25%, Stage 2 at the
+Stage 2 setpoint (default 50%), Stage 3 at the Stage 3 setpoint (default
+75%), Stage 4 at the Stage 4 setpoint (default 87%). Each stage drops
+out with hysteresis to prevent short-cycling. A shared gas pressure
+switch shall be monitored — loss of pressure shall disable all stages
+and generate a single gas failure alarm. All stages shall de-energize
+during cooling lockout, fan off, or any safety shutdown.""",
+
+        requires=["core"],
+        conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-elec-3", "htg-elec-scr",
+                   "htg-gas", "htg-gas-2", "htg-gas-3", "htg-gas-mod", "htg-stm"],
         mutually_exclusive_group="heating",
     )
 
@@ -422,6 +589,7 @@ freezing.""",
 
         requires=["core"],
         conflicts=["htg-hw", "htg-elec", "htg-elec-2", "htg-elec-3", "htg-elec-scr",
-                   "htg-gas", "htg-gas-2", "htg-gas-mod", "htg-stm"],
+                   "htg-gas", "htg-gas-2", "htg-gas-3", "htg-gas-4",
+                   "htg-gas-mod", "htg-stm"],
         mutually_exclusive_group="heating",
     )

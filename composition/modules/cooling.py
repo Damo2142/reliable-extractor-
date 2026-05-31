@@ -164,6 +164,7 @@ def build_clg_dx_vfd():
             ValuePoint(212, "DX-FAIL",         "BV", False,  "DX Compressor Failure"),
             ValuePoint(214, "DX-MIN-SPEED",    "AV", 30.0,  "DX Min Compressor Speed","%"),
             ValuePoint(215, "DX-MAX-SPEED",    "AV", 100.0, "DX Max Compressor Speed","%"),
+            ValuePoint(153, "CLG-RAMP",        "AV", 0.5,   "Cooling VFD Ramp Time",  "Min."),
         ],
 
         programs=[

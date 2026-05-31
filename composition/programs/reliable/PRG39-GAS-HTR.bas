@@ -4,20 +4,20 @@ REM  {device-name} — Gas Heater On/Off Control
 REM ======================================================================
 
 REM ***** Disable on safety *****
-IF {device-name}-SAFETY-SD-ALARM THEN STOP {device-name}-GAS-VLV , END
+IF {device-name}-SAFETY-SD-ALARM THEN STOP {device-name}-GAS-VLV-1 , END
 
 REM ***** Disable when fan off *****
-IF NOT {device-name}-SF-S THEN STOP {device-name}-GAS-VLV , END
+IF NOT {device-name}-SF-S THEN STOP {device-name}-GAS-VLV-1 , END
 
 REM ***** Check gas pressure safety *****
-IF NOT {device-name}-GAS-PRSR THEN STOP {device-name}-GAS-VLV , START {device-name}-GAS-FAIL , END
+IF NOT {device-name}-GAS-PRSR THEN STOP {device-name}-GAS-VLV-1 , START {device-name}-GAS-FAIL , END
 STOP {device-name}-GAS-FAIL
 
 REM ***** Heating lockout *****
-IF {device-name}-HTG-LOCKOUT THEN STOP {device-name}-GAS-VLV , END
+IF {device-name}-HTG-LOCKOUT THEN STOP {device-name}-GAS-VLV-1 , END
 
 REM ***** LTC override — enable heater *****
-IF {device-name}-LTC THEN START {device-name}-GAS-VLV , END
+IF {device-name}-LTC THEN START {device-name}-GAS-VLV-1 , END
 
 REM ***** Enable in heating mode *****
-IF {device-name}-HVAC-MODE = 4 AND {device-name}-SF-S THEN START {device-name}-GAS-VLV ELSE STOP {device-name}-GAS-VLV
+IF {device-name}-HVAC-MODE = 4 AND {device-name}-SF-S THEN START {device-name}-GAS-VLV-1 ELSE STOP {device-name}-GAS-VLV-1

@@ -8,22 +8,22 @@ A = {device-name}-GAS-MOD
 B = loop7
 
 REM ***** Disable on safety *****
-IF {device-name}-SAFETY-SD-ALARM THEN STOP {device-name}-GAS-VLV , {device-name}-GAS-MOD = 0 , END
+IF {device-name}-SAFETY-SD-ALARM THEN STOP {device-name}-GAS-VLV-1 , {device-name}-GAS-MOD = 0 , END
 
 REM ***** Disable when fan off *****
-IF NOT {device-name}-SF-S THEN STOP {device-name}-GAS-VLV , {device-name}-GAS-MOD = 0 , END
+IF NOT {device-name}-SF-S THEN STOP {device-name}-GAS-VLV-1 , {device-name}-GAS-MOD = 0 , END
 
 REM ***** Check gas pressure safety *****
-IF NOT {device-name}-GAS-PRSR THEN STOP {device-name}-GAS-VLV , {device-name}-GAS-MOD = 0 , START {device-name}-GAS-FAIL , END
+IF NOT {device-name}-GAS-PRSR THEN STOP {device-name}-GAS-VLV-1 , {device-name}-GAS-MOD = 0 , START {device-name}-GAS-FAIL , END
 STOP {device-name}-GAS-FAIL
 
 REM ***** Heating lockout *****
-IF {device-name}-HTG-LOCKOUT THEN STOP {device-name}-GAS-VLV , {device-name}-GAS-MOD = 0 , END
+IF {device-name}-HTG-LOCKOUT THEN STOP {device-name}-GAS-VLV-1 , {device-name}-GAS-MOD = 0 , END
 
 REM ***** LTC override — full output *****
-IF {device-name}-LTC THEN START {device-name}-GAS-VLV , {device-name}-GAS-MOD = 100 , END
+IF {device-name}-LTC THEN START {device-name}-GAS-VLV-1 , {device-name}-GAS-MOD = 100 , END
 
 REM ***** Normal modulation from heating loop *****
-IF {device-name}-SF-S AND {device-name}-HVAC-MODE = 4 THEN START {device-name}-GAS-VLV ELSE STOP {device-name}-GAS-VLV , {device-name}-GAS-MOD = 0 , END
+IF {device-name}-SF-S AND {device-name}-HVAC-MODE = 4 THEN START {device-name}-GAS-VLV-1 ELSE STOP {device-name}-GAS-VLV-1 , {device-name}-GAS-MOD = 0 , END
 {device-name}-GAS-MOD = RAMP( ABS( A - B ) > 1 , A , B , {device-name}-HTG-RAMP * 1.66667 )
 IF ABS( A - B ) < 1 THEN {device-name}-GAS-MOD = B

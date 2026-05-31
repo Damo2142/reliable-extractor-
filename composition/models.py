@@ -188,6 +188,10 @@ class Module:
     # Metadata
     mutually_exclusive_group: str = ""  # e.g. "cooling" — only one from this group
     is_core: bool = False               # True = always included
+    is_stub_fallback: bool = False      # True = process LAST; points are skipped if
+                                        # any real module already provides that name
+                                        # under inputs/outputs/values. Use for shared
+                                        # default-value points that real modules override.
 
 
 @dataclass

@@ -78,7 +78,7 @@ def build():
         is_core=True,
 
         inputs=[
-            InputPoint(1, "SF-STS",  "BI", "Off/On",        "Supply Fan Status"),
+            InputPoint(1, "SF-S",    "BI", "Off/On",        "Supply Fan Status"),
             InputPoint(5, "MAT",     "AI", "10K -40 ->250",  "Mixed Air Temperature",     "°F"),
             InputPoint(6, "SAT",     "AI", "10K -40 ->250",  "Supply Air Temperature",    "°F"),
             InputPoint(7, "RAT",     "AI", "10K -40 ->250",  "Return Air Temperature",    "°F"),
@@ -262,4 +262,6 @@ Both resets shall use configurable intervals and increments.
 The controller shall aggregate all safety conditions (freeze stat, smoke detector,
 high static pressure) and initiate a safety shutdown upon any alarm condition.
 A manual reset shall be required to restore normal operation after safety shutdown.""",
+
+        requires=["core-stubs"],
     )

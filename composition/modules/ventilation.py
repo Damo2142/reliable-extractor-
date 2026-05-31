@@ -57,6 +57,7 @@ def build_vent_ams():
             ValuePoint(147, "OA-AREA",         "AV", 6.5,  "OA Duct Cross Section Area", ""),
             ValuePoint(148, "OA-FLOW-ACT",     "AV", 0.0,  "Actual OA Airflow",          "CFM"),
             ValuePoint(149, "OA-K-FACTOR",     "AV", 1.7,  "OA K-Factor Correction",     ""),
+            ValuePoint(225, "OA-VEL",          "AV", 0.0,  "OA Velocity (sensor reading via OA-VEL-TBL)", "FPM"),
         ],
 
         tables=[
