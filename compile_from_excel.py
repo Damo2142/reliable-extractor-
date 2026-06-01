@@ -20,7 +20,7 @@ from composition.pan_compiler import (
     crc16_kermit,
     write_av_seed, write_av_block, write_ai_seed, write_ao_seed, write_ao_block,
     write_bi_seed, write_bo_seed, write_bv_seed,
-    write_mv_seed, write_loop_block, write_prg_seed,
+    write_mv_seed, write_mo_seed, write_loop_block, write_prg_seed,
     write_sched_seed, write_sys_group_seed, write_table_block, write_array_block,
     write_stl_block, write_notif_cls_seed, write_empty_block, write_prg_block,
     extract_nc_groups_from_blank, extract_device_block_from_blank,
@@ -80,6 +80,26 @@ UNIT_TO_RANGE = {
     64: 2, 98: 22, 95: 0, 96: 43, 84: 15, 58: 7, 117: 58,
     72: 17, 73: 0, 77: 0, 29: 22, 5: 0, 42: 0, 85: 0, 71: 0,
 }
+
+# RC-FLEXair firmware factory points carry no type/range in the Excel IO
+# schedule, so the correct values (verified against the RC-FLEXair blank's
+# factory objects) are hardcoded here, keyed by point-name suffix. Applied
+# only to rows whose Module column is 'FACTORY'.
+#   range = vendor range code (prop 0x041D); units = prop 0x75 code.
+_FACTORY_OVERRIDES = {
+    'DMP-POS': {'range': 40, 'units': 98},                  # AI5  0 ->100% (0-10V)
+    'DMP@END': {'range': 7},                                # BI6  No/Yes
+    'CW-CLS':  {'range': 7},                                # BO8  No/Yes
+    'DMP-ACT': {'range': 0, 'states': 'Close/Open/Idle'},   # MO7  multistate
+}
+
+
+def _factory_override(nm, mod):
+    """Return the hardcoded type/range override for a FACTORY point, or None."""
+    if mod != 'FACTORY':
+        return None
+    suffix = nm[len('{device-name}-'):] if nm.startswith('{device-name}-') else nm
+    return _FACTORY_OVERRIDES.get(suffix)
 
 
 # ── Helpers ──
@@ -185,37 +205,35 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
     ai, bi = [], []
     for r in rows("Inputs"):
         inst = int(r[0]); nm = _s(r[1]); typ = _s(r[2])
-        # Skip factory reserved points — they come from the blank file
-        mod = _s(r[7] if len(r) > 7 else '')
-        if mod == 'FACTORY':
-            continue
         if not nm:  # filler
             (ai if typ != 'BI' else bi).append(write_empty_block(0 if typ != 'BI' else 3, inst))
             continue
         desc = _s(r[6] if len(r) > 6 else '')
         u = _uc(r[4] if len(r) > 4 else None)
         rc = _rng(r[5] if len(r) > 5 else '')
+        fo = _factory_override(nm, _s(r[7] if len(r) > 7 else ''))
+        if fo:
+            rc = fo.get('range', rc)
+            u = fo.get('units', u)
         if typ == 'AI':
             ai.append(write_ai_seed(inst, nm, desc, units=u, range_code=rc))
         elif typ == 'BI':
-            bi.append(write_bi_seed(inst, nm, desc))
+            bi.append(write_bi_seed(inst, nm, desc,
+                                    range_code=(fo['range'] if fo else 0x00)))
     if ai: blocks[0] = ai; log(f"  AI: {len(ai)}")
     if bi: blocks[3] = bi; log(f"  BI: {len(bi)}")
 
     # OUTPUTS
-    ao, bo = [], []
+    ao, bo, mo = [], [], []
     for r in rows("Outputs"):
         inst = int(r[0]); nm = _s(r[1]); typ = _s(r[2])
-        # Skip factory reserved points — they come from the blank file
-        mod = _s(r[9] if len(r) > 9 else '')
-        if mod == 'FACTORY':
-            continue
         if not nm:  # filler
             (ao if typ != 'BO' else bo).append(write_empty_block(1 if typ != 'BO' else 4, inst))
             continue
         desc = _s(r[8] if len(r) > 8 else '')
         u = _uc(r[4] if len(r) > 4 else None)
         rc = _rng(r[5] if len(r) > 5 else '')
+        fo = _factory_override(nm, _s(r[9] if len(r) > 9 else ''))
         if typ == 'AO':
             try:
                 min_v = float(r[6]) if len(r) > 6 and r[6] is not None and r[6] != '' else 2.0
@@ -228,17 +246,22 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
             ao.append(write_ao_block(inst, nm, units=u, range_code=rc,
                                      min_v=min_v, max_v=max_v, desc=desc))
         elif typ == 'BO':
-            bo.append(write_bo_seed(inst, nm, desc))
+            bo.append(write_bo_seed(inst, nm, desc,
+                                    range_code=(fo['range'] if fo else 0x02)))
+        elif typ == 'MO':
+            if fo:
+                mo.append(write_mo_seed(inst, nm, desc,
+                                        states=fo.get('states', 'Close/Open/Idle'),
+                                        range_code=fo.get('range', 0x00)))
+            else:
+                mo.append(write_mo_seed(inst, nm, desc))
     if ao: blocks[1] = ao; log(f"  AO: {len(ao)}")
     if bo: blocks[4] = bo; log(f"  BO: {len(bo)}")
+    if mo: blocks[14] = mo; log(f"  MO: {len(mo)}")
 
     # VALUES
     av, bv, mv = [], [], []
     for r in rows("Values"):
-        # Skip factory reserved values — they come from the blank file
-        mod = _s(r[9] if len(r) > 9 else '')
-        if mod == 'FACTORY':
-            continue
         c0 = _s(r[0]); nm = _s(r[1]); typ = c0[:2]; inst = _pi(r[0])
         if not nm:  # filler — empty block routed to the correct type list
             if typ == 'BV':
@@ -415,7 +438,7 @@ def compile_package(pkg_path: str, controller_model: str = 'MPS',
     # ══════════════════════════════════════════════════════════════
     # ASSEMBLE .PAN FILE
     # ══════════════════════════════════════════════════════════════
-    TYPE_ORDER = [15, 0, 1, 3, 4, 2, 5, 19, 12, 141, 142, 26, 8, 17, 20, 16]
+    TYPE_ORDER = [15, 0, 1, 3, 4, 2, 5, 19, 14, 12, 141, 142, 26, 8, 17, 20, 16]
     present = [t for t in TYPE_ORDER if t in blocks]
     num_types = len(present)
     blocks_start = 0x0400 + num_types * 0x40 + 6

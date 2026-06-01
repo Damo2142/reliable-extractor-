@@ -327,10 +327,11 @@ def write_ao_block(instance: int, name: str, present_value: float = 0.0,
     ]))
 
 
-def write_bi_seed(instance: int, name: str, desc: str) -> bytes:
-    """BI seed: desc + name + range=0x00."""
+def write_bi_seed(instance: int, name: str, desc: str, range_code: int = 0x00) -> bytes:
+    """BI seed: desc + name + range. range_code default 0x00 (Off/On);
+    RC-FLEXair factory No/Yes contacts use range_code=7."""
     return _build_block(3, instance, _seed_payload([
-        _rec_desc(desc), _rec_mu(name), _rec_range(0x00)
+        _rec_desc(desc), _rec_mu(name), _rec_range(range_code)
     ]))
 
 
@@ -371,10 +372,11 @@ def write_bi_block(instance: int, name: str, present_value: int = 0,
     ]))
 
 
-def write_bo_seed(instance: int, name: str, desc: str) -> bytes:
-    """BO seed: desc + name + range=0x02."""
+def write_bo_seed(instance: int, name: str, desc: str, range_code: int = 0x02) -> bytes:
+    """BO seed: desc + name + range. range_code default 0x02 (Stop/Start);
+    RC-FLEXair factory No/Yes outputs use range_code=7."""
     return _build_block(4, instance, _seed_payload([
-        _rec_desc(desc), _rec_mu(name), _rec_range(0x02)
+        _rec_desc(desc), _rec_mu(name), _rec_range(range_code)
     ]))
 
 
@@ -468,6 +470,21 @@ def write_mv_seed(instance: int, name: str, states_desc: str) -> bytes:
     """MV seed: states_as_desc + name + range=0x08."""
     return _build_block(19, instance, _seed_payload([
         _rec_desc(states_desc), _rec_mu(name), _rec_range(0x08)
+    ]))
+
+
+def write_mo_seed(instance: int, name: str, desc: str,
+                  states: str = "Close/Open/Idle", present_value: int = 3,
+                  range_code: int = 0x00) -> bytes:
+    """MO seed (type 14): desc + name + present-value + state-text + range.
+    State names live in prop 0x6E (state-text), matching the RC-FLEXair blank's
+    MO7 'Damper Control' object (range_code=0, states Close/Open/Idle).
+    NOTE: verify in RC Studio."""
+    return _build_block(14, instance, _seed_payload([
+        _rec_desc(desc), _rec_mu(name),
+        _rec_uint8(0x0000, 0x55, 0x21, present_value),
+        _rec(0x0000, 0x6E, 0x75, _build_mv_state_text(states)),
+        _rec_range(range_code),
     ]))
 
 
