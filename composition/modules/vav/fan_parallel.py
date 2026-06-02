@@ -20,23 +20,19 @@ from composition.models import (
 _PRG05_FAN = """\
 REM --- FAN-PRG ---
 REM Parallel fan: runs on heating demand, not continuous
-REM Start when HVAC mode is Reheat (3) or Heat (4)
-REM Stop in Vent (1), Cool (2), or Unoccupied
+REM Fan ON when HVAC mode is Reheat (3) or Heat (4) — including unoccupied heating
+REM Fan OFF in Vent (1) or Cool (2), or when there is no heating demand
+REM Interlock is heating demand, NOT occupancy mode
 REM
 REM --- Fan Command ---
-IF HVAC-MODE = 3 THEN SF-CMD = 1
-IF HVAC-MODE = 4 THEN SF-CMD = 1
-IF HVAC-MODE = 1 THEN SF-CMD = 0
-IF HVAC-MODE = 2 THEN SF-CMD = 0
-IF OCC-MODE = 4 THEN SF-CMD = 0
-REM
-REM --- Fan Enable Delay ---
-REM Delay fan start to allow damper to reach position
-IF SF-CMD = 1 AND NOT SF-STS THEN SF-CMD = TIME-ON( SF-CMD, SF-ENA-DLY )
+REM Heating-demand latch drives the fan; TIME-ON delays start to let damper reach position
+B = HVAC-MODE = 3 OR HVAC-MODE = 4
+SF-CMD = B AND TIME-ON( B ) > SF-ENA-DLY
 REM
 REM --- Fan Proof ---
 REM Verify fan is running after command
-IF SF-CMD = 1 AND NOT SF-STS THEN SF-FAIL = TIME-ON( SF-CMD AND NOT SF-STS, 0:01:00 )
+A = SF-CMD AND NOT SF-STS
+SF-FAIL = A AND TIME-ON( A ) > 0:01:00
 IF SF-STS THEN SF-FAIL = 0
 REM
 REM --- Fan Status Alarm ---

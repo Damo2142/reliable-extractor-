@@ -32,7 +32,8 @@ IF NOT OCC-CMD THEN SF-CMD = 0
 REM
 REM --- Fan Proof ---
 REM Verify fan is running after command
-IF SF-CMD = 1 AND NOT SF-STS THEN SF-FAIL = TIME-ON( SF-CMD AND NOT SF-STS, 0:01:00 )
+A = SF-CMD AND NOT SF-STS
+SF-FAIL = A AND TIME-ON( A ) > 0:01:00
 IF SF-STS THEN SF-FAIL = 0
 REM
 REM --- Fan Status Alarm ---
