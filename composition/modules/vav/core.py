@@ -308,7 +308,9 @@ def build():
             ValuePoint(6,  "FLO-CTRL",         "BV", True,  "Flow Control Enable (factory)",               module="FACTORY"),
 
             # ── Room temperature and setpoints ──
-            ValuePoint(8,  "DAT",              "AV", 55.0,  "Discharge Air Temperature",          "deg.F"),
+            # NOTE: No AV "DAT" here. DAT is the live AI1 sensor (defined above);
+            # all VAV programs reference DAT directly from AI1. A second AV named
+            # "DAT" would collide with the sensor name and never be written.
             ValuePoint(9,  "ACT-RMT",          "AV", 72.0,  "Actual Room Temperature",            "deg.F"),
             ValuePoint(10, "OCC-RMT-SP",       "AV", 72.0,  "Occupied Room Temp Setpoint",        "deg.F"),
             ValuePoint(11, "RMT-SP",           "AV", 72.0,  "Operator Room Temp Setpoint",        "deg.F"),
