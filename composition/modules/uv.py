@@ -115,20 +115,18 @@ REM FLOAT() drives the open/close relays
 FBP-POS = FLOAT( FBP-OPEN , FBP-CLOSE , FBP-POS-CMD , CFG-FBP-DRV-TIME , CFG-FBP-POS-DB , FBP-FLOAT-SYNC )
 """
 
-_PRG04_FBP_STEAM_ONOFF = """\
-REM --- FBP-CTRL ---
-REM Face/bypass with steam on/off valve
-REM Cold mode: steam on, FBP modulates
-REM Mild mode: full face, steam cycles on demand
+_PRG05_STEAM_ONOFF_FBP = """\
+REM --- HTG-OUTPUT ---
+REM Steam on/off coupled to face/bypass. FBP-MODE and the face/bypass damper
+REM position are owned by FBP-CTRL (the face/bypass module); this program only
+REM drives the steam valve, the same way HW-mod-FBP drives the HW valve.
+REM Cold mode (FBP-MODE=1): steam on whenever heating is demanded; FBP modulates.
+REM Mild mode (FBP-MODE=0): full face; steam cycles on rising/falling DAT demand.
 REM
-IF ACT-OAT < CFG-FBP-SWITCHOVER-T THEN FBP-MODE = 1 ELSE FBP-MODE = 0
 IF FBP-MODE = 1 AND HTG-DAT-LOOP > 0 THEN STM-VLV = 1
-IF FBP-MODE = 1 THEN FBP = HTG-DAT-LOOP
-IF FBP-MODE = 0 THEN FBP = 100
 IF FBP-MODE = 0 AND HTG-DAT-LOOP > 50 THEN STM-VLV = 1
 IF FBP-MODE = 0 AND HTG-DAT-LOOP < 40 THEN STM-VLV = 0
 IF HTG-DAT-LOOP = 0 THEN STM-VLV = 0
-IF FREEZE-PROT = 1 THEN FBP = 100
 IF FREEZE-PROT = 1 THEN STM-VLV = 1
 """
 
@@ -663,13 +661,19 @@ def build_uv_steam_onoff():
 
 
 def build_uv_steam_onoff_fbp():
-    """Steam on/off for face/bypass — controlled by FBP program"""
+    """Steam on/off for face/bypass.
+
+    Drives only the steam valve, at HTG-OUTPUT (program instance 5) — the same
+    slot every other heating module uses. The face/bypass damper and FBP-MODE
+    are owned by the selected face/bypass module's FBP-CTRL (instance 4), so
+    this no longer collides with it. Mirrors uv-hw-mod-fbp.
+    """
     return Module(
         id="uv-steam-onoff-fbp", name="UV Steam On/Off (FBP)", category="heating",
-        description="Steam on/off — controlled by FBP cold/mild logic",
+        description="Steam on/off — coupled to face/bypass cold/mild mode (FBP-MODE)",
         outputs=[OutputPoint(6, "STM-VLV", "BO", "Stop/Start", "Steam Valve")],
-        programs=[ProgramDef(4, "FBP-CTRL", "PRG04-FBP-CTRL.bas", _PRG04_FBP_STEAM_ONOFF, True,
-                             "FBP + steam on/off", exec_order=4)],
+        programs=[ProgramDef(5, "HTG-OUTPUT", "PRG05-HTG-OUTPUT.bas", _PRG05_STEAM_ONOFF_FBP, True,
+                             "Steam on/off coupled to FBP mode", exec_order=5)],
         requires=["uv-core"],
         conflicts=["uv-hw-mod", "uv-hw-flt", "uv-hw-mod-fbp", "uv-steam-mod", "uv-steam-onoff"],
         mutually_exclusive_group="uv-heating",
