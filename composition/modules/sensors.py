@@ -100,7 +100,7 @@ def build_rat_local():
     return Module(
         id="rat-local",
         name="Local Return Air Temp (Hardwired)",
-        category="safety",
+        category="sensor",
         description="Local hardwired return air temp sensor — network publish + adjustable high alarm",
         is_core=False,
 

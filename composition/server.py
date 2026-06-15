@@ -2173,7 +2173,7 @@ function renderModules(){
   var el=document.getElementById('modList');
   if(!activeFamily){el.innerHTML='';return;} var f=families[activeFamily];
   var html='';
-  var catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','optimum-start','boiler','plant','reheat','dual-duct','thermostat','thermostat-addon'];
+  var catOrder=['core','fan','cooling','heating','preheat','economizer','energy-recovery','ventilation','humidity','pump','safety','sensor','optimum-start','boiler','plant','reheat','dual-duct','thermostat','thermostat-addon'];
   var allowedCats=f&&f.available_categories?f.available_categories:[];
   var reqMods=f&&f.required_modules?f.required_modules:[];
   // Show required modules as locked section first (for families with limited categories)
