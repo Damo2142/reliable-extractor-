@@ -192,6 +192,7 @@ _register("vav-stat-comm-occ", vav_build_stat_comm_occ)
 
 # Generic shared sensor modules (referenced by multiple families)
 _register("stat-remote", sensors.build_stat_remote)
+_register("rat-local", sensors.build_rat_local)
 
 # FCU modules
 _register("fcu-core", build_fcu_core)

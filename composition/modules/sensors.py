@@ -14,7 +14,7 @@ High instance band (150+) is used to stay clear of family core points
 and the locked VAV zone-data / AHU-publish ranges.
 """
 
-from composition.models import Module, ValuePoint, ProgramDef
+from composition.models import Module, InputPoint, ValuePoint, ProgramDef
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -70,3 +70,63 @@ of the network value shall be annunciated.""",
 
         mutually_exclusive_group="thermostat",
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  rat-local — Local Return Air Temp (Hardwired)
+# ═══════════════════════════════════════════════════════════════════════════
+
+_RAT_LOCAL = """\
+REM --- RAT-LOCAL ---
+REM Local hardwired return air temp sensor.
+REM Publishes RAT to the network the same way other units share it, and
+REM raises a high-RAT alarm when RAT stays above CFG-RAT-HI-ALRM for over
+REM five minutes. A generic return-air-temp alarm is also auto-generated
+REM for any RAT point; this adds the adjustable-setpoint high alarm.
+REM
+NET-RAT = RAT
+IF TIME-ON( RAT > CFG-RAT-HI-ALRM ) > 0:05:00 THEN RAT-HI = 1 ELSE RAT-HI = 0
+"""
+
+
+def build_rat_local():
+    """Optional local hardwired return air temp — sensor, network publish, high alarm.
+
+    Independently selectable add-on. Not a default (most units do not have a
+    local RAT sensor). The AI is auto-trended and auto-added to the
+    Commissioning tab by the assembler. Skipped on CV-AHU / RTU, whose core
+    already hardwires RAT at AI7.
+    """
+    return Module(
+        id="rat-local",
+        name="Local Return Air Temp (Hardwired)",
+        category="safety",
+        description="Local hardwired return air temp sensor — network publish + adjustable high alarm",
+        is_core=False,
+
+        inputs=[
+            InputPoint(7, "RAT", "AI", "10K 40 ->120", "Return Air Temperature", "°F"),
+        ],
+        outputs=[],
+        values=[
+            ValuePoint(152, "NET-RAT",         "AV", 70.0,  "Network Return Air Temp", "°F"),
+            ValuePoint(153, "CFG-RAT-HI-ALRM", "AV", 85.0,  "RAT High Alarm Setpoint", "°F"),
+            ValuePoint(151, "RAT-HI",          "BV", False, "RAT High Alarm"),
+        ],
+        loops=[],
+
+        programs=[
+            ProgramDef(12, "RAT-LOCAL", "PRG12-RAT-LOCAL.bas", _RAT_LOCAL, True,
+                       "Local RAT: network publish + adjustable high alarm", exec_order=12),
+        ],
+
+        system_groups=[],
+
+        soo_paragraph="""Where present, a local return air temperature sensor (10K thermistor)
+shall be hard-wired to the controller. The return air temperature shall be
+published to the network for use by associated units, trended, and included
+in the commissioning checklist. A high return air temperature alarm shall
+annunciate when the value exceeds its adjustable setpoint (default 85 deg F)
+for more than five minutes.""",
+    )
+
