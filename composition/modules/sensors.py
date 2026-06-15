@@ -85,7 +85,10 @@ REM five minutes. A generic return-air-temp alarm is also auto-generated
 REM for any RAT point; this adds the adjustable-setpoint high alarm.
 REM
 NET-RAT = RAT
-IF TIME-ON( RAT > CFG-RAT-HI-ALRM ) > 0:05:00 THEN RAT-HI = 1 ELSE RAT-HI = 0
+REM TIME-ON() takes an object/local reference only, never a comparison.
+REM Latch the high condition into local A, then time it.
+IF RAT > CFG-RAT-HI-ALRM THEN START A ELSE STOP A
+IF TIME-ON( A ) > 0:05:00 THEN RAT-HI = 1 ELSE RAT-HI = 0
 """
 
 

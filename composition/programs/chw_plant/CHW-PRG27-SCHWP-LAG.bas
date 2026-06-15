@@ -9,10 +9,14 @@ REM **** If lead pump not running, do not stage lag ****
 IF NOT {device-name}-LEAD-SCHWP-SS THEN STOP {device-name}-LAG-SCHWP-SS , END
 
 REM **** Stage ON lag pump — DP below start setpoint for delay period ****
-IF {device-name}-AVG-DP < {device-name}-SCHWP-LAG-START-SP AND TIME-ON( {device-name}-AVG-DP < {device-name}-SCHWP-LAG-START-SP ) > {device-name}-SCHWP-LAG-START-DLY THEN START {device-name}-LAG-SCHWP-SS
+REM **** TIME-ON() needs a local reference, not a comparison — latch into A ****
+IF {device-name}-AVG-DP < {device-name}-SCHWP-LAG-START-SP THEN START A ELSE STOP A
+IF TIME-ON( A ) > {device-name}-SCHWP-LAG-START-DLY THEN START {device-name}-LAG-SCHWP-SS
 
 REM **** Stage OFF lag pump — DP above stop setpoint for delay period ****
-IF {device-name}-AVG-DP > {device-name}-SCHWP-LAG-STOP-SP AND TIME-ON( {device-name}-AVG-DP > {device-name}-SCHWP-LAG-STOP-SP ) > {device-name}-SCHWP-LAG-STOP-DLY THEN STOP {device-name}-LAG-SCHWP-SS
+REM **** Latch the stop condition into B ****
+IF {device-name}-AVG-DP > {device-name}-SCHWP-LAG-STOP-SP THEN START B ELSE STOP B
+IF TIME-ON( B ) > {device-name}-SCHWP-LAG-STOP-DLY THEN STOP {device-name}-LAG-SCHWP-SS
 
 REM **** Failover — if lead fails, force lag on ****
 IF {device-name}-LEAD-SCHWP-FAIL THEN START {device-name}-LAG-SCHWP-SS
