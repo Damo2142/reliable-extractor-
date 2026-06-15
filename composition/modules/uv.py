@@ -7,7 +7,8 @@ Families: HW+OAD, HW+FBP, Steam+OAD, Steam+FBP,
 Standard I/O:
   AI1 = DAT (discharge air temp, 10K type III, mandatory)
   AI2 = OAT (outdoor air temp, 10K type III)
-  AI3 = RMT (room temp, 10K type III)
+  RMT (room temp) — from thermostat module (vav-stat-hardwired AI3 wired,
+       or stat-remote network read); no longer hardwired in uv-core
   BI = SF-STS (fan status feedback)
 
 Control Architecture — Cascaded PID:
@@ -44,7 +45,7 @@ IF OCC-MODE = 0 THEN CLG-SP = CFG-UNOCC-CLG-SP ELSE CLG-SP = CFG-OCC-CLG-SP
 IF OCC-MODE = 0 THEN HTG-SP = CFG-UNOCC-HTG-SP ELSE HTG-SP = CFG-OCC-HTG-SP
 ACT-CLG-SP = CLG-SP
 ACT-HTG-SP = HTG-SP
-ACT-RMT = AI3
+REM ACT-RMT is set by the selected thermostat module (wired or network)
 ACT-DAT = AI1
 ACT-OAT = AI2
 NET-OCC-CMD = {parent}BV21
@@ -351,7 +352,8 @@ def build_uv_core():
         inputs=[
             InputPoint(1, "DAT", "AI", "10K -40 ->250", "Discharge Air Temperature", "°F"),
             InputPoint(2, "OAT", "AI", "10K -40 ->250", "Outdoor Air Temperature", "°F"),
-            InputPoint(3, "RMT", "AI", "10K -40 ->250", "Room Temperature", "°F"),
+            # RMT (room temp) now comes from the selected thermostat module:
+            #   vav-stat-hardwired (AI3 wired) / vav-stat-hardwired-ud / stat-remote (network)
             InputPoint(4, "SF-STS", "BI", "Off/On", "Fan Status Feedback"),
         ],
 

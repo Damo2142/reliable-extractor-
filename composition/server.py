@@ -2200,7 +2200,7 @@ function renderModules(){
     var cat=catOrder[ci];
     var mods=modules[cat];if(!mods)continue;
     if(modPrefix==='fcu-')mods=mods.filter(function(m){return m.id.startsWith('fcu-')||m.id.startsWith('vav-stat-');});
-    else if(modPrefix==='uv-')mods=mods.filter(function(m){return m.id.startsWith('uv-')||m.id.startsWith('vav-stat-');});
+    else if(modPrefix==='uv-')mods=mods.filter(function(m){return m.id.startsWith('uv-')||m.id.startsWith('vav-stat-')||m.id==='stat-remote';});
     else if(modPrefix)mods=mods.filter(function(m){return m.id.startsWith(modPrefix);});
     if(noOptionals){mods=mods.filter(function(m){return reqMods.indexOf(m.id)!==-1;});if(!mods.length)continue;}
     else if(allowedCats.indexOf(cat)===-1)continue;

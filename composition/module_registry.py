@@ -7,7 +7,7 @@ Central registry of all available modules. Builds and caches module instances.
 from composition.modules import (
     core, core_stubs, dsp_ctrl, sz_vav_fan_ctrl, fan_supply, fan_return_exhaust, heating, cooling,
     economizer, erw, ventilation, optimum_start, safety, preheat, humidity, pump,
-    dual_duct
+    dual_duct, sensors
 )
 from composition.modules.hw_plant import (
     build_core as hwp_build_core,
@@ -189,6 +189,9 @@ _register("vav-stat-comm", vav_build_stat_comm)
 _register("vav-stat-comm-co2", vav_build_stat_comm_co2)
 _register("vav-stat-comm-hum", vav_build_stat_comm_hum)
 _register("vav-stat-comm-occ", vav_build_stat_comm_occ)
+
+# Generic shared sensor modules (referenced by multiple families)
+_register("stat-remote", sensors.build_stat_remote)
 
 # FCU modules
 _register("fcu-core", build_fcu_core)
@@ -1663,56 +1666,56 @@ STANDARD_CONFIGS = {
         "family": "UV-HW-OAD",
         "name": "HW + OA Damper",
         "description": "Unit ventilator: HW heating coil with modulating OA damper. MPZ-88.",
-        "modules": ["uv-core", "uv-fan-cv", "uv-hw-mod", "uv-oad-mod"],
+        "modules": ["uv-core", "uv-fan-cv", "uv-hw-mod", "uv-oad-mod", "vav-stat-hardwired"],
         "controller": "MPZ",
     },
     "SBS-UV-702": {
         "family": "UV-HW-FBP",
         "name": "HW + Face/Bypass",
         "description": "Unit ventilator: HW heating with face/bypass damper. MPZ-88.",
-        "modules": ["uv-core", "uv-fan-cv", "uv-hw-mod-fbp", "uv-fbp-mod"],
+        "modules": ["uv-core", "uv-fan-cv", "uv-hw-mod-fbp", "uv-fbp-mod", "vav-stat-hardwired"],
         "controller": "MPZ",
     },
     "SBS-UV-703": {
         "family": "UV-STM-OAD",
         "name": "Steam + OA Damper",
         "description": "Unit ventilator: steam heating with modulating OA damper. MPZ-88.",
-        "modules": ["uv-core", "uv-fan-cv", "uv-steam-mod", "uv-oad-mod"],
+        "modules": ["uv-core", "uv-fan-cv", "uv-steam-mod", "uv-oad-mod", "vav-stat-hardwired"],
         "controller": "MPZ",
     },
     "SBS-UV-704": {
         "family": "UV-STM-FBP",
         "name": "Steam + Face/Bypass",
         "description": "Unit ventilator: steam on/off with face/bypass damper. MPZ-88.",
-        "modules": ["uv-core", "uv-fan-cv", "uv-steam-onoff-fbp", "uv-fbp-mod"],
+        "modules": ["uv-core", "uv-fan-cv", "uv-steam-onoff-fbp", "uv-fbp-mod", "vav-stat-hardwired"],
         "controller": "MPZ",
     },
     "SBS-UV-705": {
         "family": "UV-CHW-HW-OAD",
         "name": "CHW + HW + OA Damper",
         "description": "Unit ventilator: CHW cooling + HW heating with OA damper. MPZ-88.",
-        "modules": ["uv-core", "uv-fan-cv", "uv-chw-mod", "uv-hw-mod", "uv-oad-mod"],
+        "modules": ["uv-core", "uv-fan-cv", "uv-chw-mod", "uv-hw-mod", "uv-oad-mod", "vav-stat-hardwired"],
         "controller": "MPZ",
     },
     "SBS-UV-706": {
         "family": "UV-CHW-HW-FBP",
         "name": "CHW + HW + Face/Bypass",
         "description": "Unit ventilator: CHW cooling + HW heating with face/bypass. MPZ-88.",
-        "modules": ["uv-core", "uv-fan-cv", "uv-chw-mod", "uv-hw-mod-fbp", "uv-fbp-mod"],
+        "modules": ["uv-core", "uv-fan-cv", "uv-chw-mod", "uv-hw-mod-fbp", "uv-fbp-mod", "vav-stat-hardwired"],
         "controller": "MPZ",
     },
     "SBS-UV-707": {
         "family": "UV-DX-HW-OAD",
         "name": "DX + HW + OA Damper",
         "description": "Unit ventilator: DX cooling + HW heating with OA damper. MPZ-88.",
-        "modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod", "uv-oad-mod"],
+        "modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod", "uv-oad-mod", "vav-stat-hardwired"],
         "controller": "MPZ",
     },
     "SBS-UV-708": {
         "family": "UV-DX-HW-FBP",
         "name": "DX + HW + Face/Bypass",
         "description": "Unit ventilator: DX cooling + HW heating with face/bypass. MPZ-88.",
-        "modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod-fbp", "uv-fbp-mod"],
+        "modules": ["uv-core", "uv-fan-cv", "uv-dx-1", "uv-hw-mod-fbp", "uv-fbp-mod", "vav-stat-hardwired"],
         "controller": "MPZ",
     },
 
