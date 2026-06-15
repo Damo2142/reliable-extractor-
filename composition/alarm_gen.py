@@ -260,9 +260,13 @@ def generate_commissioning_checklist(config: ControllerConfig) -> List[dict]:
             "Notes": "",
         })
 
-    # Key values — verify setpoints and modes
+    # Key values — verify setpoints and modes.
+    # Always include CFG- configuration setpoints regardless of default value
+    # (a zero default like 0 deg F / 0% is still a real setpoint a tech must verify).
     for val in config.values:
-        if val.point_type in ("MV", "BV") or (val.default and val.default != 0):
+        if (val.point_type in ("MV", "BV")
+                or val.name.startswith("CFG-")
+                or (val.default and val.default != 0)):
             rows.append({
                 "Point": f"{{device-name}}-{val.name}",
                 "Object": f"{val.point_type}{val.instance}",
