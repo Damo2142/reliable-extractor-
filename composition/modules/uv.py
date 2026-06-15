@@ -95,23 +95,23 @@ REM
 IF ACT-OAT < CFG-FBP-SWITCHOVER-T THEN FBP-MODE = 1 ELSE FBP-MODE = 0
 REM
 REM Position command and HW demand based on mode
-IF FBP-MODE = 1 THEN DMP-POS-CMD = HTG-DAT-LOOP
+IF FBP-MODE = 1 THEN FBP-POS-CMD = HTG-DAT-LOOP
 IF FBP-MODE = 1 THEN HW-DEMAND = 100
-IF FBP-MODE = 0 THEN DMP-POS-CMD = 100
+IF FBP-MODE = 0 THEN FBP-POS-CMD = 100
 IF FBP-MODE = 0 THEN HW-DEMAND = HTG-DAT-LOOP
 REM
 REM Freeze: drive damper to full face
-IF FREEZE-PROT = 1 THEN DMP-POS-CMD = 100
+IF FREEZE-PROT = 1 THEN FBP-POS-CMD = 100
 IF FREEZE-PROT = 1 THEN HW-DEMAND = CFG-UV-FREEZE-VLV
 REM
 REM Floating sync on power cycle and mode change
-IF+ POWER-LOSS THEN START DMP-FLOAT-SYNC
-IF+ FBP-MODE = 1 THEN START DMP-FLOAT-SYNC
-IF+ FBP-MODE = 0 THEN START DMP-FLOAT-SYNC
-IF TIME-ON( DMP-FLOAT-SYNC ) > 0:00:05 THEN STOP DMP-FLOAT-SYNC
+IF+ POWER-LOSS THEN START FBP-FLOAT-SYNC
+IF+ FBP-MODE = 1 THEN START FBP-FLOAT-SYNC
+IF+ FBP-MODE = 0 THEN START FBP-FLOAT-SYNC
+IF TIME-ON( FBP-FLOAT-SYNC ) > 0:00:05 THEN STOP FBP-FLOAT-SYNC
 REM
 REM FLOAT() drives the open/close relays
-DMP-POS = FLOAT( DMP-OPEN , DMP-CLOSE , DMP-POS-CMD , CFG-DMP-DRV-TIME , CFG-DMP-POS-DB , DMP-FLOAT-SYNC )
+FBP-POS = FLOAT( FBP-OPEN , FBP-CLOSE , FBP-POS-CMD , CFG-FBP-DRV-TIME , CFG-FBP-POS-DB , FBP-FLOAT-SYNC )
 """
 
 _PRG04_FBP_STEAM_ONOFF = """\
@@ -483,8 +483,8 @@ def build_uv_oad_mod():
         programs=[ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD, True,
                              "OA damper ASHRAE Cycle 1+2", exec_order=7)],
         requires=["uv-core"],
-        conflicts=["uv-oad-flt", "uv-fbp-mod", "uv-fbp-flt"],
-        mutually_exclusive_group="uv-airpath",
+        conflicts=["uv-oad-flt"],
+        mutually_exclusive_group="uv-oad",
     )
 
 
@@ -509,8 +509,8 @@ def build_uv_oad_flt():
         programs=[ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD_FLT, True,
                              "OA damper floating Cycle 1+2", exec_order=7)],
         requires=["uv-core"],
-        conflicts=["uv-oad-mod", "uv-fbp-mod", "uv-fbp-flt"],
-        mutually_exclusive_group="uv-airpath",
+        conflicts=["uv-oad-mod"],
+        mutually_exclusive_group="uv-oad",
     )
 
 
@@ -522,7 +522,7 @@ def build_uv_fbp_mod():
     return Module(
         id="uv-fbp-mod", name="UV Face/Bypass Modulating", category="economizer",
         description="Face/bypass modulating AO — cold/mild mode switching",
-        outputs=[OutputPoint(10, "FBP", "AO", "0.0 ->100%", "Face/Bypass Damper", 2.0, 10.0)],
+        outputs=[OutputPoint(12, "FBP", "AO", "0.0 ->100%", "Face/Bypass Damper", 2.0, 10.0)],
         values=[
             ValuePoint(85, "CFG-FBP-SWITCHOVER-T", "AV", 40.0, "FBP Switchover Temp", "°F"),
             ValuePoint(86, "FBP-MODE",             "BV", False, "FBP Cold Mode"),
@@ -531,8 +531,8 @@ def build_uv_fbp_mod():
         programs=[ProgramDef(4, "FBP-CTRL", "PRG04-FBP-CTRL.bas", _PRG04_FBP, True,
                              "Face/bypass cold/mild mode", exec_order=4)],
         requires=["uv-core"],
-        conflicts=["uv-oad-mod", "uv-oad-flt", "uv-fbp-flt"],
-        mutually_exclusive_group="uv-airpath",
+        conflicts=["uv-fbp-flt"],
+        mutually_exclusive_group="uv-fbp",
     )
 
 
@@ -541,24 +541,24 @@ def build_uv_fbp_flt():
         id="uv-fbp-flt", name="UV Face/Bypass Floating", category="economizer",
         description="Face/bypass floating damper — CBAS FLOAT() cold/mild mode switching",
         outputs=[
-            OutputPoint(10, "DMP-OPEN",  "BO", "Stop/Start", "Face/Bypass Open"),
-            OutputPoint(11, "DMP-CLOSE", "BO", "Stop/Start", "Face/Bypass Close"),
+            OutputPoint(12, "FBP-OPEN",  "BO", "Stop/Start", "Face/Bypass Open"),
+            OutputPoint(13, "FBP-CLOSE", "BO", "Stop/Start", "Face/Bypass Close"),
         ],
         values=[
             ValuePoint(85, "CFG-FBP-SWITCHOVER-T", "AV", 40.0,  "FBP Switchover Temp",          "°F"),
             ValuePoint(86, "FBP-MODE",             "BV", False, "FBP Cold Mode"),
             ValuePoint(87, "HW-DEMAND",            "AV", 0.0,   "HW Demand from FBP",          "%"),
-            ValuePoint(88, "DMP-POS",              "AV", 0.0,   "FBP Actual Position",         "%"),
-            ValuePoint(89, "DMP-POS-CMD",          "AV", 0.0,   "FBP Commanded Position",      "%"),
-            ValuePoint(96, "CFG-DMP-POS-DB",       "AV", 2.0,   "Damper Float Position Deadband","%"),
-            ValuePoint(97, "CFG-DMP-DRV-TIME",     "AV", 150.0, "Damper Full Stroke Time",     "Sec"),
-            ValuePoint(98, "DMP-FLOAT-SYNC",       "BV", False, "Damper Float Sync Trigger"),
+            ValuePoint(88, "FBP-POS",              "AV", 0.0,   "FBP Actual Position",         "%"),
+            ValuePoint(89, "FBP-POS-CMD",          "AV", 0.0,   "FBP Commanded Position",      "%"),
+            ValuePoint(102, "CFG-FBP-POS-DB",      "AV", 2.0,   "FBP Float Position Deadband", "%"),
+            ValuePoint(103, "CFG-FBP-DRV-TIME",    "AV", 150.0, "FBP Full Stroke Time",        "Sec"),
+            ValuePoint(104, "FBP-FLOAT-SYNC",      "BV", False, "FBP Float Sync Trigger"),
         ],
         programs=[ProgramDef(4, "FBP-CTRL", "PRG04-FBP-CTRL.bas", _PRG04_FBP_FLT, True,
                              "Face/bypass floating: FLOAT() with cold/mild logic", exec_order=4)],
         requires=["uv-core"],
-        conflicts=["uv-oad-mod", "uv-oad-flt", "uv-fbp-mod"],
-        mutually_exclusive_group="uv-airpath",
+        conflicts=["uv-fbp-mod"],
+        mutually_exclusive_group="uv-fbp",
     )
 
 
