@@ -1190,6 +1190,22 @@ async def api_intake_upload(file: UploadFile = File(...), token: str = ""):
 IO_MAP_PATH = Path(__file__).parent / "standard_io_map.json"
 
 
+def _std_io_lookup():
+    """Name -> standard terminal row lookup from the standard I/O reference.
+    Used to annotate the config-driven I/O map (Std Terminal / Standard? columns).
+    Returns {"inputs": {name: row}, "outputs": {name: row}}; empty if unavailable."""
+    if not IO_MAP_PATH.exists():
+        return {"inputs": {}, "outputs": {}}
+    try:
+        d = json.loads(IO_MAP_PATH.read_text())
+    except (ValueError, OSError):
+        return {"inputs": {}, "outputs": {}}
+    return {
+        "inputs": {e["name"]: e["row"] for e in d.get("inputs", []) if e.get("name")},
+        "outputs": {e["name"]: e["row"] for e in d.get("outputs", []) if e.get("name")},
+    }
+
+
 @app.get("/api/io-map/export")
 async def api_io_map_export(token: str = ""):
     """Export standard I/O map as Excel."""
@@ -1331,7 +1347,7 @@ async def api_export_io(config_id: str):
     Point Name column is locked — user can only edit Terminal column.
     """
     try:
-        excel_data = export_io_schedule(config_id)
+        excel_data = export_io_schedule(config_id, std_map=_std_io_lookup())
     except ValueError as e:
         raise HTTPException(404, str(e))
 
@@ -1339,7 +1355,7 @@ async def api_export_io(config_id: str):
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=IO-Schedule-{config_id}.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename=IO-Map-{config_id}.xlsx"},
     )
 
 
@@ -1772,14 +1788,14 @@ tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:
     <button class="btn btn-s btn-default-dl" onclick="doGenerate()">Download Excel + .bas</button>
     <button class="btn btn-s btn-default-dl" style="background:#1e40af" onclick="doGeneratePan()">Download .pan</button>
     <button class="btn btn-s btn-default-dl" style="background:#065f46" onclick="doGenerateFull()">Full Package</button>
-    <button class="btn btn-s" id="btnExportIOSched" style="display:none;background:#7c3aed" onclick="exportIOSchedule()">Export IO Schedule</button>
-    <button class="btn btn-s" id="btnImportIOSched" style="display:none;background:#5b21b6" onclick="document.getElementById('ioSchedFile').click()">Import IO Schedule</button>
+    <button class="btn btn-s" id="btnExportIOSched" style="display:none;background:#7c3aed" onclick="exportIOSchedule()">Export I/O Map</button>
+    <button class="btn btn-s" id="btnImportIOSched" style="display:none;background:#5b21b6" onclick="document.getElementById('ioSchedFile').click()">Import I/O Map</button>
     <button class="btn btn-s" id="btnGenFromConfig" style="display:none;background:#4338ca" onclick="generateFromConfig()">Generate (with overrides)</button>
     <input type="file" id="ioSchedFile" accept=".xlsx" style="display:none" onchange="importIOSchedule(this)">
     <button class="btn btn-o" id="btnAdmin" onclick="showAdminLogin()">Admin</button>
     <button class="btn btn-o" id="btnEditor" style="display:none" onclick="openEditor()">Edit .bas</button>
-    <button class="btn btn-o" id="btnExportIO" style="display:none;background:#7c3aed" onclick="exportIOMap()">Export I/O Map</button>
-    <button class="btn btn-o" id="btnImportIO" style="display:none;background:#5b21b6" onclick="document.getElementById('ioMapFile').click()">Import I/O Map</button>
+    <button class="btn btn-o" id="btnExportIO" style="display:none;background:#7c3aed" onclick="exportIOMap()">Standard Reference (Admin)</button>
+    <button class="btn btn-o" id="btnImportIO" style="display:none;background:#5b21b6" onclick="document.getElementById('ioMapFile').click()">Import Std Ref (Admin)</button>
     <button class="btn btn-o" id="btnIntake" style="display:none;background:#0e7490" onclick="openIntake()">Intake .pan</button>
     <button class="btn btn-o" id="btnUsers" style="display:none;background:#991b1b" onclick="openUsers()">Users</button>
     <input type="file" id="ioMapFile" accept=".xlsx" style="display:none" onchange="importIOMap(this)">
@@ -2682,13 +2698,13 @@ function importIOMap(input){
 var hasOverrides=false;
 async function exportIOSchedule(){
   if(!currentConfigId){document.getElementById('status').textContent='Assemble first to get a config';return;}
-  document.getElementById('status').textContent='Exporting IO schedule...';
+  document.getElementById('status').textContent='Exporting I/O map...';
   try{
     var a=document.createElement('a');
     a.href='composition/export-io/'+currentConfigId;
-    a.download='IO-Schedule-'+currentConfigId+'.xlsx';
+    a.download='IO-Map-'+activeFamily+'.xlsx';
     document.body.appendChild(a);a.click();a.remove();
-    document.getElementById('status').textContent='IO schedule exported — edit Terminal column (green), leave Point Name (gray) unchanged, then Import';
+    document.getElementById('status').textContent='I/O Map exported — edit Terminal column (green), leave Point Name (gray) unchanged, then Import';
   }catch(e){document.getElementById('status').textContent='Export error: '+e;}
 }
 function importIOSchedule(input){

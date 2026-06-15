@@ -95,33 +95,46 @@ _SUBTITLE_FONT = Font(name="Calibri", size=10, color="666666")
 
 # ─── Export ──────────────────────────────────────────────────────────────────
 
-def export_io_schedule(config_id):
+def export_io_schedule(config_id, std_map=None):
     """
-    Generate IO schedule Excel from a stored config.
+    Generate the I/O map Excel from a stored config (any equipment family).
 
     Returns bytes of the .xlsx file.
 
-    Columns: Terminal | Point Name | Description | Type | Units | Controller | Notes
+    Columns: Terminal | Point Name | Description | Type | Units | Controller |
+             Std Terminal | Standard? | Notes
     Physical IO only (AI, AO, BI, BO). One tab per controller.
-    Point Name column is locked (sheet protection enabled, Terminal column unlocked).
+
+    The assembled config's row is the AUTHORITATIVE terminal (Terminal column,
+    editable). std_map is an optional annotation lookup
+        {"inputs": {name: row}, "outputs": {name: row}}
+    from the standard I/O reference: matching points get their canonical terminal
+    in "Std Terminal" and are flagged "Standard"; everything else is "Custom"
+    (UV / plant / family-specific points that are not in the AHU reference).
+
+    Terminal and Point Name remain columns 1 and 2 so import_io_schedule is
+    unaffected. Point Name column is locked; Terminal column is editable.
     """
     cfg = get_stored_config(config_id)
     inputs = cfg["inputs"]
     outputs = cfg["outputs"]
     controller = cfg["controller"] or "MPS"
     family = cfg["family"]
+    std_in = (std_map or {}).get("inputs", {})
+    std_out = (std_map or {}).get("outputs", {})
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = controller
 
     # Title
-    ws.cell(1, 1, value=f"IO Schedule — {family}").font = _TITLE_FONT
+    ws.cell(1, 1, value=f"I/O Map — {family}").font = _TITLE_FONT
     ws.cell(2, 1, value=f"Controller: {controller} | Config: {config_id} | "
                         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}").font = _SUBTITLE_FONT
 
     # Headers at row 4
-    headers = ["Terminal", "Point Name", "Description", "Type", "Units", "Controller", "Notes"]
+    headers = ["Terminal", "Point Name", "Description", "Type", "Units",
+               "Controller", "Std Terminal", "Standard?", "Notes"]
     for c, h in enumerate(headers, 1):
         cell = ws.cell(row=4, column=c, value=h)
         cell.font = _HDR_FONT
@@ -133,9 +146,11 @@ def export_io_schedule(config_id):
 
     # --- Inputs section ---
     for pt in sorted(inputs, key=lambda p: p.row):
-        terminal = f"IN{pt.row}"
-        _write_io_row(ws, row, terminal, pt.name, pt.description,
+        std_row = std_in.get(pt.name)
+        _write_io_row(ws, row, f"IN{pt.row}", pt.name, pt.description,
                       pt.point_type, getattr(pt, 'units', ''), controller,
+                      f"IN{std_row}" if std_row is not None else "",
+                      "Standard" if std_row is not None else "Custom",
                       getattr(pt, 'range_code', ''))
         row += 1
 
@@ -144,9 +159,11 @@ def export_io_schedule(config_id):
 
     # --- Outputs section ---
     for pt in sorted(outputs, key=lambda p: p.row):
-        terminal = f"OUT{pt.row}"
-        _write_io_row(ws, row, terminal, pt.name, pt.description,
+        std_row = std_out.get(pt.name)
+        _write_io_row(ws, row, f"OUT{pt.row}", pt.name, pt.description,
                       pt.point_type, getattr(pt, 'units', '%'), controller,
+                      f"OUT{std_row}" if std_row is not None else "",
+                      "Standard" if std_row is not None else "Custom",
                       getattr(pt, 'range_code', ''))
         row += 1
 
@@ -157,7 +174,9 @@ def export_io_schedule(config_id):
     ws.column_dimensions["D"].width = 6    # Type
     ws.column_dimensions["E"].width = 8    # Units
     ws.column_dimensions["F"].width = 14   # Controller
-    ws.column_dimensions["G"].width = 30   # Notes
+    ws.column_dimensions["G"].width = 12   # Std Terminal
+    ws.column_dimensions["H"].width = 10   # Standard?
+    ws.column_dimensions["I"].width = 30   # Notes
 
     # Enable sheet protection — Point Name column locked, Terminal column editable
     ws.protection = openpyxl.worksheet.protection.SheetProtection(
@@ -176,7 +195,8 @@ def export_io_schedule(config_id):
     return buf.getvalue()
 
 
-def _write_io_row(ws, row, terminal, point_name, description, point_type, units, controller, notes):
+def _write_io_row(ws, row, terminal, point_name, description, point_type, units,
+                  controller, std_terminal, standard_flag, notes):
     """Write a single I/O row with proper protection."""
     # Terminal — EDITABLE (green background, unlocked)
     cell_term = ws.cell(row=row, column=1, value=terminal)
@@ -217,8 +237,22 @@ def _write_io_row(ws, row, terminal, point_name, description, point_type, units,
     cell_ctrl.border = _THIN_BORDER
     cell_ctrl.protection = Protection(locked=True)
 
+    # Std Terminal — locked (annotation from standard reference)
+    cell_std = ws.cell(row=row, column=7, value=std_terminal or "")
+    cell_std.font = _DATA_FONT
+    cell_std.border = _THIN_BORDER
+    cell_std.alignment = Alignment(horizontal="center")
+    cell_std.protection = Protection(locked=True)
+
+    # Standard? — locked (Standard vs Custom)
+    cell_flag = ws.cell(row=row, column=8, value=standard_flag or "")
+    cell_flag.font = _DATA_FONT
+    cell_flag.border = _THIN_BORDER
+    cell_flag.alignment = Alignment(horizontal="center")
+    cell_flag.protection = Protection(locked=True)
+
     # Notes — editable
-    cell_notes = ws.cell(row=row, column=7, value=notes or "")
+    cell_notes = ws.cell(row=row, column=9, value=notes or "")
     cell_notes.font = _DATA_FONT
     cell_notes.border = _THIN_BORDER
     cell_notes.protection = Protection(locked=False)
