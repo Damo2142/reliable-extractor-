@@ -59,7 +59,7 @@ from composition.modules.uv import (
     build_uv_hw_mod, build_uv_hw_flt, build_uv_hw_mod_fbp,
     build_uv_steam_mod, build_uv_steam_onoff, build_uv_steam_onoff_fbp,
     build_uv_chw_mod, build_uv_chw_flt, build_uv_dx_1, build_uv_dx_2,
-    build_uv_dcv, build_uv_freezestat,
+    build_uv_dcv, build_uv_freezestat, build_uv_radiant_heat,
 )
 from composition.modules.rhc import (
     build_rhc_core, build_rhc_hw_mod, build_rhc_hw_flt,
@@ -235,6 +235,7 @@ _register("uv-dx-1", build_uv_dx_1)
 _register("uv-dx-2", build_uv_dx_2)
 _register("uv-dcv", build_uv_dcv)
 _register("uv-freezestat", build_uv_freezestat)
+_register("uv-radiant-heat", build_uv_radiant_heat)
 
 # RHC — Standalone Duct Reheat Coil (SBS-RHC-801)
 _register("rhc-core", build_rhc_core)

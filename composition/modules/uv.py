@@ -335,6 +335,24 @@ IF ACT-CO2 > CFG-CO2-SP THEN OAD = MAX( OAD, OAD-DCV )
 IF ACT-CO2 > CFG-CO2-ALARM THEN CO2-ALARM = 1 ELSE CO2-ALARM = 0
 """
 
+_PRG_RAD_HTG = """\
+REM --- RAD-HTG-PRG ---
+REM Radiant heat — reverse-acting OAT reset. Independent of the primary
+REM heating coil; runs in parallel. Colder OAT opens the valve, warmer
+REM OAT closes it.
+REM   OAT <= CFG-RAD-OA-MIN : enabled, valve = CFG-RAD-VLV-MAX (full open)
+REM   OAT >= CFG-RAD-OA-MAX : disabled, valve = CFG-RAD-VLV-MIN (closed)
+REM   between               : SLIDE reset from VLV-MAX down to VLV-MIN
+REM
+IF ACT-OAT <= CFG-RAD-OA-MIN THEN RAD-HTG-ENAB = 1
+IF ACT-OAT <= CFG-RAD-OA-MIN THEN RAD-HTG-VLV = CFG-RAD-VLV-MAX
+IF ACT-OAT >= CFG-RAD-OA-MAX THEN RAD-HTG-ENAB = 0
+IF ACT-OAT >= CFG-RAD-OA-MAX THEN RAD-HTG-VLV = CFG-RAD-VLV-MIN
+IF ACT-OAT > CFG-RAD-OA-MIN AND ACT-OAT < CFG-RAD-OA-MAX THEN RAD-HTG-ENAB = 1
+IF ACT-OAT > CFG-RAD-OA-MIN AND ACT-OAT < CFG-RAD-OA-MAX THEN ACT-RAD-HTG-POS = SLIDE( ACT-OAT, CFG-RAD-OA-MIN, CFG-RAD-OA-MAX, CFG-RAD-VLV-MAX, CFG-RAD-VLV-MIN )
+IF ACT-OAT > CFG-RAD-OA-MIN AND ACT-OAT < CFG-RAD-OA-MAX THEN RAD-HTG-VLV = ACT-RAD-HTG-POS
+"""
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Core Module
@@ -655,6 +673,31 @@ def build_uv_steam_onoff_fbp():
         requires=["uv-core"],
         conflicts=["uv-hw-mod", "uv-hw-flt", "uv-hw-mod-fbp", "uv-steam-mod", "uv-steam-onoff"],
         mutually_exclusive_group="uv-heating",
+    )
+
+
+def build_uv_radiant_heat():
+    """Radiant heat with reverse-acting OAT reset.
+
+    Independent add-on — NO mutual-exclusion group, so it can be selected
+    alongside any primary heating option (HW, steam, etc.). Runs in parallel
+    on its own valve output.
+    """
+    return Module(
+        id="uv-radiant-heat", name="Radiant Heat (OAT Reset)", category="heating",
+        description="Radiant heating valve with reverse-acting OAT reset — runs in parallel with any primary heating",
+        outputs=[OutputPoint(8, "RAD-HTG-VLV", "AO", "0.0 ->100%", "Radiant Heat Valve", 2.0, 10.0)],
+        values=[
+            ValuePoint(60, "CFG-RAD-OA-MIN",  "AV", 0.0,   "OAT at full open",              "°F"),
+            ValuePoint(61, "CFG-RAD-OA-MAX",  "AV", 55.0,  "OAT at full closed",            "°F"),
+            ValuePoint(62, "CFG-RAD-VLV-MIN", "AV", 0.0,   "Valve minimum position",        "%"),
+            ValuePoint(63, "CFG-RAD-VLV-MAX", "AV", 100.0, "Valve maximum position",        "%"),
+            ValuePoint(64, "ACT-RAD-HTG-POS", "AV", 0.0,   "Actual radiant valve position", "%"),
+            ValuePoint(60, "RAD-HTG-ENAB",    "BV", False, "Radiant Heat Enabled"),
+        ],
+        programs=[ProgramDef(13, "RAD-HTG-PRG", "PRG13-RAD-HTG.bas", _PRG_RAD_HTG, True,
+                             "Radiant heat reverse-acting OAT reset", exec_order=13)],
+        requires=["uv-core"],
     )
 
 
