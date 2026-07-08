@@ -196,22 +196,22 @@ REM {parent} = BACnet device of the AHU serving this VAV zone.
 REM Auto-calculates array index from device MAC address.
 REM AY1=ACT-RMT, AY2=CLG-DMD, AY3=HTG-REQ, AY4=DMP-POS,
 REM AY5=NSB-MODE, AY6=NSF-MODE, AY7=BYPASS, AY8=RMT-DEV.
-REM Each write is gated by AHU-OK so the AHU never sees stale data when
-REM the parent controller is offline.
+REM Always writes zone data to the parent AHU arrays.
+REM Gated only on a valid index (Y >= 1) so a failed device-ID read
+REM (Y = 0) can't default into slot 1 and clobber that box.
 REM
 REM --- Calculate Array Index from Device ID ---
 Y = DEV4194303:1042 MOD 1000
-Y = LIMIT( Y , 1 , 127 )
 REM
-REM --- Write Zone Data to Parent Arrays (only when AHU is communicating) ---
-IF AHU-OK THEN {parent}AY1[ Y ] = ACT-RMT
-IF AHU-OK THEN {parent}AY2[ Y ] = CLG-DMD
-IF AHU-OK THEN {parent}AY3[ Y ] = HTG-REQ
-IF AHU-OK THEN {parent}AY4[ Y ] = DMP-POS
-IF AHU-OK THEN {parent}AY5[ Y ] = NSB-MODE
-IF AHU-OK THEN {parent}AY6[ Y ] = NSF-MODE
-IF AHU-OK THEN {parent}AY7[ Y ] = BYPASS
-IF AHU-OK THEN {parent}AY8[ Y ] = RMT-DEV
+REM --- Write Zone Data to Parent Arrays (only on a valid index) ---
+IF Y >= 1 THEN {parent}AY1[ Y ] = ACT-RMT
+IF Y >= 1 THEN {parent}AY2[ Y ] = CLG-DMD
+IF Y >= 1 THEN {parent}AY3[ Y ] = HTG-REQ
+IF Y >= 1 THEN {parent}AY4[ Y ] = DMP-POS
+IF Y >= 1 THEN {parent}AY5[ Y ] = NSB-MODE
+IF Y >= 1 THEN {parent}AY6[ Y ] = NSF-MODE
+IF Y >= 1 THEN {parent}AY7[ Y ] = BYPASS
+IF Y >= 1 THEN {parent}AY8[ Y ] = RMT-DEV
 """
 
 _PRG09_REQS = """\
