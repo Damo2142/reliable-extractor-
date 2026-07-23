@@ -57,8 +57,8 @@ REM Display mirrors of the active setpoints
 CLG-SP = ACT-CLG-SP
 HTG-SP = ACT-HTG-SP
 REM ACT-RMT is set by the selected thermostat module (wired or network)
-ACT-DAT = AI1
-ACT-OAT = AI2
+ACT-DAT = DAT
+ACT-OAT = OAT
 NET-OCC-CMD = {parent}BV21
 HWS-OK = {parent}BV22
 """
@@ -335,7 +335,7 @@ REM --- DCV-CTRL ---
 REM Demand Controlled Ventilation from CO2 sensor
 REM Overrides OA damper minimum when CO2 > setpoint
 REM
-ACT-CO2 = AI4
+ACT-CO2 = CO2
 OAD-DCV = 0
 IF OCC-MODE = 1 AND FREEZE-PROT = 0 THEN OAD-DCV = SLIDE( ACT-CO2, CFG-CO2-SP, CFG-CO2-MAX, CFG-OAD-MIN, 100.0 )
 IF OCC-MODE = 0 THEN OAD-DCV = 0

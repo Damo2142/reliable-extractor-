@@ -54,8 +54,8 @@ IF OCC-MODE = 0 THEN ACT-HTG-SP = CFG-UNOCC-HTG-SP
 REM Display mirrors of the active setpoints
 CLG-SP = ACT-CLG-SP
 HTG-SP = ACT-HTG-SP
-ACT-RMT = AI3
-ACT-DAT = AI1
+ACT-RMT = RMT
+ACT-DAT = DAT
 NET-OCC-CMD = {parent}BV21
 HWS-OK = {parent}BV22
 NET-OAT = {parent}AV20
