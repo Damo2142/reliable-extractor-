@@ -56,9 +56,18 @@ CLG-SP = ACT-CLG-SP
 HTG-SP = ACT-HTG-SP
 ACT-RMT = RMT
 ACT-DAT = DAT
+REM *** VERIFY OCCUPANCY BV: {parent}BV21 below must be the parent BV tied to
+REM *** THIS job's occupancy schedule. The correct instance VARIES with the
+REM *** number of schedules in the parent controller — confirm/set it in the
+REM *** template before download. ***
 NET-OCC-CMD = {parent}BV21
+REM *** VERIFY HW-AVAILABLE BV: {parent}BV22 below must be the parent BV that
+REM *** carries HW-available for THIS job. This is NOT a fixed instance like OAT
+REM *** (AV1); the plant publishes HW-AVAIL and the integrator maps it into the
+REM *** parent's point list — confirm/set {parent}BVnn in the template. ***
 HWS-OK = {parent}BV22
-NET-OAT = {parent}AV20
+REM {parent}AV1 is ALWAYS outdoor air temp in the parent controller.
+NET-OAT = {parent}AV1
 """
 
 _PRG02_CLG_RESET = """\

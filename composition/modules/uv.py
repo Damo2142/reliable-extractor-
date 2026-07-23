@@ -64,9 +64,23 @@ REM local unit OA sensors are often poorly sited, so the parent's single OAT is
 REM preferred. Set CFG-OAT-LOCAL TRUE to use this unit's hardwired OAT instead.
 REM {parent}AV1 is ALWAYS outdoor air temp in the parent controller.
 NET-OAT = {parent}AV1
-IF CFG-OAT-LOCAL THEN ACT-OAT = OAT
-IF NOT CFG-OAT-LOCAL THEN ACT-OAT = NET-OAT
+REM Comms health via plausible-range check (mirrors stat-remote). Network OAT is
+REM used only while plausible; if the {parent}AV1 reference is dead/garbage the
+REM value is implausible and ACT-OAT falls back to the local OAT sensor.
+REM NOTE: a plausible-but-frozen value (parent alive but OAT stuck) is NOT
+REM detected by this range check.
+IF NET-OAT > -60 AND NET-OAT < 140 THEN NET-OAT-OK = 1 ELSE NET-OAT-OK = 0
+IF CFG-OAT-LOCAL OR NOT NET-OAT-OK THEN ACT-OAT = OAT
+IF NOT CFG-OAT-LOCAL AND NET-OAT-OK THEN ACT-OAT = NET-OAT
+REM *** VERIFY OCCUPANCY BV: {parent}BV21 below must be the parent BV tied to
+REM *** THIS job's occupancy schedule. The correct instance VARIES with the
+REM *** number of schedules in the parent controller — confirm/set it in the
+REM *** template before download. ***
 NET-OCC-CMD = {parent}BV21
+REM *** VERIFY HW-AVAILABLE BV: {parent}BV22 below must be the parent BV that
+REM *** carries HW-available for THIS job. This is NOT a fixed instance like OAT
+REM *** (AV1); the plant publishes HW-AVAIL and the integrator maps it into the
+REM *** parent's point list — confirm/set {parent}BVnn in the template. ***
 HWS-OK = {parent}BV22
 """
 
@@ -435,6 +449,7 @@ def build_uv_core():
             ValuePoint(15, "FREEZE-PROT",      "BV", False, "Freeze Protection Active"),
             ValuePoint(16, "FAN-CMD",          "BV", False, "Fan Command"),
             ValuePoint(17, "CFG-OAT-LOCAL",    "BV", False, "Use Local OAT Sensor (default FALSE = network)"),
+            ValuePoint(18, "NET-OAT-OK",       "BV", True,  "Network OAT Comms OK (plausible-range)"),
         ],
 
         loops=[
