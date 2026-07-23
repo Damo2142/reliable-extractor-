@@ -39,10 +39,21 @@ REM Occupancy mode and setpoint selection
 REM {parent} = parent device for network variables
 REM
 IF NET-OCC-CMD = 1 THEN OCC-MODE = 1 ELSE OCC-MODE = 0
-IF OCC-MODE = 0 THEN CLG-SP = CFG-UNOCC-CLG-SP ELSE CLG-SP = CFG-OCC-CLG-SP
-IF OCC-MODE = 0 THEN HTG-SP = CFG-UNOCC-HTG-SP ELSE HTG-SP = CFG-OCC-HTG-SP
-ACT-CLG-SP = CLG-SP
-ACT-HTG-SP = HTG-SP
+REM
+REM --- Active Setpoints ---
+REM Single operator zone setpoint (RMT-SP) with symmetric deadband.
+REM Cooling setpoint = operator SP + deadband ; heating setpoint = operator SP - deadband.
+REM Occupied: derive both actives from the one setpoint so they stay locked
+REM around it and cannot drift or cross.
+REM Unoccupied: use the unoccupied setback pair (unchanged this step).
+ACT-RMT-SP-DB = DB-MTPLR * CFG-RMT-SP-DB
+IF OCC-MODE = 1 THEN ACT-CLG-SP = RMT-SP + ACT-RMT-SP-DB
+IF OCC-MODE = 1 THEN ACT-HTG-SP = RMT-SP - ACT-RMT-SP-DB
+IF OCC-MODE = 0 THEN ACT-CLG-SP = CFG-UNOCC-CLG-SP
+IF OCC-MODE = 0 THEN ACT-HTG-SP = CFG-UNOCC-HTG-SP
+REM Display mirrors of the active setpoints
+CLG-SP = ACT-CLG-SP
+HTG-SP = ACT-HTG-SP
 ACT-RMT = AI3
 ACT-DAT = AI1
 NET-OCC-CMD = {parent}BV21
@@ -387,17 +398,24 @@ def build_fcu_core():
             # Sensor reads
             ValuePoint(1, "ACT-RMT",          "AV", 72.0,  "Actual Room Temperature",     "°F"),
             ValuePoint(2, "ACT-DAT",          "AV", 55.0,  "Actual Discharge Air Temp",   "°F"),
-            # Setpoints — occupied
-            ValuePoint(3, "CFG-OCC-CLG-SP",   "AV", 75.0,  "Occupied Cooling Setpoint",   "°F"),
-            ValuePoint(4, "CFG-OCC-HTG-SP",   "AV", 70.0,  "Occupied Heating Setpoint",   "°F"),
-            # Setpoints — unoccupied
+            # Single operator zone setpoint + deadband (VAV single-setpoint pattern).
+            # AV3/AV4 instances reused from the former CFG-OCC-CLG-SP/CFG-OCC-HTG-SP
+            # pair. DB-MTPLR + ACT-RMT-SP-DB mirror VAV core (AV15/AV44) for exact
+            # parity: ACT-RMT-SP-DB = DB-MTPLR * CFG-RMT-SP-DB, actives = RMT-SP +/-
+            # ACT-RMT-SP-DB (see MODE-CTRL). AV11/AV12 are the next free instances
+            # in fcu-core — add all four to the FCU point-location standard.
+            ValuePoint(3, "RMT-SP",           "AV", 72.0,  "Operator Room Temp Setpoint", "°F"),
+            ValuePoint(4, "CFG-RMT-SP-DB",    "AV", 1.0,   "Room Temp SP Deadband",       "°F"),
+            ValuePoint(11, "DB-MTPLR",        "AV", 1.5,   "Deadband Multiplier",         ""),
+            ValuePoint(12, "ACT-RMT-SP-DB",   "AV", 1.5,   "Active Setpoint Deadband",    "°F"),
+            # Setpoints — unoccupied (unchanged this step)
             ValuePoint(5, "CFG-UNOCC-CLG-SP", "AV", 85.0,  "Unoccupied Cooling Setpoint", "°F"),
             ValuePoint(6, "CFG-UNOCC-HTG-SP", "AV", 60.0,  "Unoccupied Heating Setpoint", "°F"),
-            # Active setpoints (computed)
-            ValuePoint(7, "ACT-CLG-SP",       "AV", 75.0,  "Active Cooling Setpoint",     "°F"),
-            ValuePoint(8, "ACT-HTG-SP",       "AV", 70.0,  "Active Heating Setpoint",     "°F"),
-            ValuePoint(9, "CLG-SP",           "AV", 75.0,  "Current Cooling SP",          "°F"),
-            ValuePoint(10, "HTG-SP",          "AV", 70.0,  "Current Heating SP",          "°F"),
+            # Active setpoints (computed from RMT-SP +/- ACT-RMT-SP-DB)
+            ValuePoint(7, "ACT-CLG-SP",       "AV", 73.5,  "Active Cooling Setpoint",     "°F"),
+            ValuePoint(8, "ACT-HTG-SP",       "AV", 70.5,  "Active Heating Setpoint",     "°F"),
+            ValuePoint(9, "CLG-SP",           "AV", 73.5,  "Current Cooling SP",          "°F"),
+            ValuePoint(10, "HTG-SP",          "AV", 70.5,  "Current Heating SP",          "°F"),
             # DAT setpoint reset (loop outputs)
             ValuePoint(31, "CLG-DAT-SP",      "AV", 55.0,  "Cooling DAT Setpoint",        "°F"),
             ValuePoint(32, "HTG-DAT-SP",      "AV", 95.0,  "Heating DAT Setpoint",        "°F"),
