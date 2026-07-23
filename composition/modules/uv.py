@@ -41,10 +41,21 @@ REM Occupancy mode and setpoint selection
 REM {parent} = parent device for network variables
 REM
 IF NET-OCC-CMD = 1 THEN OCC-MODE = 1 ELSE OCC-MODE = 0
-IF OCC-MODE = 0 THEN CLG-SP = CFG-UNOCC-CLG-SP ELSE CLG-SP = CFG-OCC-CLG-SP
-IF OCC-MODE = 0 THEN HTG-SP = CFG-UNOCC-HTG-SP ELSE HTG-SP = CFG-OCC-HTG-SP
-ACT-CLG-SP = CLG-SP
-ACT-HTG-SP = HTG-SP
+REM
+REM --- Active Setpoints ---
+REM Single operator zone setpoint (RMT-SP) with symmetric deadband.
+REM Cooling setpoint = operator SP + deadband ; heating setpoint = operator SP - deadband.
+REM Occupied: derive both actives from the one setpoint so they stay locked
+REM around it and cannot drift or cross.
+REM Unoccupied: use the unoccupied setback pair (unchanged this step).
+ACT-RMT-SP-DB = DB-MTPLR * CFG-RMT-SP-DB
+IF OCC-MODE = 1 THEN ACT-CLG-SP = RMT-SP + ACT-RMT-SP-DB
+IF OCC-MODE = 1 THEN ACT-HTG-SP = RMT-SP - ACT-RMT-SP-DB
+IF OCC-MODE = 0 THEN ACT-CLG-SP = CFG-UNOCC-CLG-SP
+IF OCC-MODE = 0 THEN ACT-HTG-SP = CFG-UNOCC-HTG-SP
+REM Display mirrors of the active setpoints
+CLG-SP = ACT-CLG-SP
+HTG-SP = ACT-HTG-SP
 REM ACT-RMT is set by the selected thermostat module (wired or network)
 ACT-DAT = AI1
 ACT-OAT = AI2
@@ -377,14 +388,23 @@ def build_uv_core():
             ValuePoint(1, "ACT-RMT",           "AV", 72.0,  "Actual Room Temp",            "°F"),
             ValuePoint(2, "ACT-DAT",           "AV", 55.0,  "Actual DAT",                  "°F"),
             ValuePoint(3, "ACT-OAT",           "AV", 65.0,  "Actual OAT",                  "°F"),
-            ValuePoint(4, "CFG-OCC-CLG-SP",    "AV", 75.0,  "Occupied Cooling SP",         "°F"),
-            ValuePoint(5, "CFG-OCC-HTG-SP",    "AV", 70.0,  "Occupied Heating SP",         "°F"),
+            # Single operator zone setpoint + deadband (VAV single-setpoint pattern).
+            # AV4/AV5 instances reused from the former CFG-OCC-CLG-SP/CFG-OCC-HTG-SP
+            # pair so the UV point-location standard only needs those two entries
+            # re-issued. Occupied actives = RMT-SP +/- CFG-RMT-SP-DB (see MODE-CTRL).
+            ValuePoint(4, "RMT-SP",            "AV", 72.0,  "Operator Room Temp Setpoint", "°F"),
+            ValuePoint(5, "CFG-RMT-SP-DB",     "AV", 1.0,   "Room Temp SP Deadband",       "°F"),
+            # DB-MTPLR + ACT-RMT-SP-DB mirror VAV core (AV15/AV44) for exact parity:
+            # ACT-RMT-SP-DB = DB-MTPLR * CFG-RMT-SP-DB, actives = RMT-SP +/- ACT-RMT-SP-DB.
+            # New AV instances 12/13 (next free in uv-core) — add to point-location std.
+            ValuePoint(12, "DB-MTPLR",         "AV", 1.5,   "Deadband Multiplier",         ""),
+            ValuePoint(13, "ACT-RMT-SP-DB",    "AV", 1.5,   "Active Setpoint Deadband",    "°F"),
             ValuePoint(6, "CFG-UNOCC-CLG-SP",  "AV", 85.0,  "Unoccupied Cooling SP",       "°F"),
             ValuePoint(7, "CFG-UNOCC-HTG-SP",  "AV", 60.0,  "Unoccupied Heating SP",       "°F"),
-            ValuePoint(8, "ACT-CLG-SP",        "AV", 75.0,  "Active Cooling SP",           "°F"),
-            ValuePoint(9, "ACT-HTG-SP",        "AV", 70.0,  "Active Heating SP",           "°F"),
-            ValuePoint(10, "CLG-SP",           "AV", 75.0,  "Current Cooling SP",          "°F"),
-            ValuePoint(11, "HTG-SP",           "AV", 70.0,  "Current Heating SP",          "°F"),
+            ValuePoint(8, "ACT-CLG-SP",        "AV", 73.5,  "Active Cooling SP",           "°F"),
+            ValuePoint(9, "ACT-HTG-SP",        "AV", 70.5,  "Active Heating SP",           "°F"),
+            ValuePoint(10, "CLG-SP",           "AV", 73.5,  "Current Cooling SP",          "°F"),
+            ValuePoint(11, "HTG-SP",           "AV", 70.5,  "Current Heating SP",          "°F"),
             # DAT setpoints
             ValuePoint(31, "CLG-DAT-SP",       "AV", 55.0,  "Cooling DAT Setpoint",        "°F"),
             ValuePoint(32, "HTG-DAT-SP",       "AV", 95.0,  "Heating DAT Setpoint",        "°F"),
