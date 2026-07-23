@@ -58,7 +58,14 @@ CLG-SP = ACT-CLG-SP
 HTG-SP = ACT-HTG-SP
 REM ACT-RMT is set by the selected thermostat module (wired or network)
 ACT-DAT = DAT
-ACT-OAT = OAT
+REM --- OAT source select (DEFAULT = network) ---
+REM CFG-OAT-LOCAL FALSE (default) uses the global OAT from the parent controller;
+REM local unit OA sensors are often poorly sited, so the parent's single OAT is
+REM preferred. Set CFG-OAT-LOCAL TRUE to use this unit's hardwired OAT instead.
+REM {parent}AV1 is ALWAYS outdoor air temp in the parent controller.
+NET-OAT = {parent}AV1
+IF CFG-OAT-LOCAL THEN ACT-OAT = OAT
+IF NOT CFG-OAT-LOCAL THEN ACT-OAT = NET-OAT
 NET-OCC-CMD = {parent}BV21
 HWS-OK = {parent}BV22
 """
@@ -388,6 +395,7 @@ def build_uv_core():
             ValuePoint(1, "ACT-RMT",           "AV", 72.0,  "Actual Room Temp",            "°F"),
             ValuePoint(2, "ACT-DAT",           "AV", 55.0,  "Actual DAT",                  "°F"),
             ValuePoint(3, "ACT-OAT",           "AV", 65.0,  "Actual OAT",                  "°F"),
+            ValuePoint(14, "NET-OAT",          "AV", 65.0,  "Network OAT from parent (AV1)", "°F"),
             # Single operator zone setpoint + deadband (VAV single-setpoint pattern).
             # AV4/AV5 instances reused from the former CFG-OCC-CLG-SP/CFG-OCC-HTG-SP
             # pair so the UV point-location standard only needs those two entries
@@ -426,6 +434,7 @@ def build_uv_core():
             ValuePoint(14, "HWS-OK",           "BV", True,  "Hot Water Available"),
             ValuePoint(15, "FREEZE-PROT",      "BV", False, "Freeze Protection Active"),
             ValuePoint(16, "FAN-CMD",          "BV", False, "Fan Command"),
+            ValuePoint(17, "CFG-OAT-LOCAL",    "BV", False, "Use Local OAT Sensor (default FALSE = network)"),
         ],
 
         loops=[
