@@ -11,8 +11,11 @@ Point Name column is LOCKED in the export — user can only edit Terminal column
 """
 
 import io
-import uuid
+import os
 import copy
+import uuid
+import pickle
+from pathlib import Path
 from datetime import datetime
 
 import openpyxl
@@ -20,18 +23,117 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protecti
 from openpyxl.utils import get_column_letter
 
 
-# ─── Config Store ────────────────────────────────────────────────────────────
+# ─── Config Store (durable — survives service restart) ───────────────────────
+#
+# Assembled configs are cached in-memory AND persisted to disk, so a config_id
+# stays valid across a service restart (the deploy rule restarts the engine
+# after every code change; the old in-memory-only store lost every config_id
+# on each restart and returned 404 "Config not found" for the whole round-trip).
+#
+# Disk is the durable source of truth; ``_config_store`` is a fast cache in
+# front of it. Serialization is pickle: the stored inputs/outputs are
+# InputPoint/OutputPoint dataclass instances that callers read by attribute
+# (pt.row, pt.name, pt.min_v, ...), and pickle round-trips them exactly, so
+# caller behaviour is unchanged. The files are written and read only by this
+# local service in a private directory, satisfying the usual pickle trust rule.
 
-_config_store = {}  # config_id -> StoredConfig dict
+MAX_STORED_CONFIGS = 50  # cap; oldest evicted (LRU by file mtime)
 
-MAX_STORED_CONFIGS = 50  # evict oldest when full
+_STORE_DIR = Path(os.environ.get(
+    "SBS_CONFIG_STORE_DIR",
+    str(Path(__file__).resolve().parent / "_config_store"),
+))
+
+_config_store = {}  # config_id -> _Entry (in-memory cache of the on-disk entry)
 
 
-def _evict_oldest():
-    """Remove oldest config when store is full."""
-    if len(_config_store) >= MAX_STORED_CONFIGS:
-        oldest_id = min(_config_store, key=lambda k: _config_store[k]["created"])
-        del _config_store[oldest_id]
+class _Entry(dict):
+    """A config entry that re-persists itself to disk whenever it is mutated.
+
+    import_io_schedule() records terminal overrides with
+    ``cfg["terminal_overrides"] = {...}``; intercepting __setitem__ makes that
+    write durable without changing the import logic. It pickles as a plain dict
+    (see __reduce__) so the on-disk format carries no dependency on this class.
+    """
+
+    def __init__(self, config_id, data=None):
+        super().__init__(data or {})
+        self._config_id = config_id
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        _persist_entry(self._config_id, self)
+
+    def __reduce__(self):
+        # Pickle as a plain dict — drop _config_id and the subclass identity.
+        return (dict, (dict(self),))
+
+
+def _store_path(config_id):
+    return _STORE_DIR / f"{config_id}.pkl"
+
+
+def _ensure_store_dir():
+    try:
+        _STORE_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+
+def _persist_entry(config_id, entry):
+    """Write an entry to disk atomically. Best-effort — never raises to callers;
+    if the disk write fails the in-memory cache still serves this session."""
+    _ensure_store_dir()
+    path = _store_path(config_id)
+    tmp = path.with_suffix(".pkl.tmp")
+    try:
+        with open(tmp, "wb") as f:
+            pickle.dump(dict(entry), f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, path)  # atomic on POSIX
+    except (OSError, pickle.PickleError, TypeError, AttributeError):
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+def _load_entry(config_id):
+    """Load an entry from disk. Returns None if missing or corrupt (self-heals
+    by removing the bad file). Never raises — a bad file must not crash a request."""
+    path = _store_path(config_id)
+    if not path.exists():
+        return None
+    try:
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("persisted config is not a dict")
+        return _Entry(config_id, data)
+    except Exception:
+        # Corrupt / truncated / unreadable — drop it and treat as absent.
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+
+
+def _evict_if_full():
+    """Enforce MAX_STORED_CONFIGS on the on-disk store (authoritative), evicting
+    the oldest by file mtime and keeping the memory cache in sync."""
+    _ensure_store_dir()
+    try:
+        files = sorted(_STORE_DIR.glob("*.pkl"), key=lambda f: f.stat().st_mtime)
+    except OSError:
+        return
+    while len(files) >= MAX_STORED_CONFIGS:
+        victim = files.pop(0)
+        try:
+            victim.unlink()
+        except OSError:
+            pass
+        _config_store.pop(victim.stem, None)
 
 
 def store_config(inputs, outputs, family, controller, source, params):
@@ -49,9 +151,9 @@ def store_config(inputs, outputs, family, controller, source, params):
     Returns:
         config_id (str, 8 chars)
     """
-    _evict_oldest()
+    _evict_if_full()
     config_id = uuid.uuid4().hex[:8]
-    _config_store[config_id] = {
+    entry = _Entry(config_id, {
         "inputs": copy.deepcopy(inputs),
         "outputs": copy.deepcopy(outputs),
         "family": family,
@@ -60,15 +162,23 @@ def store_config(inputs, outputs, family, controller, source, params):
         "params": params,
         "terminal_overrides": {},  # point_name -> new_row (populated by import)
         "created": datetime.now().isoformat(),
-    }
+    })
+    _config_store[config_id] = entry
+    _persist_entry(config_id, entry)
     return config_id
 
 
 def get_stored_config(config_id):
-    """Get a stored config by ID. Raises ValueError if not found."""
-    if config_id not in _config_store:
+    """Get a stored config by ID. Falls back to the durable on-disk store when
+    the in-memory cache was cleared by a restart. Raises ValueError if not found."""
+    entry = _config_store.get(config_id)
+    if entry is None:
+        entry = _load_entry(config_id)
+        if entry is not None:
+            _config_store[config_id] = entry
+    if entry is None:
         raise ValueError(f"Config '{config_id}' not found. Assemble first to get a config_id.")
-    return _config_store[config_id]
+    return entry
 
 
 def get_terminal_overrides(config_id):
