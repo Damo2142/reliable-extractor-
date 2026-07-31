@@ -63,7 +63,7 @@ HIGH-RMT = H
 IF N > 0 THEN AVG-RMT = A / N
 IF N = 0 THEN AVG-RMT = 0.0
 LOW-RMT = L
-AHU-TOT-ZONES = N
+AHU-ACT-ZONES = N
 REM
 999 REM End
 """
@@ -133,7 +133,8 @@ def build():
             ValuePoint(44, "NSF-MODE",        "BV", False,  "Night Set-Forward Mode Active"),
 
             # Zone data
-            ValuePoint(45, "AHU-TOT-ZONES",   "AV", 15.0,   "Total Zones Served",                "#"),
+            ValuePoint(45, "AHU-TOT-ZONES",   "AV", 15.0,   "Total Zones Served (commissioned)", "#"),
+            ValuePoint(46, "AHU-ACT-ZONES",   "AV", 0.0,    "Active Zones Reporting Data",       "#"),
             ValuePoint(47, "OCC-MODE-FIRST-ON","AV","00:00:00","Occupancy First On Time",         "Time"),
 
             # SAT setpoints
