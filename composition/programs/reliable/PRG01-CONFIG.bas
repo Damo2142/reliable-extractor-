@@ -15,20 +15,7 @@ REM ***** Set network occupied command *****
 REM ***** Set network snow day *****
 {device-name}-SNOW-DAY = {parent}BV9
 
-REM ***** Set zone variables from parent *****
-{device-name}-HIGH-RMT = {parent}AV17
-{device-name}-AVG-RMT = {parent}AV18
-{device-name}-LOW-RMT = {parent}AV19
-{device-name}-CLG-DMD = {parent}AV111
-{device-name}-HTG-REQS = {parent}AV112
-{device-name}-ZONE-DMP-POS = {parent}AV113
-{device-name}-AHU-TOT-ZONES = {parent}AV114
-{device-name}-BYPASS-REQS = {parent}AV115
-{device-name}-NSB-REQS = {parent}AV116
-{device-name}-NSF-REQS = {parent}AV117
-{device-name}-HIGH-SP-DEV = {parent}AV118
-{device-name}-LOW-SP-DEV = {parent}AV119
-{device-name}-MSTR-FIRST-ON = {parent}AV16
+REM ***** Zone aggregates calculated by ZONE-COORD-PRG (not read from parent) *****
 
 REM ***** Calculate return air enthalpy *****
 {device-name}-RA-ERH = ENTHALPY( {device-name}-RAT , {device-name}-RAH , 1 )
@@ -48,6 +35,7 @@ REM ***** Report AHU OK status to parent *****
 REM ***** Publish SAT for VAV network *****
 {device-name}-SAT-PUB = {device-name}-SAT
 
-REM **** BV151 — Link to HW plant OK status at commissioning
-REM **** BV152 — Link to CHW plant OK status at commissioning
-REM **** AV155 — Link to HW plant supply temp at commissioning
+REM ***** Hot Water Supply Temp monitoring *****
+REM AV155 = HW supply temp from plant (commissioning-set)
+REM HWS-OK = 1 if AV155 > 90°F (plant has water), 0 otherwise
+IF {device-name}-HWST > 90 THEN {device-name}-HWS-OK = 1 ELSE {device-name}-HWS-OK = 0

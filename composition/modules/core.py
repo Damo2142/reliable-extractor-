@@ -113,6 +113,7 @@ def build():
             ValuePoint(4,  "RESET-SAFETIES",  "BV", False,  "Reset Safeties Command"),
             ValuePoint(22, "NET-OCC-CMD",     "BV", True,   "Network Occupied Command"),
             ValuePoint(23, "USE-LOC-SCHD",    "BV", False,  "Use Local Schedule"),
+            ValuePoint(24, "AHU-SET-LIMITS",  "BV", True,   "Enforce Zone Setpoint Limits"),
             ValuePoint(25, "SNOW-DAY",        "BV", False,  "Snow Day Override"),
             ValuePoint(26, "OCC-CMD",         "BV", False,  "Occupancy Command"),
             ValuePoint(27, "BYPASS-REQS",     "AV", 0.0,    "Bypass Requests",                   "#"),
@@ -177,6 +178,7 @@ def build():
 
             # AHU status
             ValuePoint(178,"AHU-OK",          "BV", False,  "AHU Running OK Status"),
+            ValuePoint(151,"HWS-OK",          "BV", False,  "HW Supply Temp OK (>90°F)"),
 
             # VAV network publish points
             ValuePoint(13, "WU-MODE",         "BV", False,  "Warm-Up Mode Active"),
