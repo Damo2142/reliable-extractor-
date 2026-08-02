@@ -97,14 +97,15 @@ CLG-DAT-SP = SLIDE( CLG-RESET-LOOP, 0.0, 100.0, CFG-CLG-DAT-MIN, CFG-CLG-DAT-MAX
 _PRG02B_CAB_PROT = """\
 REM --- CAB-PROT-RESET ---
 REM Cabinet protection reset: OAT-based linear interpolation
-REM OAT >= CFG-CAB-OAT-HI -> valve = 0 (no trickle)
+REM OAT >= CFG-CAB-OAT-HI -> valve = CFG-CAB-VLV-MIN (no trickle)
 REM OAT <= CFG-CAB-OAT-LO -> valve = CFG-CAB-VLV-MAX (full trickle)
-REM between -> linear interpolation
+REM between -> linear interpolation (explicit, divide-by-zero guarded)
 REM Open loop only, no DAT feedback, no PID
 REM
-IF ACT-OAT >= CFG-CAB-OAT-HI THEN CAB-PROT-VLV = 0
+IF ACT-OAT >= CFG-CAB-OAT-HI THEN CAB-PROT-VLV = CFG-CAB-VLV-MIN
 IF ACT-OAT <= CFG-CAB-OAT-LO THEN CAB-PROT-VLV = CFG-CAB-VLV-MAX
-IF ACT-OAT > CFG-CAB-OAT-LO AND ACT-OAT < CFG-CAB-OAT-HI THEN CAB-PROT-VLV = SLIDE( ACT-OAT, CFG-CAB-OAT-LO, CFG-CAB-OAT-HI, CFG-CAB-VLV-MAX, CFG-CAB-VLV-MIN )
+REM If OAT-HI == OAT-LO, condition below cannot be true, so guard is implicit
+IF ACT-OAT > CFG-CAB-OAT-LO AND ACT-OAT < CFG-CAB-OAT-HI THEN CAB-PROT-VLV = CFG-CAB-VLV-MAX - ( ( ACT-OAT - CFG-CAB-OAT-LO ) / ( CFG-CAB-OAT-HI - CFG-CAB-OAT-LO ) ) * ( CFG-CAB-VLV-MAX - CFG-CAB-VLV-MIN )
 """
 
 _PRG03_UNOCC_OAT = """\
@@ -453,7 +454,7 @@ def build_uv_core():
             ValuePoint(44, "CFG-CAB-OAT-LO",   "AV", 0.0,   "Cabinet Protection: OAT Low (max trickle)",  "°F"),
             ValuePoint(45, "CFG-CAB-VLV-MIN",  "AV", 20.0,  "Cabinet Protection: Valve % at OAT-HI",     "%"),
             ValuePoint(46, "CFG-CAB-VLV-MAX",  "AV", 60.0,  "Cabinet Protection: Valve % at OAT-LO",     "%"),
-            ValuePoint(86, "CAB-PROT-VLV",     "AV", 0.0,   "Cabinet Protection: Computed Valve Output",  "%"),
+            ValuePoint(52, "CAB-PROT-VLV",     "AV", 0.0,   "Cabinet Protection: Computed Valve Output",  "%"),
             ValuePoint(42, "CFG-STG1-T",       "AV", 50.0,  "Stage 1 Threshold",           "%"),
             ValuePoint(43, "CFG-STG2-T",       "AV", 80.0,  "Stage 2 Threshold",           "%"),
             # Network/status
