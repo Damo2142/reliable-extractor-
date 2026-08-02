@@ -275,6 +275,57 @@ for _cid, _num, _mode, _valve in _RAD_FAMILY_CONFIGS:
 _CACHE = {}
 
 
+def _get_compatible_families(module_id: str) -> list:
+    """Map a module ID to the equipment families it applies to.
+
+    Returns list of family categories: ["uv"], ["fcu"], ["ahu"], ["vav"], ["plant"], etc.
+    Empty list means show everywhere (shared/core modules like safety, economizer).
+    """
+    # UV terminal unit modules — families UV-*
+    if module_id.startswith('uv-'):
+        return ["uv"]
+
+    # FCU fan coil modules — families FCU-*
+    if module_id.startswith('fcu-'):
+        return ["fcu"]
+
+    # VAV terminal unit modules — families VAV-* (non-AHU)
+    if module_id.startswith('vav-') and module_id not in ['vav-stat-hardwired', 'vav-stat-hardwired-ud',
+                                                           'vav-stat-comm', 'vav-stat-comm-co2',
+                                                           'vav-stat-comm-hum', 'vav-stat-comm-occ',
+                                                           'vav-stat-remote']:  # vav-stat-* are shared/AHU-usable
+        return ["vav"]
+
+    # HW/CHW plant modules
+    if module_id in ['hw-core', 'chw-core']:
+        return ["plant"]
+    if module_id.startswith('hw-') or module_id.startswith('chw-') or module_id.startswith('blr-'):
+        return ["plant"]
+
+    # AHU-specific modules — supply/exhaust/return fans, AHU cooling/heating
+    ahu_only_prefixes = [
+        'fan-sf-',        # Supply fan (AHU only)
+        'fan-ef-',        # Exhaust fan (AHU only)
+        'fan-rf-',        # Return fan (AHU only)
+        'clg-',           # AHU cooling (chilled water, DX) — AHU only
+        'htg-',           # AHU heating (hot water, electric) — AHU only
+        'dd-',            # Dual duct (AHU only)
+    ]
+    for prefix in ahu_only_prefixes:
+        if module_id.startswith(prefix):
+            return ["ahu"]
+
+    # AHU-specific core modules
+    ahu_only_modules = ['dsp-ctrl', 'sz-vav-fan-ctrl']
+    if module_id in ahu_only_modules:
+        return ["ahu"]
+
+    # Shared/generic modules (core, stubs, safety, economizer, ventilation, humidity, pump, sensors, thermostat, etc.)
+    # These apply to all families (AHU, UV, FCU, VAV, plant) unless family-specific variants exist
+    # Examples: safe-*, econ-*, vent-*, hum-*, thermostat modules, sensor modules
+    return []  # Empty list = show everywhere
+
+
 def get_module(module_id):
     """Get a module by ID. Builds on first access."""
     if module_id not in _CACHE:

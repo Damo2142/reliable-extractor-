@@ -192,6 +192,9 @@ class Module:
                                         # any real module already provides that name
                                         # under inputs/outputs/values. Use for shared
                                         # default-value points that real modules override.
+    compatible_families: list = field(default_factory=list)  # Equipment families this module applies to
+                                        # e.g. ["uv"] for UV-only, ["ahu", "rtu"] for shared
+                                        # Empty list = show everywhere (shared/core modules)
 
 
 @dataclass

@@ -61,8 +61,49 @@ class GenerateRequest(BaseModel):
 # --- API Endpoints ---
 
 @app.get("/api/modules")
-async def api_list_modules():
-    return list_by_category()
+async def api_list_modules(family: str = ""):
+    """List modules grouped by category, optionally filtered by equipment family.
+
+    If family is provided, only show modules compatible with that family.
+    If family is empty/missing, show all modules (backward compatibility).
+    """
+    by_cat = list_by_category()
+
+    if not family:
+        return by_cat
+
+    # Map equipment family name to family category for filtering
+    # E.g., "VAV-AHU", "CV-AHU", "RTU", "DOAS", "SZ-CV", "SZ-VAV", "DD-AHU", "MZ-AHU" → "ahu"
+    # E.g., "UV-*" → "uv", "FCU-*" → "fcu", "VAV-*" (non-AHU) → "vav", "HW/CHW-PLANT" → "plant"
+    family_category = ""
+    if family in ["VAV-AHU", "CV-AHU", "RTU", "DOAS", "SZ-CV", "SZ-VAV", "DD-AHU", "MZ-AHU"]:
+        family_category = "ahu"
+    elif family.startswith("UV-"):
+        family_category = "uv"
+    elif family.startswith("FCU-"):
+        family_category = "fcu"
+    elif family.startswith("VAV-"):
+        family_category = "vav"
+    elif family in ["HW-PLANT", "CHW-PLANT-AIR", "CHW-PLANT-TOWER"]:
+        family_category = "plant"
+
+    if not family_category:
+        # Unknown family — return everything to be safe
+        return by_cat
+
+    # Filter: for each category, include only modules that apply to this family
+    filtered = {}
+    for cat, mods in by_cat.items():
+        filtered_mods = []
+        for mod in mods:
+            mod_families = _get_compatible_families(mod["id"])
+            # Include if: module applies to this family OR module has no family restrictions (empty list)
+            if not mod_families or family_category in mod_families:
+                filtered_mods.append(mod)
+        if filtered_mods:
+            filtered[cat] = filtered_mods
+
+    return filtered
 
 
 @app.get("/api/modules/{module_id}")
@@ -2014,7 +2055,7 @@ async function init(){
   }
 }
 
-function onFamilyChange(){
+async function onFamilyChange(){
   activeFamily=document.getElementById('selFamily').value;
   const f=families[activeFamily];
   document.getElementById('familyDesc').textContent=f?f.description:'';
@@ -2049,7 +2090,16 @@ function onFamilyChange(){
     document.getElementById('selCtrl').value='auto';
   }
   renderConfigs();
-  if(!isPlant)renderModules();
+  // Re-fetch modules filtered by family (for non-plant families; plants use wizard)
+  if(!isPlant){
+    try{
+      var resp=await fetch('api/modules?family='+encodeURIComponent(activeFamily));
+      modules=await resp.json();
+    }catch(e){
+      console.error('Failed to fetch filtered modules:',e);
+    }
+    renderModules();
+  }
   document.getElementById('results').style.display='none';
   var statusMsg=f?(isPlant?'Configure plant options, then click Assemble.':'Select a standard configuration, then click Assemble.'):'Select an equipment family.';
   if(isVAV)statusMsg='Confirm controller model, then click Assemble.';
