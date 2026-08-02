@@ -80,9 +80,6 @@ def build():
             # OA airflow (real owner: ventilation.py vent-ams uses OA-CFM AI; OA-VEL is
             # only referenced by PRG35-OAD-RAD as the velocity feeding the K-factor calc)
             ValuePoint(720, "OA-VEL",            "AV", 0.0,   "OA Velocity (stub default)",                "FPM"),
-
-            # Preheat pump status (real owner: pump.py ph-hw-pump module)
-            ValuePoint(721, "PH-PMP-STS",        "BV", False, "Preheat Pump Status (stub default)"),
         ],
 
         soo_paragraph="",
