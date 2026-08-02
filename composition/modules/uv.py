@@ -94,6 +94,19 @@ HTG-DAT-SP = SLIDE( HTG-RESET-LOOP, 0.0, 100.0, CFG-HTG-DAT-MIN, CFG-HTG-DAT-MAX
 CLG-DAT-SP = SLIDE( CLG-RESET-LOOP, 0.0, 100.0, CFG-CLG-DAT-MIN, CFG-CLG-DAT-MAX )
 """
 
+_PRG02B_CAB_PROT = """\
+REM --- CAB-PROT-RESET ---
+REM Cabinet protection reset: OAT-based linear interpolation
+REM OAT >= CFG-CAB-OAT-HI -> valve = 0 (no trickle)
+REM OAT <= CFG-CAB-OAT-LO -> valve = CFG-CAB-VLV-MAX (full trickle)
+REM between -> linear interpolation
+REM Open loop only, no DAT feedback, no PID
+REM
+IF ACT-OAT >= CFG-CAB-OAT-HI THEN CAB-PROT-VLV = 0
+IF ACT-OAT <= CFG-CAB-OAT-LO THEN CAB-PROT-VLV = CFG-CAB-VLV-MAX
+IF ACT-OAT > CFG-CAB-OAT-LO AND ACT-OAT < CFG-CAB-OAT-HI THEN CAB-PROT-VLV = SLIDE( ACT-OAT, CFG-CAB-OAT-LO, CFG-CAB-OAT-HI, CFG-CAB-VLV-MAX, CFG-CAB-VLV-MIN )
+"""
+
 _PRG03_UNOCC_OAT = """\
 REM --- UNOCC-OAT-LIMIT ---
 REM Unoccupied freeze protection based on OAT low limit
@@ -163,9 +176,11 @@ IF UNOCC-OAT-LOW = 1 THEN STM-VLV = 1
 _PRG05_HW_MOD = """\
 REM --- HTG-OUTPUT ---
 REM HW modulating valve from HTG-DAT-LOOP
+REM Cabinet protection reset applies when unoccupied OAT low
 REM
 IF UNOCC-OAT-LOW = 0 THEN HW-VLV = HTG-DAT-LOOP
 IF ACT-DAT > CFG-DAT-HL THEN HW-VLV = 0
+IF UNOCC-OAT-LOW = 1 THEN HW-VLV = CAB-PROT-VLV
 """
 
 _PRG05_HW_FLT = """\
@@ -173,13 +188,12 @@ REM --- HTG-OUTPUT ---
 REM HW floating valve using CBAS FLOAT() function
 REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
 REM
-REM Position command from heating DAT loop
-RH-POS-CMD = HTG-DAT-LOOP
+REM Position command from heating DAT loop or cabinet protection reset
+IF UNOCC-OAT-LOW = 0 THEN RH-POS-CMD = HTG-DAT-LOOP
+IF UNOCC-OAT-LOW = 1 THEN RH-POS-CMD = CAB-PROT-VLV
 REM
 REM Safety overrides
 IF ACT-DAT > CFG-DAT-HL THEN RH-POS-CMD = 0
-REM
-REM Freeze: drive valve to configured freeze position (will be replaced with cabinet protection reset)
 REM
 REM Floating sync on power cycle and unoccupied
 IF+ POWER-LOSS THEN START RH-FLOAT-SYNC
@@ -434,6 +448,12 @@ def build_uv_core():
             ValuePoint(38, "CFG-DAT-HL",  "AV", 110.0, "DAT High Limit (safety)",     "°F"),
             ValuePoint(39, "CFG-DAT-FREEZE",   "AV", 38.0,  "DAT Freeze Protection",       "°F"),
             ValuePoint(40, "CFG-UNOCC-OAT-LIM","AV", 35.0,  "Freeze Enable OAT",           "°F"),
+            # Cabinet protection reset (Part 2)
+            ValuePoint(41, "CFG-CAB-OAT-HI",   "AV", 35.0,  "Cabinet Protection: OAT High (no trickle)", "°F"),
+            ValuePoint(44, "CFG-CAB-OAT-LO",   "AV", 0.0,   "Cabinet Protection: OAT Low (max trickle)",  "°F"),
+            ValuePoint(45, "CFG-CAB-VLV-MIN",  "AV", 20.0,  "Cabinet Protection: Valve % at OAT-HI",     "%"),
+            ValuePoint(46, "CFG-CAB-VLV-MAX",  "AV", 60.0,  "Cabinet Protection: Valve % at OAT-LO",     "%"),
+            ValuePoint(86, "CAB-PROT-VLV",     "AV", 0.0,   "Cabinet Protection: Computed Valve Output",  "%"),
             ValuePoint(42, "CFG-STG1-T",       "AV", 50.0,  "Stage 1 Threshold",           "%"),
             ValuePoint(43, "CFG-STG2-T",       "AV", 80.0,  "Stage 2 Threshold",           "%"),
             # Network/status
@@ -466,6 +486,8 @@ def build_uv_core():
                        "Occupancy mode and setpoint selection", exec_order=1),
             ProgramDef(2, "DAT-RESET", "PRG02-DAT-RESET.bas", _PRG02_DAT_RESET, True,
                        "Space temp loops reset DAT setpoints", exec_order=2),
+            ProgramDef(2, "CAB-PROT-RESET", "PRG02B-CAB-PROT-RESET.bas", _PRG02B_CAB_PROT, True,
+                       "Cabinet protection OAT-based reset", exec_order=2.5),
             ProgramDef(3, "UNOCC-OAT-LIMIT", "PRG03-UNOCC-OAT-LIMIT.bas", _PRG03_UNOCC_OAT, True,
                        "Unoccupied OAT low limit protection", exec_order=3),
         ],
