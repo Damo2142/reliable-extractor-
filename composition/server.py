@@ -25,7 +25,7 @@ from composition.excel_gen import generate_excel
 from composition.program_loader import inject_program_code, number_programs, prefix_local_points, format_program_commas
 from composition.module_registry import (
     list_modules, list_by_category, get_module, STANDARD_CONFIGS, EQUIPMENT_FAMILIES,
-    hwp_assemble, chwp_assemble
+    hwp_assemble, chwp_assemble, _get_compatible_families
 )
 from composition.io_schedule import (
     store_config, get_stored_config, export_io_schedule,
