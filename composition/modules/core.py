@@ -41,8 +41,8 @@ LOW-SP-DEV = 999.0
 REM
 REM --- Iterate Zone Arrays ---
 FOR X = 1 TO Y
-  REM Skip empty slots (room temp = 0 means no VAV assigned)
-  IF AY1[ X ] = 0.0 THEN GOTO 100
+  REM Skip empty slots (AY9 validity flag <> 1 means no VAV assigned)
+  IF AY9[ X ] <> 1 THEN GOTO 100
   N = N + 1
   IF AY1[ X ] > H THEN H = AY1[ X ]
   A = A + AY1[ X ]
