@@ -203,6 +203,22 @@ def assemble(module_ids: list, device_name: str = "{device-name}",
             if prg.instance not in program_instances:
                 prg.module = mid
                 program_instances[prg.instance] = prg
+            else:
+                existing = program_instances[prg.instance]
+                # ERROR if duplicate is from the SAME module (config error, not intentional variant)
+                # WARN if duplicate is from DIFFERENT modules (intentional variant selection, keeping first)
+                if existing.module == mid:
+                    raise ValueError(
+                        f"Configuration error in family {family_id}: "
+                        f"Duplicate program instance {prg.instance} within same module {mid}. "
+                        f"Programs: '{existing.name}' and '{prg.name}'. "
+                        f"Each program in a module must have a unique instance number. "
+                        f"This would silently drop '{prg.name}' from generated output."
+                    )
+                else:
+                    # Different modules: this is intentional variant selection (e.g., HW vs ELEC heating)
+                    # Silently keep the first variant that was selected
+                    pass
 
         for sch in mod_schedules:
             if sch.instance not in schedule_instances:
