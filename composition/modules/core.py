@@ -41,13 +41,25 @@ LOW-SP-DEV = 999.0
 REM
 REM --- Iterate Zone Arrays ---
 FOR X = 1 TO Y
-  REM Only include zones with valid temperature (CFG-ZONE-T-MIN to CFG-ZONE-T-MAX)
-  IF AY1[ X ] >= CFG-ZONE-T-MIN AND AY1[ X ] <= CFG-ZONE-T-MAX THEN N = N + 1 , IF AY1[ X ] > H THEN H = AY1[ X ] , A = A + AY1[ X ] , IF AY1[ X ] < L THEN L = AY1[ X ] , IF AY2[ X ] > CLG-DMD THEN CLG-DMD = AY2[ X ] , HTG-REQS = HTG-REQS + AY3[ X ] , IF AY4[ X ] > MAX-DMP-POS THEN MAX-DMP-POS = AY4[ X ] , NSB-REQS = NSB-REQS + AY5[ X ] , NSF-REQS = NSF-REQS + AY6[ X ] , BYPASS-REQS = BYPASS-REQS + AY7[ X ] , IF AY8[ X ] > HIGH-SP-DEV THEN HIGH-SP-DEV = AY8[ X ] , IF AY8[ X ] < LOW-SP-DEV THEN LOW-SP-DEV = AY8[ X ] , END
+  V = 0
+  IF AY1[ X ] >= CFG-ZONE-T-MIN AND AY1[ X ] <= CFG-ZONE-T-MAX THEN V = 1
+  IF V = 1 THEN N = N + 1
+  IF V = 1 THEN A = A + AY1[ X ]
+  IF V = 1 AND AY1[ X ] > H THEN H = AY1[ X ]
+  IF V = 1 AND AY1[ X ] < L THEN L = AY1[ X ]
+  IF V = 1 AND AY2[ X ] > CLG-DMD THEN CLG-DMD = AY2[ X ]
+  IF V = 1 THEN HTG-REQS = HTG-REQS + AY3[ X ]
+  IF V = 1 AND AY4[ X ] > MAX-DMP-POS THEN MAX-DMP-POS = AY4[ X ]
+  IF V = 1 THEN NSB-REQS = NSB-REQS + AY5[ X ]
+  IF V = 1 THEN NSF-REQS = NSF-REQS + AY6[ X ]
+  IF V = 1 THEN BYPASS-REQS = BYPASS-REQS + AY7[ X ]
+  IF V = 1 AND AY8[ X ] > HIGH-SP-DEV THEN HIGH-SP-DEV = AY8[ X ]
+  IF V = 1 AND AY8[ X ] < LOW-SP-DEV THEN LOW-SP-DEV = AY8[ X ]
 NEXT X
 REM
 REM --- Write Aggregated Results (only when at least one valid zone) ---
 REM When N = 0, no valid zone data exists. Retain previous values, never write.
-IF N > 0 THEN HIGH-RMT = H , AVG-RMT = A / N , LOW-RMT = L , END
+IF N > 0 THEN HIGH-RMT = H , AVG-RMT = A / N , LOW-RMT = L
 AHU-ACT-ZONES = N
 REM
 999 REM End
