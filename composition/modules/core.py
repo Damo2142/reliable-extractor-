@@ -41,28 +41,13 @@ LOW-SP-DEV = 999.0
 REM
 REM --- Iterate Zone Arrays ---
 FOR X = 1 TO Y
-  REM Skip empty slots (AY9 validity flag <> 1 means no VAV assigned)
-  IF AY9[ X ] <> 1 THEN GOTO 100
-  N = N + 1
-  IF AY1[ X ] > H THEN H = AY1[ X ]
-  A = A + AY1[ X ]
-  IF AY1[ X ] < L THEN L = AY1[ X ]
-  IF AY2[ X ] > CLG-DMD THEN CLG-DMD = AY2[ X ]
-  HTG-REQS = HTG-REQS + AY3[ X ]
-  IF AY4[ X ] > MAX-DMP-POS THEN MAX-DMP-POS = AY4[ X ]
-  NSB-REQS = NSB-REQS + AY5[ X ]
-  NSF-REQS = NSF-REQS + AY6[ X ]
-  BYPASS-REQS = BYPASS-REQS + AY7[ X ]
-  IF AY8[ X ] > HIGH-SP-DEV THEN HIGH-SP-DEV = AY8[ X ]
-  IF AY8[ X ] < LOW-SP-DEV THEN LOW-SP-DEV = AY8[ X ]
-100 REM Continue
+  REM Only include zones with valid temperature (CFG-ZONE-T-MIN to CFG-ZONE-T-MAX)
+  IF AY1[ X ] >= CFG-ZONE-T-MIN AND AY1[ X ] <= CFG-ZONE-T-MAX THEN N = N + 1 , IF AY1[ X ] > H THEN H = AY1[ X ] , A = A + AY1[ X ] , IF AY1[ X ] < L THEN L = AY1[ X ] , IF AY2[ X ] > CLG-DMD THEN CLG-DMD = AY2[ X ] , HTG-REQS = HTG-REQS + AY3[ X ] , IF AY4[ X ] > MAX-DMP-POS THEN MAX-DMP-POS = AY4[ X ] , NSB-REQS = NSB-REQS + AY5[ X ] , NSF-REQS = NSF-REQS + AY6[ X ] , BYPASS-REQS = BYPASS-REQS + AY7[ X ] , IF AY8[ X ] > HIGH-SP-DEV THEN HIGH-SP-DEV = AY8[ X ] , IF AY8[ X ] < LOW-SP-DEV THEN LOW-SP-DEV = AY8[ X ] , END
 NEXT X
 REM
-REM --- Write Aggregated Results ---
-HIGH-RMT = H
-IF N > 0 THEN AVG-RMT = A / N
-IF N = 0 THEN AVG-RMT = 0.0
-LOW-RMT = L
+REM --- Write Aggregated Results (only when at least one valid zone) ---
+REM When N = 0, no valid zone data exists. Retain previous values, never write.
+IF N > 0 THEN HIGH-RMT = H , AVG-RMT = A / N , LOW-RMT = L , END
 AHU-ACT-ZONES = N
 REM
 999 REM End
@@ -137,6 +122,8 @@ def build():
             ValuePoint(45, "AHU-TOT-ZONES",   "AV", 15.0,   "Total Zones Served (commissioned)", "#"),
             ValuePoint(46, "AHU-ACT-ZONES",   "AV", 0.0,    "Active Zones Reporting Data",       "#"),
             ValuePoint(47, "OCC-MODE-FIRST-ON","AV","00:00:00","Occupancy First On Time",         "Time"),
+            ValuePoint(300,"CFG-ZONE-T-MIN",  "AV", 45.0,   "Zone Temp Min Valid",               "°F"),
+            ValuePoint(301,"CFG-ZONE-T-MAX",  "AV", 95.0,   "Zone Temp Max Valid",               "°F"),
 
             # SAT setpoints
             ValuePoint(76, "OSH-SAT-SP",      "AV", 85.0,   "Optimum Start Heat SAT SP",         "°F"),

@@ -195,8 +195,7 @@ REM Array populate — writes zone data to parent AHU.
 REM {parent} = BACnet device of the AHU serving this VAV zone.
 REM Auto-calculates array index from device MAC address.
 REM AY1=ACT-RMT, AY2=CLG-DMD, AY3=HTG-REQ, AY4=DMP-POS,
-REM AY5=NSB-MODE, AY6=NSF-MODE, AY7=BYPASS, AY8=RMT-DEV,
-REM AY9=zone-live validity flag (1 = box is assigned).
+REM AY5=NSB-MODE, AY6=NSF-MODE, AY7=BYPASS, AY8=RMT-DEV.
 REM Always writes zone data to the parent AHU arrays.
 REM Gated only on a valid index (Y >= 1) so a failed device-ID read
 REM (Y = 0) can't default into slot 1 and clobber that box.
@@ -213,9 +212,6 @@ IF Y >= 1 THEN {parent}AY5[ Y ] = NSB-MODE
 IF Y >= 1 THEN {parent}AY6[ Y ] = NSF-MODE
 IF Y >= 1 THEN {parent}AY7[ Y ] = BYPASS
 IF Y >= 1 THEN {parent}AY8[ Y ] = RMT-DEV
-REM
-REM --- Write Zone Validity Flag ---
-IF Y >= 1 THEN {parent}AY9[ Y ] = 1
 """
 
 _PRG09_REQS = """\
