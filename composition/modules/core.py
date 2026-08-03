@@ -134,8 +134,8 @@ def build():
             ValuePoint(45, "AHU-TOT-ZONES",   "AV", 15.0,   "Total Zones Served (commissioned)", "#"),
             ValuePoint(46, "AHU-ACT-ZONES",   "AV", 0.0,    "Active Zones Reporting Data",       "#"),
             ValuePoint(47, "OCC-MODE-FIRST-ON","AV","00:00:00","Occupancy First On Time",         "Time"),
-            ValuePoint(300,"CFG-ZONE-T-MIN",  "AV", 45.0,   "Zone Temp Min Valid",               "°F"),
-            ValuePoint(301,"CFG-ZONE-T-MAX",  "AV", 95.0,   "Zone Temp Max Valid",               "°F"),
+            ValuePoint(300,"CFG-ZONE-T-MIN",  "AV", 35.0,   "Zone Temp Min Valid",               "°F"),
+            ValuePoint(301,"CFG-ZONE-T-MAX",  "AV", 120.0,  "Zone Temp Max Valid",               "°F"),
 
             # SAT setpoints
             ValuePoint(76, "OSH-SAT-SP",      "AV", 85.0,   "Optimum Start Heat SAT SP",         "°F"),
