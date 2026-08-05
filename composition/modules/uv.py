@@ -178,18 +178,25 @@ _PRG05_HW_MOD = """\
 REM --- HTG-OUTPUT ---
 REM HW modulating valve from HTG-DAT-LOOP
 REM Cabinet protection reset applies when unoccupied OAT low
+REM Freezestat override: opens valve 100%, active occupied and unoccupied
 REM
+IF FREEZE-TRIP = 1 THEN HW-VLV = 100 : GOTO 200
 IF UNOCC-OAT-LOW = 0 THEN HW-VLV = HTG-DAT-LOOP
 IF ACT-DAT > CFG-DAT-HL THEN HW-VLV = 0
 IF UNOCC-OAT-LOW = 1 THEN HW-VLV = CAB-PROT-VLV
+200 END
 """
 
 _PRG05_HW_FLT = """\
 REM --- HTG-OUTPUT ---
 REM HW floating valve using CBAS FLOAT() function
 REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
+REM Freezestat override: drives valve to full open (100%) when tripped
 REM
-REM Position command from heating DAT loop or cabinet protection reset
+REM Freeze protection: override all other logic
+IF FREEZE-TRIP = 1 THEN RH-POS-CMD = 100 : GOTO 200
+REM
+REM Normal control: position command from heating DAT loop or cabinet protection reset
 IF UNOCC-OAT-LOW = 0 THEN RH-POS-CMD = HTG-DAT-LOOP
 IF UNOCC-OAT-LOW = 1 THEN RH-POS-CMD = CAB-PROT-VLV
 REM
@@ -202,35 +209,44 @@ IF+ OCC-MODE = 0 THEN START RH-FLOAT-SYNC
 IF TIME-ON( RH-FLOAT-SYNC ) > 0:00:05 THEN STOP RH-FLOAT-SYNC
 REM
 REM FLOAT() drives the open/close relays
-RH-POS = FLOAT( RH-OPEN , RH-CLOSE , RH-POS-CMD , CFG-RH-DRV-TIME , CFG-RH-POS-DB , RH-FLOAT-SYNC )
+200 RH-POS = FLOAT( RH-OPEN , RH-CLOSE , RH-POS-CMD , CFG-RH-DRV-TIME , CFG-RH-POS-DB , RH-FLOAT-SYNC )
 """
 
 _PRG05_STEAM_MOD = """\
 REM --- HTG-OUTPUT ---
 REM Steam modulating valve from HTG-DAT-LOOP
+REM Freezestat override: opens valve 100%, active occupied and unoccupied
 REM
+IF FREEZE-TRIP = 1 THEN STM-VLV = 100 : GOTO 100
 IF UNOCC-OAT-LOW = 0 THEN STM-VLV = HTG-DAT-LOOP
 IF ACT-DAT > CFG-DAT-HL THEN STM-VLV = 0
+100 END
 """
 
 _PRG05_STEAM_ONOFF = """\
 REM --- HTG-OUTPUT ---
 REM Steam on/off valve from HTG-DAT-LOOP threshold
+REM Freezestat override: opens valve (1=ON), active occupied and unoccupied
 REM
+IF FREEZE-TRIP = 1 THEN STM-VLV = 1 : GOTO 100
 IF HTG-DAT-LOOP > 50 THEN STM-VLV = 1
 IF HTG-DAT-LOOP < 40 THEN STM-VLV = 0
 IF ACT-DAT > CFG-DAT-HL THEN STM-VLV = 0
 IF UNOCC-OAT-LOW = 1 THEN STM-VLV = 1
+100 END
 """
 
 _PRG05_HW_MOD_FBP = """\
 REM --- HTG-OUTPUT ---
 REM HW modulating valve (face/bypass mode)
-REM In cold mode: valve = HW-DEMAND (100%)
-REM In mild mode: valve = HW-DEMAND (from loop)
+REM In cold mode: valve = HW-DEMAND (100%), In mild mode: valve = HW-DEMAND (from loop)
+REM Freezestat override: opens valve 100% and drives FBP full face (100),
+REM active occupied and unoccupied
 REM
+IF FREEZE-TRIP = 1 THEN HW-VLV = 100 : FBP = 100 : GOTO 200
 HW-VLV = HW-DEMAND
 IF ACT-DAT > CFG-DAT-HL THEN HW-VLV = 0
+200 END
 """
 
 _PRG06_CHW_MOD = """\
@@ -350,15 +366,33 @@ IF UNOCC-OAT-LOW = 1 THEN FAN-SPD = 0
 
 _PRG09_FREEZESTAT = """\
 REM --- FREEZESTAT ---
-REM Hardware freezestat + DAT low limit, latching
+REM Hardware freezestat + DAT low limit with NC/NO selector and adjustable lockout
 REM
-FREEZE-TRIP = 0
-IF ACT-DAT < CFG-DAT-FREEZE THEN FREEZE-TRIP = 1
-IF FREEZE-STAT = 0 THEN FREEZE-TRIP = 1
-IF FREEZE-TRIP = 1 AND FREEZE-LATCH = 0 THEN FREEZE-LATCH = 1
-IF FREEZE-LATCH = 1 AND FREEZE-RST = 1 AND ACT-DAT > ( CFG-DAT-FREEZE + 5 ) THEN FREEZE-LATCH = 0
-IF FREEZE-LATCH = 1 THEN FREEZE-TRIP = 1
-FREEZE-ALARM = FREEZE-LATCH
+REM Normalize freezestat to FSTAT-TRIP (1=alarm, 0=normal) regardless of NC/NO wiring
+REM CFG-FSTAT-NC=TRUE (default): freeze on FREEZE-STAT=0 (wire break = alarm, fail-safe)
+REM CFG-FSTAT-NC=FALSE: freeze on FREEZE-STAT=1 (NO wiring)
+IF CFG-FSTAT-NC THEN FSTAT-TRIP = NOT FREEZE-STAT ELSE FSTAT-TRIP = FREEZE-STAT
+REM
+REM DAT low limit check (same as before)
+IF ACT-DAT < CFG-DAT-FREEZE THEN FSTAT-TRIP = 1
+REM
+REM Edge detect for trip counter: capture rising edge of FSTAT-TRIP
+IF FSTAT-TRIP = 1 AND FREEZE-TRIP-EDGE = 0 THEN FREEZE-TRIP-EDGE = 1
+IF FSTAT-TRIP = 0 THEN FREEZE-TRIP-EDGE = 0
+REM
+REM Rolling window counter: increment on rising edge, decay timer on trip clear
+IF FREEZE-TRIP-EDGE = 1 THEN FREEZE-TRIP-COUNTER = FREEZE-TRIP-COUNTER + 1
+IF FSTAT-TRIP = 0 THEN FREEZE-WINDOW-TIMER = FREEZE-WINDOW-TIMER + 1
+IF FREEZE-WINDOW-TIMER > CFG-FREEZE-WINDOW * 60 THEN FREEZE-TRIP-COUNTER = 0 : FREEZE-WINDOW-TIMER = 0
+REM
+REM Lockout: hard stop when trip count exceeded
+IF FREEZE-TRIP-COUNTER >= CFG-FREEZE-TRIP-COUNT THEN FREEZE-LOCKOUT = 1
+REM Manual reset: clears counter and lockout, but NOT if FSTAT-TRIP still active
+IF FREEZE-RST = 1 AND FSTAT-TRIP = 0 THEN FREEZE-TRIP-COUNTER = 0 : FREEZE-LOCKOUT = 0 : FREEZE-WINDOW-TIMER = 0
+REM
+REM Latched trip signal: active if FSTAT-TRIP OR FREEZE-LOCKOUT
+FREEZE-TRIP = FSTAT-TRIP OR FREEZE-LOCKOUT
+FREEZE-ALARM = FREEZE-TRIP OR FREEZE-LOCKOUT
 """
 
 _PRG_DCV = """\
@@ -870,15 +904,26 @@ def build_uv_dcv():
 def build_uv_freezestat():
     return Module(
         id="uv-freezestat", name="UV Freezestat", category="safety",
-        description="Freezestat BI + DAT low limit, latching shutdown",
+        description="Freezestat BI + DAT low limit, NC/NO selector, adjustable lockout",
         inputs=[InputPoint(6, "FREEZE-STAT", "BI", "Normal/Alarm", "Freezestat Contact")],
         values=[
-            ValuePoint(76, "FREEZE-TRIP",  "BV", False, "Freeze Trip"),
-            ValuePoint(77, "FREEZE-LATCH", "BV", False, "Freeze Latch"),
-            ValuePoint(78, "FREEZE-RST",   "BV", False, "Freeze Reset"),
+            # Original freeze latch/reset points
+            ValuePoint(76, "FREEZE-TRIP",  "BV", False, "Freeze Trip (DEPRECATED, use FSTAT-TRIP)"),
+            ValuePoint(77, "FREEZE-LATCH", "BV", False, "Freeze Latch (DEPRECATED)"),
+            ValuePoint(78, "FREEZE-RST",   "BV", False, "Freeze Reset (Manual reset)"),
             ValuePoint(79, "FREEZE-ALARM", "BV", False, "Freeze Alarm"),
+            # Part 3: NC/NO selector and normalization
+            ValuePoint(80, "CFG-FSTAT-NC", "BV", True, "Freezestat NC (default=TRUE, fail-safe; FALSE=NO wiring)"),
+            ValuePoint(81, "FSTAT-TRIP",   "BV", False, "Freezestat Trip (NC/NO normalized)"),
+            ValuePoint(82, "FREEZE-LOCKOUT", "BV", False, "Freeze Lockout (trips exceeded limit)"),
+            ValuePoint(83, "FREEZE-TRIP-EDGE", "BV", False, "Freezestat Trip Edge (internal edge-detect)"),
+            # Part 3: Adjustable lockout
+            ValuePoint(53, "CFG-FREEZE-TRIP-COUNT", "AV", 3.0, "Trip limit per window (count=1 = immediate latch)", "trips"),
+            ValuePoint(54, "CFG-FREEZE-WINDOW", "AV", 60.0, "Trip count window", "minutes"),
+            ValuePoint(55, "FREEZE-TRIP-COUNTER", "AV", 0.0, "Trips in current window", "count"),
+            ValuePoint(56, "FREEZE-WINDOW-TIMER", "AV", 0.0, "Window expiration timer", "sec"),
         ],
         programs=[ProgramDef(10, "FREEZESTAT", "PRG09-FREEZESTAT.bas", _PRG09_FREEZESTAT, True,
-                             "Freezestat latch/reset", exec_order=10)],
+                             "Freezestat with NC/NO selector and adjustable lockout", exec_order=10)],
         requires=["uv-core"],
     )
