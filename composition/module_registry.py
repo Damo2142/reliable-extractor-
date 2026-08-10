@@ -258,7 +258,11 @@ _register("rad-core", build_rad_core)
 _RAD_FAMILY_CONFIGS = []
 for _h in range(1, 9):  # heater count 1-8
     _mpz = "44" if _h <= 4 else "88"
-    _ai_max = (3 if _mpz == "44" else 7)  # max heaters for SST3/SST-UD
+    # Heater count limits by sensor type (OAT is now network AV, freeing all AIs)
+    # SST3: 1 AI per heater — max 4 (MPZ44) / 8 (MPZ88)
+    # SST-UD: 2 AIs per heater — max 2 (MPZ44) / 4 (MPZ88)
+    _sst3_max = (4 if _mpz == "44" else 8)
+    _sst_ud_max = (2 if _mpz == "44" else 4)
     for _mode in ("a", "b", "c"):  # Mode A (individual), B (shared), C (outdoor reset)
         for _valve in ("mod", "flt"):  # Modulating, Floating
             if _mode == "c":
@@ -269,8 +273,10 @@ for _h in range(1, 9):  # heater count 1-8
                 # Mode A/B: generate for each sensor type (respecting AI limits for SST3/SST-UD)
                 for _sensor in ("sst3", "sst-ud", "ss3", "network"):
                     # Skip SST3/SST-UD variants that exceed heater count AI limits
-                    if _sensor in ("sst3", "sst-ud") and _h > _ai_max:
-                        continue  # Skip incompatible combination
+                    if _sensor == "sst3" and _h > _sst3_max:
+                        continue
+                    if _sensor == "sst-ud" and _h > _sst_ud_max:
+                        continue
                     _mode_name = {"a": "A", "b": "B"}[_mode]
                     _valve_char = {"mod": "M", "flt": "F"}[_valve]
                     _sensor_char = {"sst3": "S3", "sst-ud": "SU", "ss3": "SS", "network": "N"}[_sensor]

@@ -2320,13 +2320,20 @@ function selectRadiantMode(mode){
     var num=radiantState.heaters;
     var isSmallCtrl=num<=4; // MPZ-44
     var html='';
-    var maxAI=isSmallCtrl?3:7;
-    if(num<=maxAI){
+    // OAT is now network AV, freeing all AIs for zone sensors
+    // SST3: max 4 (MPZ44) / 8 (MPZ88)
+    // SST-UD: max 2 (MPZ44) / 4 (MPZ88)
+    var sst3Max=isSmallCtrl?4:8;
+    var sstuMax=isSmallCtrl?2:4;
+    if(num<=sst3Max){
       html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst3&#39;)">SST3 Hardwired</button>';
+    }else{
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst3&#39;)" disabled>SST3 (max '+sst3Max+' heaters)</button>';
+    }
+    if(num<=sstuMax){
       html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst-ud&#39;)">SST-UD + Adjust</button>';
     }else{
-      html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst3&#39;)" disabled>SST3 (max '+(isSmallCtrl?3:7)+' heaters)</button>';
-      html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst-ud&#39;)" disabled>SST-UD (max '+(isSmallCtrl?3:7)+' heaters)</button>';
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst-ud&#39;)" disabled>SST-UD (max '+sstuMax+' heaters)</button>';
     }
     html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;ss3&#39;)">SS3 Communicating</button>';
     html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;network&#39;)">Network Source</button>';
