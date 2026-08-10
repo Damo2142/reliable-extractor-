@@ -150,6 +150,10 @@ def build_rad_heaters(num_heaters, mode, valve, sensor="sst3"):
         values.append(ValuePoint(6, "CFG-RAD-DRV-TIME", "AV", 150.0, "Radiant Valve Full Stroke Time", "Sec."))
         values.append(ValuePoint(7, "CFG-RAD-POS-DB",   "AV", 2.0,   "Radiant Float Position Deadband", "%"))
 
+    # ── Mode A network sensor: shared network source point ──
+    if mode == "a" and sensor == "network":
+        values.append(ValuePoint(8, "CFG-RAD-NETWORK-SRC", "AV", 70.0, "Network Source (AV15 or other)", "deg.F"))
+
     # ── Mode B shared sensor (sensor-type specific) ──
     if mode == "b":
         if sensor == "sst3":
@@ -193,18 +197,26 @@ def build_rad_heaters(num_heaters, mode, valve, sensor="sst3"):
             elif sensor == "ss3":
                 # BACnet smart stat: reads RMT-N from network, no AI
                 values.append(ValuePoint(b + 4, f"RAD-{n}-RMT", "AV", 70.0, f"Radiant {n} Zone Temp (from SS3)", "deg.F"))
-            elif sensor == "network":
-                # Network source: tech binds RAD-N-SPACE-TEMP to network AV
-                values.append(ValuePoint(b + 5, f"RAD-{n}-SPACE-TEMP", "AV", 70.0, f"Radiant {n} Zone Temp (network)", "deg.F"))
 
             values.append(ValuePoint(b, f"CFG-RAD-SP-{n}", "AV", 70.0, f"Radiant {n} Setpoint", "deg.F"))
             out_ref = f"RAD-{n}-POS-CMD" if floating else f"RAD-{n}-VLV"
-            loops.append(LoopDef(n, f"RAD-{n}-LOOP", f"RAD-{n}-RMT", f"CFG-RAD-SP-{n}", out_ref,
+            # Network sensor uses shared network source, others use individual RMT
+            input_ref = "CFG-RAD-NETWORK-SRC" if sensor == "network" else f"RAD-{n}-RMT"
+            loops.append(LoopDef(n, f"RAD-{n}-LOOP", input_ref, f"CFG-RAD-SP-{n}", out_ref,
                                  p_band=4.0, integral=10.0, action="reverse",
                                  description=f"Radiant {n} demand from its own zone temp"))
 
     # ── Programs ──
     if mode == "a":
+        # For network sensor: add network share program first
+        if sensor == "network":
+            share_code = "REM --- NETWORK-SHARE ---\n"
+            share_code += "REM Read network source from parent device AV15 and distribute to heater loops.\n"
+            share_code += "REM\n"
+            share_code += "CFG-RAD-NETWORK-SRC = {parent}AV15\n"
+            programs.append(ProgramDef(2, "NETWORK-SHARE", "PRG02-NETWORK-SHARE.bas", share_code, True,
+                                       f"Network source: read parent AV15 and distribute to heater loops", exec_order=2))
+
         for n in range(1, num_heaters + 1):
             if floating:
                 code = (
