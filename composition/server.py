@@ -1819,6 +1819,18 @@ tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:
 .modal-foot{display:flex;gap:8px;align-items:center;padding:8px 0 0 0}
 .modal-foot input{width:180px}
 .ed-status{font-size:0.8em;color:#94a3b8;margin-left:auto}
+.rad-wizard{display:none}
+.rad-wizard.active{display:block}
+.rad-step{margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #1e293b}
+.rad-step-t{font-size:0.75em;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:8px;font-weight:600}
+.rad-buttons{display:grid;grid-template-columns:repeat(auto-fit,minmax(50px,1fr));gap:6px}
+.rad-btn{padding:8px 10px;background:#1e293b;border:2px solid #334155;border-radius:4px;cursor:pointer;font-size:0.8em;color:#e0e6ed;text-align:center;transition:all 0.15s;font-weight:500}
+.rad-btn:hover:not(:disabled){border-color:#60a5fa;background:#1a2f5a}
+.rad-btn.selected{background:#3b82f6;border-color:#2563eb;color:#fff}
+.rad-btn:disabled{opacity:0.4;cursor:not-allowed}
+.rad-wizard-summary{background:#1e293b;border:1px solid #334155;border-radius:4px;padding:10px 12px;font-size:0.8em;color:#cbd5e1;margin-bottom:10px}
+.rad-wizard-summary div{margin-bottom:4px}
+.rad-wizard-summary span{color:#60a5fa;font-weight:600}
 </style>
 </head>
 <body>
@@ -1853,6 +1865,26 @@ tr.io-changed td .old-term{text-decoration:line-through;color:#ef4444;font-size:
   <div class="sec">
     <div class="sec-t">Standard Configuration</div>
     <div id="cfgList"></div>
+  </div>
+  <div class="sec rad-wizard" id="radiantWizard">
+    <div class="sec-t">Radiant Configuration Wizard</div>
+    <div class="rad-wizard-summary" id="radWizardSummary" style="display:none"></div>
+    <div class="rad-step" id="radStep1">
+      <div class="rad-step-t">Step 1: Number of Heaters</div>
+      <div class="rad-buttons" id="radHeaterBtns"></div>
+    </div>
+    <div class="rad-step" id="radStep2" style="display:none">
+      <div class="rad-step-t">Step 2: Valve Type</div>
+      <div class="rad-buttons" id="radValveBtns"></div>
+    </div>
+    <div class="rad-step" id="radStep3" style="display:none">
+      <div class="rad-step-t">Step 3: Control Mode</div>
+      <div class="rad-buttons" id="radModeBtns"></div>
+    </div>
+    <div class="rad-step" id="radStep4" style="display:none">
+      <div class="rad-step-t">Step 4: Sensor Type</div>
+      <div class="rad-buttons" id="radSensorBtns"></div>
+    </div>
   </div>
   <div class="sec" id="ctrlSection">
     <div class="sec-t">Controller Model</div>
@@ -2089,7 +2121,15 @@ async function onFamilyChange(){
   }else{
     document.getElementById('selCtrl').value='auto';
   }
-  renderConfigs();
+  // Radiant heater wizard
+  const isRadiant=f&&f.name&&f.name.startsWith('Radiant Heater');
+  document.getElementById('cfgList').style.display=isRadiant?'none':'';
+  document.getElementById('radiantWizard').classList.toggle('active',isRadiant);
+  if(isRadiant){
+    showRadiantWizard();
+  }else{
+    renderConfigs();
+  }
   // Re-fetch modules filtered by family (for non-plant families; plants use wizard)
   if(!isPlant){
     try{
@@ -2102,6 +2142,7 @@ async function onFamilyChange(){
   }
   document.getElementById('results').style.display='none';
   var statusMsg=f?(isPlant?'Configure plant options, then click Assemble.':'Select a standard configuration, then click Assemble.'):'Select an equipment family.';
+  if(isRadiant)statusMsg='Complete the 4-step wizard to select your radiant configuration.';
   if(isVAV)statusMsg='Confirm controller model, then click Assemble.';
   if(activeFamily.startsWith('FCU-'))statusMsg='Select config or customize modules. MPZ-88 default, MPV-LCD available for display.';
   document.getElementById('status').textContent=statusMsg;
@@ -2200,6 +2241,131 @@ function chwpLoadPreset(params){
   if(params.num_ahus) document.getElementById('chwp_num_ahus').value=params.num_ahus;
   document.getElementById('chwp_makeup_water').checked=!!params.makeup_water;
   chwpUpdate();
+}
+
+var radiantState={heaters:null,valve:null,mode:null,sensor:null};
+
+function showRadiantWizard(){
+  radiantState={heaters:null,valve:null,mode:null,sensor:null};
+  // Step 1: Heater count buttons
+  var html='';
+  for(var i=1;i<=8;i++){
+    html+='<button class="rad-btn" onclick="selectRadiantHeaters('+i+')">'+i+'</button>';
+  }
+  document.getElementById('radHeaterBtns').innerHTML=html;
+  document.getElementById('radStep1').style.display='block';
+  document.getElementById('radStep2').style.display='none';
+  document.getElementById('radStep3').style.display='none';
+  document.getElementById('radStep4').style.display='none';
+  document.getElementById('radWizardSummary').style.display='none';
+  updateRadiantSummary();
+}
+
+function selectRadiantHeaters(num){
+  radiantState.heaters=num;
+  radiantState.valve=null;
+  radiantState.mode=null;
+  radiantState.sensor=null;
+  updateRadiantSummary();
+  // Step 2: Valve type
+  var html='<button class="rad-btn" onclick="selectRadiantValve(\'mod\')">Modulating</button>';
+  if(num<=4){
+    html+='<button class="rad-btn" onclick="selectRadiantValve(\'flt\')">Floating Point</button>';
+  }else{
+    html+='<button class="rad-btn" onclick="selectRadiantValve(\'flt\')" disabled>Floating Point (max 4 heaters)</button>';
+  }
+  document.getElementById('radValveBtns').innerHTML=html;
+  document.getElementById('radStep2').style.display='block';
+  document.getElementById('radStep3').style.display='none';
+  document.getElementById('radStep4').style.display='none';
+}
+
+function selectRadiantValve(valve){
+  radiantState.valve=valve;
+  radiantState.mode=null;
+  radiantState.sensor=null;
+  updateRadiantSummary();
+  // Step 3: Mode
+  var html='<button class="rad-btn" onclick="selectRadiantMode(\'a\')">Individual Sensor</button>';
+  html+='<button class="rad-btn" onclick="selectRadiantMode(\'b\')">Shared Sensor</button>';
+  html+='<button class="rad-btn" onclick="selectRadiantMode(\'c\')">Outdoor Reset</button>';
+  document.getElementById('radModeBtns').innerHTML=html;
+  document.getElementById('radStep3').style.display='block';
+  document.getElementById('radStep4').style.display='none';
+}
+
+function selectRadiantMode(mode){
+  radiantState.mode=mode;
+  radiantState.sensor=null;
+  updateRadiantSummary();
+  if(mode==='c'){
+    // Outdoor Reset: no sensor selection needed
+    radiantState.sensor='oat';
+    resolveRadiantFamily();
+  }else{
+    // Step 4: Sensor type
+    var num=radiantState.heaters;
+    var isSmallCtrl=num<=4; // MPZ-44
+    var html='';
+    var maxAI=isSmallCtrl?3:7;
+    if(num<=maxAI){
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(\'sst3\')">SST3 Hardwired</button>';
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(\'sst-ud\')">SST-UD + Adjust</button>';
+    }else{
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(\'sst3\')" disabled>SST3 (max '+(isSmallCtrl?3:7)+' heaters)</button>';
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(\'sst-ud\')" disabled>SST-UD (max '+(isSmallCtrl?3:7)+' heaters)</button>';
+    }
+    html+='<button class="rad-btn" onclick="selectRadiantSensor(\'ss3\')">SS3 Communicating</button>';
+    html+='<button class="rad-btn" onclick="selectRadiantSensor(\'network\')">Network Source</button>';
+    document.getElementById('radSensorBtns').innerHTML=html;
+    document.getElementById('radStep4').style.display='block';
+  }
+}
+
+function selectRadiantSensor(sensor){
+  radiantState.sensor=sensor;
+  updateRadiantSummary();
+  resolveRadiantFamily();
+}
+
+function updateRadiantSummary(){
+  var summary=document.getElementById('radWizardSummary');
+  if(!radiantState.heaters){
+    summary.style.display='none';
+    return;
+  }
+  var html='<div>Heaters: <span>'+radiantState.heaters+'</span></div>';
+  if(radiantState.valve){
+    html+='<div>Valve: <span>'+(radiantState.valve==='mod'?'Modulating':'Floating Point')+'</span></div>';
+  }
+  if(radiantState.mode){
+    var modeName={a:'Individual Sensor',b:'Shared Sensor',c:'Outdoor Reset'}[radiantState.mode];
+    html+='<div>Mode: <span>'+modeName+'</span></div>';
+  }
+  if(radiantState.sensor){
+    var sensorName={sst3:'SST3 Hardwired','sst-ud':'SST-UD + Adjust',ss3:'SS3 Communicating',network:'Network Source',oat:'OAT Reset'}[radiantState.sensor];
+    html+='<div>Sensor: <span>'+sensorName+'</span></div>';
+  }
+  summary.innerHTML=html;
+  if(radiantState.heaters&&radiantState.valve&&radiantState.mode&&radiantState.sensor){
+    summary.innerHTML+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #334155;color:#4ade80">✓ Configuration complete</div>';
+  }
+  summary.style.display='block';
+}
+
+function resolveRadiantFamily(){
+  var num=String(radiantState.heaters).padStart(2,'0');
+  var mode=radiantState.mode.toUpperCase();
+  var valve=radiantState.valve==='mod'?'M':'F';
+  var sensorMap={sst3:'S3','sst-ud':'SU',ss3:'SS',network:'N',oat:''};
+  var sensor=sensorMap[radiantState.sensor];
+  var familyId='SBS-RAD-'+num+'-'+mode+'-'+valve+sensor;
+  if(standards[familyId]){
+    selectCfg(familyId);
+  }else{
+    console.error('Family not found:',familyId);
+    document.getElementById('status').textContent='ERROR: Configuration not found: '+familyId;
+  }
 }
 
 function renderConfigs(){
