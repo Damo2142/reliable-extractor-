@@ -442,6 +442,9 @@ def get_core_modules(equipment_family=""):
     Each family explicitly declares its own core modules.
     No inference, no shared groups, no bleed-through.
     """
+    # If passed a config ID rather than a family key, resolve to family key first
+    if equipment_family in STANDARD_CONFIGS:
+        equipment_family = STANDARD_CONFIGS[equipment_family].get('family', equipment_family)
     return list(FAMILY_CORES.get(equipment_family, _AHU_CORES))
 
 
@@ -1862,7 +1865,7 @@ for _cid, _num, _mode, _valve, _sensor in _RAD_FAMILY_CONFIGS:
     }[_sensor]
     _ctrl = "MPZ-44" if _num <= 4 else "MPZ-88"
     STANDARD_CONFIGS[_cid] = {
-        "family": _cid,
+        "family": "RAD",
         "name": f"Radiant Heater x{_num} — {_mode_name} {_valve_name} ({_sensor_name})",
         "description": f"{_num} radiant heater(s), {_mode_name.lower()}, {_valve_name.lower()}, {_sensor_name.lower()}. {_ctrl}.",
         "modules": ["rad-core", f"rad-htrs-{_num}-{_mode}-{_valve}-{_sensor}"],

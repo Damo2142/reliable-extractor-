@@ -501,14 +501,15 @@ def _select_controller(config: ControllerConfig, model_override: str = "auto"):
 
     # Auto-select: families with a fixed MACH-ProZone controller.
     # RHC (duct reheat coil) is always MPZ-44. RAD (radiant heater) uses
-    # MPZ-44 for 1-4 heaters (SBS-RAD-901..904) and MPZ-88 for 5-8 (905..908).
+    # MPZ-44 for 1-4 heaters and MPZ-88 for 5-8 heaters.
     fam = config.equipment_family
     fixed_model = None
     if fam == "SBS-RHC-801":
         fixed_model = "MPZ-44"
-    elif fam.startswith("SBS-RAD-90"):
+    elif fam.startswith("SBS-RAD-"):
         try:
-            n = int(fam[len("SBS-RAD-90"):])  # heater count: SBS-RAD-90N -> N
+            # Extract heater count from SBS-RAD-NN-* format
+            n = int(fam[len("SBS-RAD-"):len("SBS-RAD-")+2])  # NN from SBS-RAD-NN-*
             fixed_model = "MPZ-44" if n <= 4 else "MPZ-88"
         except (ValueError, IndexError):
             fixed_model = "MPZ-88"
