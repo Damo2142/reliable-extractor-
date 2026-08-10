@@ -2063,10 +2063,23 @@ async function init(){
     // Family dropdown
     var sf=document.getElementById('selFamily');
     var fkeys=Object.keys(families);
+    var radiantAdded=false;
     for(var i=0;i<fkeys.length;i++){
+      var fname=families[fkeys[i]].name;
+      // Collapse all radiant families into one entry
+      if(fname&&fname.startsWith('Radiant Heater')){
+        if(!radiantAdded){
+          var o=document.createElement('option');
+          o.value='RAD-WIZARD';
+          o.textContent='Radiant Heater';
+          sf.appendChild(o);
+          radiantAdded=true;
+        }
+        continue;
+      }
       var o=document.createElement('option');
       o.value=fkeys[i];
-      o.textContent=families[fkeys[i]].name;
+      o.textContent=fname;
       sf.appendChild(o);
     }
     // Controller dropdown
@@ -2122,7 +2135,7 @@ async function onFamilyChange(){
     document.getElementById('selCtrl').value='auto';
   }
   // Radiant heater wizard
-  const isRadiant=f&&f.name&&f.name.startsWith('Radiant Heater');
+  const isRadiant=(activeFamily==='RAD-WIZARD');
   document.getElementById('cfgList').style.display=isRadiant?'none':'';
   document.getElementById('radiantWizard').classList.toggle('active',isRadiant);
   if(isRadiant){
