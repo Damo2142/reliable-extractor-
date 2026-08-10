@@ -2359,7 +2359,7 @@ function resolveRadiantFamily(){
   var valve=radiantState.valve==='mod'?'M':'F';
   var sensorMap={sst3:'S3','sst-ud':'SU',ss3:'SS',network:'N',oat:''};
   var sensor=sensorMap[radiantState.sensor];
-  var familyId='SBS-RAD-'+num+'-'+mode+'-'+valve+sensor;
+  var familyId='SBS-RAD-'+num+'-'+mode+'-'+valve+(sensor?'-'+sensor:'');
   if(standards[familyId]){
     selectCfg(familyId);
   }else{
