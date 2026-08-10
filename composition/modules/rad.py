@@ -273,7 +273,8 @@ def build_rad_heaters(num_heaters, mode, valve, sensor="sst3"):
         "sst3": "SST3 (Hardwired)",
         "sst-ud": "SST-UD (Hardwired + Adjust)",
         "ss3": "SS3 (Smart Stat)",
-        "network": "Network (AV Point)"
+        "network": "Network (AV Point)",
+        "oat": "OAT Reset"
     }[sensor]
 
     return Module(
