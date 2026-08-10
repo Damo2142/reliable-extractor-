@@ -2373,6 +2373,8 @@ function resolveRadiantFamily(){
   var sensorMap={sst3:'S3','sst-ud':'SU',ss3:'SS',network:'N',oat:''};
   var sensor=sensorMap[radiantState.sensor];
   var familyId='SBS-RAD-'+num+'-'+mode+'-'+valve+(sensor?'-'+sensor:'');
+  console.log('Resolved family ID:', familyId);
+  console.log('Family exists in dropdown:', document.querySelector('#selFamily option[value="' + familyId + '"]'));
   if(standards[familyId]){
     selectCfg(familyId);
   }else{
@@ -2398,6 +2400,9 @@ function renderConfigs(){
 }
 
 function selectCfg(id){
+  console.log('selectCfg called with id:', id);
+  console.log('Config found:', !!standards[id]);
+  if(standards[id]) console.log('Modules:', standards[id].modules);
   activeCfg=id;
   const cfg=standards[id];
   selected=new Set(cfg.modules);
@@ -2582,7 +2587,8 @@ async function doAssemble(){
           if(ms[mi].is_core&&mods.indexOf(ms[mi].id)===-1)mods.push(ms[mi].id);
         }
       }
-      res=await fetch('api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value,equipment_family:activeFamily})});
+      var familyId=(activeFamily==='RAD-WIZARD'&&activeCfg)?activeCfg:activeFamily;
+      res=await fetch('api/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modules:mods,controller_model:document.getElementById('selCtrl').value,equipment_family:familyId})});
     }
     if(!res.ok){var e=await res.json();throw new Error(e.detail);}
     var r=await res.json();
