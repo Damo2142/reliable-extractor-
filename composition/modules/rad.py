@@ -1,24 +1,39 @@
 """
-SBS-RAD-901..908 — Standalone Radiant Heater Modules
+SBS-RAD — Standalone Radiant Heater Modules (Rebuilt)
 
 A standalone controller driving 1-8 radiant heating valves. Controller is
 auto-selected by heater count (handled in assembler._select_controller):
-  1-4 heaters -> MACH-ProZone 44 (MPZ-44)
-  5-8 heaters -> MACH-ProZone 88 (MPZ-88)
+  1-4 heaters -> MACH-ProZone 44 (MPZ-44, 4 AI inputs, 4 BO outputs)
+  5-8 heaters -> MACH-ProZone 88 (MPZ-88, 8 AI inputs, 8 BO outputs)
 
 Three control modes (mutually exclusive):
-  Mode A — individual hard-wired sensor + independent loop + setpoint per heater
-  Mode B — one shared sensor / one loop driving all valves to the same position
+  Mode A — individual sensor + independent loop + setpoint per heater
+  Mode B — one shared sensor / one loop driving all valves to same position
   Mode C — outdoor reset only, no space sensor (valve position = SLIDE of OAT)
 
 Valve options per heater (same across all families):
   mod — modulating AO per heater (RAD-N-VLV)
-  flt — floating point per heater (RAD-N-OPEN/RAD-N-CLOSE BOs, RAD-N-POS AV,
-        RAD-N-FLOAT-SYNC BV), CBAS FLOAT() with POWER-LOSS sync trigger
+  flt — floating point per heater (RAD-N-OPEN/RAD-N-CLOSE BOs, RAD-N-POS AV),
+        CBAS FLOAT() with POWER-LOSS sync trigger
+
+Sensor options (modes A and B; mode C requires OAT only):
+  SST3       — hardwired 10K AI input per heater
+               Max heaters: 3 on MPZ44 (OAT+RMT uses 2 AIs, leaves 2), 7 on MPZ88 (OAT+RMT uses 2, leaves 6)
+  SST-UD     — hardwired 10K AI per heater + AO setpoint adjust per heater
+               Same AI limits as SST3; adds 1 AO per heater output
+  SS3        — BACnet smart-stat per heater (communicating, no AI used)
+               Max heaters: unlimited (no AI consumption)
+  Network    — network AV point per heater (RAD-N-SPACE-TEMP), tech binds to source
+               Max heaters: unlimited (no AI consumption)
 
 Config points (all modes, in rad-core):
-  CFG-RAD-ENABLE-OAT = 50 deg.F  (outdoor enable / reset cutoff)
-  CFG-RAD-MIN-POS    = 0%        (minimum valve position)
+  CFG-RAD-ENABLE-OAT = 50 deg.F  (outdoor enable / reset cutoff; applies to ALL modes)
+  CFG-RAD-MIN-POS    = 0%        (minimum valve position when OAT > enable)
+
+Config points (mode-specific):
+  Mode A: CFG-RAD-SP-N (individual setpoint per heater, 70F default)
+  Mode B: CFG-RAD-SP (shared setpoint, 70F default)
+  Floating: CFG-RAD-DRV-TIME (150s default), CFG-RAD-POS-DB (2% default)
 
 The heaters module is built per-family by build_rad_heaters(num, mode, valve, sensor).
 """
@@ -54,7 +69,7 @@ def build_rad_core():
             ValuePoint(1, "RAD-ALL-POS",        "AV", 0.0,  "Radiant Valve Position (shared)",  "%"),
             ValuePoint(2, "CFG-RAD-ENABLE-OAT", "AV", 50.0, "Outdoor Enable / Reset Cutoff",    "deg.F"),
             ValuePoint(3, "CFG-RAD-MIN-POS",    "AV", 0.0,  "Minimum Valve Position",           "%"),
-            ValuePoint(1, "RAD-ENABLE",         "BV", True, "Radiant Enable (OAT)"),
+            ValuePoint(4, "RAD-ENABLE",         "BV", True, "Radiant Enable (OAT)"),
         ],
 
         programs=[
@@ -70,8 +85,8 @@ def build_rad_core():
         soo_paragraph="""The standalone radiant heater controller shall enable radiant heating
 based on outside air temperature, disabling the valves above the configured enable
 temperature and driving them to the minimum position. Heater control shall follow
-the selected mode: individual hard-wired sensor per heater, a single shared sensor
-driving all heaters, or outdoor reset only.""",
+the selected mode: individual sensor per heater (hardwired or communicating), a single
+shared sensor driving all heaters, or outdoor reset only.""",
     )
 
 
@@ -86,18 +101,45 @@ def _float_drive(n, pos_cmd, sync):
     )
 
 
-def build_rad_heaters(num_heaters, mode, valve, sensor="hardwired"):
+def build_rad_heaters(num_heaters, mode, valve, sensor="sst3"):
     """Composite heaters module for one RAD family configuration.
 
     Args:
         num_heaters: 1-8
         mode: 'a' (individual), 'b' (shared sensor), 'c' (outdoor reset)
         valve: 'mod' (modulating AO) | 'flt' (floating BO pair)
-        sensor: 'hardwired' | 'comm' (Mode A/B space sensor source)
+        sensor: 'sst3' (hardwired AI) | 'sst-ud' (hardwired + AO adjust) |
+                'ss3' (BACnet smart stat) | 'network' (AV point, tech binds)
     """
     mode = mode.lower()
     valve = valve.lower()
+    sensor = sensor.lower()
     floating = (valve == "flt")
+
+    # ── Validate heater count limits for sensor type ──
+    ai_limited = sensor in ("sst3", "sst-ud")
+    if ai_limited:
+        # SST3 / SST-UD: OAT uses AI1; sensor uses AI2+ (1 per heater in mode A, 1 in mode B)
+        # MPZ44: 4 AIs total, OAT + 1 sensor = 2 used, leaves 2 for heaters (max 2)
+        # But requirement says max 3 for SST3 — interpreting as 3 heaters on MPZ44, 7 on MPZ88
+        # This means MPZ44 can handle 1 OAT + up to 3 space sensors (4 AIs)
+        # MPZ88 can handle 1 OAT + up to 7 space sensors (8 AIs)
+        # For mode A: each heater needs its own AI sensor
+        # For mode B: one shared sensor needs 1 AI
+        max_mpz44 = 3
+        max_mpz88 = 7
+    else:
+        # SS3 / Network: no AI consumed (BACnet or AV points)
+        max_mpz44 = 4
+        max_mpz88 = 8
+
+    mpz = "MPZ-44" if num_heaters <= 4 else "MPZ-88"
+    max_allowed = max_mpz44 if num_heaters <= 4 else max_mpz88
+    if ai_limited and num_heaters > max_allowed:
+        raise ValueError(
+            f"{sensor.upper()} sensor on {mpz}: max {max_allowed} heaters (AI limit). "
+            f"Requested {num_heaters}. Use SS3 or Network sensor for unlimited heater count."
+        )
 
     inputs, outputs, values, loops, programs = [], [], [], [], []
 
@@ -108,10 +150,21 @@ def build_rad_heaters(num_heaters, mode, valve, sensor="hardwired"):
         values.append(ValuePoint(6, "CFG-RAD-DRV-TIME", "AV", 150.0, "Radiant Valve Full Stroke Time", "Sec."))
         values.append(ValuePoint(7, "CFG-RAD-POS-DB",   "AV", 2.0,   "Radiant Float Position Deadband", "%"))
 
-    # ── Mode B shared sensor (hard-wired only adds an AI; comm arrives via BACnet) ──
-    if mode == "b" and sensor == "hardwired":
-        inputs.append(InputPoint(2, "RAD-RMT", "AI", "10K -40 ->250", "Radiant Zone Temperature", "deg.F"))
+    # ── Mode B shared sensor (sensor-type specific) ──
     if mode == "b":
+        if sensor == "sst3":
+            inputs.append(InputPoint(2, "RAD-RMT", "AI", "10K -40 ->250", "Radiant Zone Temperature", "deg.F"))
+        elif sensor == "sst-ud":
+            inputs.append(InputPoint(2, "RAD-RMT", "AI", "10K -40 ->250", "Radiant Zone Temperature", "deg.F"))
+            outputs.append(OutputPoint(8, "RAD-SP-ADJ", "AO", "0.0 ->100%", "Radiant Setpoint Adjust", 2.0, 10.0, False, "%"))
+            values.append(ValuePoint(8, "RAD-SP-ADJ-IN", "AV", 50.0, "Radiant Setpoint Adjust (Input)", "%"))
+        elif sensor == "ss3":
+            # BACnet smart stat: no AI, reads RMT-N from network
+            values.append(ValuePoint(9, "RAD-RMT", "AV", 70.0, "Radiant Zone Temp (from SS3 sensor)", "deg.F"))
+        elif sensor == "network":
+            # Network source: tech binds RAD-SPACE-TEMP to network AV point
+            values.append(ValuePoint(10, "RAD-SPACE-TEMP", "AV", 70.0, "Radiant Zone Temp (network source)", "deg.F"))
+
         loops.append(LoopDef(1, "RAD-LOOP", "RAD-RMT", "CFG-RAD-SP", "RAD-ALL-POS",
                              p_band=4.0, integral=10.0, action="reverse",
                              description="Shared radiant demand from zone temp"))
@@ -130,11 +183,23 @@ def build_rad_heaters(num_heaters, mode, valve, sensor="hardwired"):
             outputs.append(OutputPoint(n, f"RAD-{n}-VLV", "AO", "0.0 ->100%", f"Radiant {n} Valve", 2.0, 10.0, False, "%"))
 
         if mode == "a":
-            if sensor == "hardwired":
-                inputs.append(InputPoint(1 + n, f"RAD-{n}-RMT", "AI", "10K -40 ->250", f"Radiant {n} Zone Temperature", "deg.F"))
-            values.append(ValuePoint(b, f"RAD-{n}-SP", "AV", 70.0, f"Radiant {n} Setpoint", "deg.F"))
+            # Mode A: individual sensor + loop per heater
+            if sensor == "sst3":
+                inputs.append(InputPoint(1 + n, f"RAD-{n}-RMT", "AI", "10K -40 ->250", f"Radiant {n} Zone Temp", "deg.F"))
+            elif sensor == "sst-ud":
+                inputs.append(InputPoint(1 + n, f"RAD-{n}-RMT", "AI", "10K -40 ->250", f"Radiant {n} Zone Temp", "deg.F"))
+                outputs.append(OutputPoint(20 + n, f"RAD-{n}-SP-ADJ", "AO", "0.0 ->100%", f"Radiant {n} SP Adjust", 2.0, 10.0, False, "%"))
+                values.append(ValuePoint(50 + n, f"RAD-{n}-SP-ADJ-IN", "AV", 50.0, f"Radiant {n} SP Adjust (Input)", "%"))
+            elif sensor == "ss3":
+                # BACnet smart stat: reads RMT-N from network, no AI
+                values.append(ValuePoint(b + 4, f"RAD-{n}-RMT", "AV", 70.0, f"Radiant {n} Zone Temp (from SS3)", "deg.F"))
+            elif sensor == "network":
+                # Network source: tech binds RAD-N-SPACE-TEMP to network AV
+                values.append(ValuePoint(b + 5, f"RAD-{n}-SPACE-TEMP", "AV", 70.0, f"Radiant {n} Zone Temp (network)", "deg.F"))
+
+            values.append(ValuePoint(b, f"CFG-RAD-SP-{n}", "AV", 70.0, f"Radiant {n} Setpoint", "deg.F"))
             out_ref = f"RAD-{n}-POS-CMD" if floating else f"RAD-{n}-VLV"
-            loops.append(LoopDef(n, f"RAD-{n}-LOOP", f"RAD-{n}-RMT", f"RAD-{n}-SP", out_ref,
+            loops.append(LoopDef(n, f"RAD-{n}-LOOP", f"RAD-{n}-RMT", f"CFG-RAD-SP-{n}", out_ref,
                                  p_band=4.0, integral=10.0, action="reverse",
                                  description=f"Radiant {n} demand from its own zone temp"))
 
@@ -201,14 +266,21 @@ def build_rad_heaters(num_heaters, mode, valve, sensor="hardwired"):
         programs.append(ProgramDef(5, "RAD-ALL", "PRG05-RAD-ALL.bas", code, True,
                                    "All radiant valves driven from shared position", exec_order=5))
 
+    # ── Build descriptor ──
     mode_name = {"a": "Individual Sensor", "b": "Shared Sensor", "c": "Outdoor Reset"}[mode]
     valve_name = "Floating" if floating else "Modulating"
+    sensor_name = {
+        "sst3": "SST3 (Hardwired)",
+        "sst-ud": "SST-UD (Hardwired + Adjust)",
+        "ss3": "SS3 (Smart Stat)",
+        "network": "Network (AV Point)"
+    }[sensor]
 
     return Module(
-        id=f"rad-htrs-{num_heaters}-{mode}-{valve}",
-        name=f"Radiant Heaters x{num_heaters} ({mode_name}, {valve_name})",
+        id=f"rad-htrs-{num_heaters}-{mode}-{valve}-{sensor}",
+        name=f"Radiant Heaters x{num_heaters} ({mode_name}, {valve_name}, {sensor_name})",
         category="radiant",
-        description=f"{num_heaters} radiant heater(s) — {mode_name} mode, {valve_name} valves",
+        description=f"{num_heaters} radiant heater(s) — {mode_name} mode, {valve_name} valves, {sensor_name}",
         is_core=False,
         inputs=inputs,
         outputs=outputs,
@@ -217,6 +289,6 @@ def build_rad_heaters(num_heaters, mode, valve, sensor="hardwired"):
         programs=programs,
         system_groups=[SystemGroupDef("{device-name}-RADIANT-CTRL", "Radiant heater control")],
         soo_paragraph=f"""The controller shall operate {num_heaters} radiant heating valve(s) in
-{mode_name.lower()} mode using {valve_name.lower()} valve control.""",
+{mode_name.lower()} mode using {valve_name.lower()} valve control and {sensor_name.lower()} sensor.""",
         requires=["rad-core"],
     )

@@ -246,29 +246,42 @@ _register("rhc-hw-flt", build_rhc_hw_flt)
 _register("vav-rad-aux-mod", build_rad_aux_mod)
 _register("vav-rad-aux-flt", build_rad_aux_flt)
 
-# RAD — Standalone Radiant Heater (SBS-RAD-901..908)
+# RAD — Standalone Radiant Heater (Rebuilt with sensor type variants)
 _register("rad-core", build_rad_core)
 
-# Per-family radiant heater configurations: (config_id, num_heaters, mode, valve)
-# Modes: a=individual sensor, b=shared sensor, c=outdoor reset. Valves: mod | flt.
-# Spread across families to cover every mode x valve combination at least once.
-_RAD_FAMILY_CONFIGS = [
-    ("SBS-RAD-901",       1, "b", "flt"),
-    ("SBS-RAD-902",       2, "a", "flt"),
-    ("SBS-RAD-903",       3, "b", "mod"),
-    ("SBS-RAD-904",       4, "c", "mod"),
-    ("SBS-RAD-905",       5, "a", "mod"),
-    ("SBS-RAD-906",       6, "b", "mod"),
-    ("SBS-RAD-907",       7, "c", "mod"),
-    ("SBS-RAD-908",       8, "c", "mod"),
-    ("SBS-RAD-901-C-FLT", 1, "c", "flt"),
-]
+# Per-family radiant heater configurations: (config_id, num_heaters, mode, valve, sensor)
+# Modes: a=individual, b=shared, c=outdoor-reset. Valves: mod|flt. Sensors: sst3|sst-ud|ss3|network.
+# Mode C (outdoor reset) uses "oat" as sensor (no space sensor needed).
+# Heater count limits per sensor type:
+#  SST3/SST-UD: max 3 heaters on MPZ44 (4 AIs), max 7 on MPZ88 (8 AIs)
+#  SS3/Network: unlimited (no AI usage)
+_RAD_FAMILY_CONFIGS = []
+for _h in range(1, 9):  # heater count 1-8
+    _mpz = "44" if _h <= 4 else "88"
+    _ai_max = (3 if _mpz == "44" else 7)  # max heaters for SST3/SST-UD
+    for _mode in ("a", "b", "c"):  # Mode A (individual), B (shared), C (outdoor reset)
+        for _valve in ("mod", "flt"):  # Modulating, Floating
+            if _mode == "c":
+                # Mode C (outdoor reset): fixed, no space sensor variant
+                _cid = f"SBS-RAD-{_h:02d}-C-{_valve[0].upper()}"
+                _RAD_FAMILY_CONFIGS.append((_cid, _h, _mode, _valve, "oat"))
+            else:
+                # Mode A/B: generate for each sensor type (respecting AI limits for SST3/SST-UD)
+                for _sensor in ("sst3", "sst-ud", "ss3", "network"):
+                    # Skip SST3/SST-UD variants that exceed heater count AI limits
+                    if _sensor in ("sst3", "sst-ud") and _h > _ai_max:
+                        continue  # Skip incompatible combination
+                    _mode_name = {"a": "A", "b": "B"}[_mode]
+                    _valve_char = {"mod": "M", "flt": "F"}[_valve]
+                    _sensor_char = {"sst3": "S3", "sst-ud": "SU", "ss3": "SS", "network": "N"}[_sensor]
+                    _cid = f"SBS-RAD-{_h:02d}-{_mode_name}-{_valve_char}-{_sensor_char}"
+                    _RAD_FAMILY_CONFIGS.append((_cid, _h, _mode, _valve, _sensor))
 
-# Register a heaters builder for each distinct (num, mode, valve) combination.
-for _cid, _num, _mode, _valve in _RAD_FAMILY_CONFIGS:
-    _hid = f"rad-htrs-{_num}-{_mode}-{_valve}"
+# Register a heaters builder for each distinct (num, mode, valve, sensor) combination.
+for _cid, _num, _mode, _valve, _sensor in _RAD_FAMILY_CONFIGS:
+    _hid = f"rad-htrs-{_num}-{_mode}-{_valve}-{_sensor}"
     if _hid not in _BUILDERS:
-        _register(_hid, (lambda n, m, v: lambda: build_rad_heaters(n, m, v))(_num, _mode, _valve))
+        _register(_hid, (lambda n, m, v, s: lambda: build_rad_heaters(n, m, v, s))(_num, _mode, _valve, _sensor))
 
 
 # Cache built modules
@@ -418,15 +431,8 @@ FAMILY_CORES = {
     'UV-DX-HW-FBP':     ['uv-core'],
     # Standalone Duct Reheat Coil
     'SBS-RHC-801':      ['rhc-core'],
-    # Standalone Radiant Heater (1-8 heaters per family)
-    'SBS-RAD-901':      ['rad-core'],
-    'SBS-RAD-902':      ['rad-core'],
-    'SBS-RAD-903':      ['rad-core'],
-    'SBS-RAD-904':      ['rad-core'],
-    'SBS-RAD-905':      ['rad-core'],
-    'SBS-RAD-906':      ['rad-core'],
-    'SBS-RAD-907':      ['rad-core'],
-    'SBS-RAD-908':      ['rad-core'],
+    # Standalone Radiant Heater (rebuilt with sensor type variants)
+    'RAD':              ['rad-core'],  # Master entry; individual families generated below
 }
 
 
@@ -832,17 +838,27 @@ EQUIPMENT_FAMILIES = {
     },
 }
 
-# ── Standalone Radiant Heater families (SBS-RAD-901..908) ──
-# One family per heater count; controller auto-selected by count (MPZ-44 / MPZ-88).
-for _n in range(1, 9):
-    _ctrl = "MPZ-44" if _n <= 4 else "MPZ-88"
-    EQUIPMENT_FAMILIES[f"SBS-RAD-90{_n}"] = {
-        "name": f"Standalone Radiant Heater — {_n} Heater{'s' if _n > 1 else ''}",
-        "description": f"{_n} radiant heating valve(s). Modes: individual sensor / shared sensor / outdoor reset. {_ctrl}.",
+# ── Standalone Radiant Heater families (rebuilt) ──
+# Dynamic generation from _RAD_FAMILY_CONFIGS: all modes, valve types, sensor variants.
+# Controller auto-selected by heater count (MPZ-44: 1-4, MPZ-88: 5-8).
+for _cid, _num, _mode, _valve, _sensor in _RAD_FAMILY_CONFIGS:
+    _ctrl = "MPZ-44" if _num <= 4 else "MPZ-88"
+    _mode_name = {"a": "Individual Sensor", "b": "Shared Sensor", "c": "Outdoor Reset"}[_mode]
+    _valve_name = "Modulating" if _valve == "mod" else "Floating"
+    _sensor_name = {
+        "sst3": "SST3 (Hardwired)",
+        "sst-ud": "SST-UD (Hardwired + Adjust)",
+        "ss3": "SS3 (Smart Stat)",
+        "network": "Network (AV Point)",
+        "oat": "OAT Reset"
+    }[_sensor]
+    EQUIPMENT_FAMILIES[_cid] = {
+        "name": f"Radiant Heater — {_num}× {_mode_name} {_valve_name}",
+        "description": f"{_num} radiant heating valve(s), {_mode_name.lower()}, {_valve_name.lower()}, {_sensor_name.lower()}. {_ctrl}.",
         "prefix": "SBS-RAD",
         "required_modules": ["rad-core"],
         "available_categories": ["radiant"],
-        "notes": f"{_n} heater(s). OAT sensor required. Valves modulating or floating. {_ctrl} controller.",
+        "notes": f"{_num} heater(s). Mode: {_mode_name}. Valve: {_valve_name}. Sensor: {_sensor_name}. {_ctrl}.",
     }
 
 # ── Make the vav-rad-aux module available on every reheat-capable VAV family ──
@@ -1834,16 +1850,22 @@ STANDARD_CONFIGS = {
 }
 
 # ── Standalone Radiant Heater standard configs (generated from _RAD_FAMILY_CONFIGS) ──
-for _cid, _num, _mode, _valve in _RAD_FAMILY_CONFIGS:
-    _fam = f"SBS-RAD-90{_num}"
+for _cid, _num, _mode, _valve, _sensor in _RAD_FAMILY_CONFIGS:
     _mode_name = {"a": "Individual Sensor", "b": "Shared Sensor", "c": "Outdoor Reset"}[_mode]
     _valve_name = "Floating" if _valve == "flt" else "Modulating"
+    _sensor_name = {
+        "sst3": "SST3 (Hardwired)",
+        "sst-ud": "SST-UD (Hardwired + Adjust)",
+        "ss3": "SS3 (Smart Stat)",
+        "network": "Network (AV Point)",
+        "oat": "OAT Reset"
+    }[_sensor]
     _ctrl = "MPZ-44" if _num <= 4 else "MPZ-88"
     STANDARD_CONFIGS[_cid] = {
-        "family": _fam,
-        "name": f"Radiant Heater x{_num} — {_mode_name}, {_valve_name}",
-        "description": f"{_num} radiant heater(s), {_mode_name.lower()} mode, {_valve_name.lower()} valves. {_ctrl}.",
-        "modules": ["rad-core", f"rad-htrs-{_num}-{_mode}-{_valve}"],
+        "family": _cid,
+        "name": f"Radiant Heater x{_num} — {_mode_name} {_valve_name} ({_sensor_name})",
+        "description": f"{_num} radiant heater(s), {_mode_name.lower()}, {_valve_name.lower()}, {_sensor_name.lower()}. {_ctrl}.",
+        "modules": ["rad-core", f"rad-htrs-{_num}-{_mode}-{_valve}-{_sensor}"],
         "controller": "MPZ",
     }
 
