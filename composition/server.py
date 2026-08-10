@@ -2268,11 +2268,11 @@ function selectRadiantHeaters(num){
   radiantState.sensor=null;
   updateRadiantSummary();
   // Step 2: Valve type
-  var html='<button class="rad-btn" onclick="selectRadiantValve(\'mod\')">Modulating</button>';
+  var html='<button class="rad-btn" onclick="selectRadiantValve(&#39;mod&#39;)">Modulating</button>';
   if(num<=4){
-    html+='<button class="rad-btn" onclick="selectRadiantValve(\'flt\')">Floating Point</button>';
+    html+='<button class="rad-btn" onclick="selectRadiantValve(&#39;flt&#39;)">Floating Point</button>';
   }else{
-    html+='<button class="rad-btn" onclick="selectRadiantValve(\'flt\')" disabled>Floating Point (max 4 heaters)</button>';
+    html+='<button class="rad-btn" onclick="selectRadiantValve(&#39;flt&#39;)" disabled>Floating Point (max 4 heaters)</button>';
   }
   document.getElementById('radValveBtns').innerHTML=html;
   document.getElementById('radStep2').style.display='block';
@@ -2286,9 +2286,9 @@ function selectRadiantValve(valve){
   radiantState.sensor=null;
   updateRadiantSummary();
   // Step 3: Mode
-  var html='<button class="rad-btn" onclick="selectRadiantMode(\'a\')">Individual Sensor</button>';
-  html+='<button class="rad-btn" onclick="selectRadiantMode(\'b\')">Shared Sensor</button>';
-  html+='<button class="rad-btn" onclick="selectRadiantMode(\'c\')">Outdoor Reset</button>';
+  var html='<button class="rad-btn" onclick="selectRadiantMode(&#39;a&#39;)">Individual Sensor</button>';
+  html+='<button class="rad-btn" onclick="selectRadiantMode(&#39;b&#39;)">Shared Sensor</button>';
+  html+='<button class="rad-btn" onclick="selectRadiantMode(&#39;c&#39;)">Outdoor Reset</button>';
   document.getElementById('radModeBtns').innerHTML=html;
   document.getElementById('radStep3').style.display='block';
   document.getElementById('radStep4').style.display='none';
@@ -2309,14 +2309,14 @@ function selectRadiantMode(mode){
     var html='';
     var maxAI=isSmallCtrl?3:7;
     if(num<=maxAI){
-      html+='<button class="rad-btn" onclick="selectRadiantSensor(\'sst3\')">SST3 Hardwired</button>';
-      html+='<button class="rad-btn" onclick="selectRadiantSensor(\'sst-ud\')">SST-UD + Adjust</button>';
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst3&#39;)">SST3 Hardwired</button>';
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst-ud&#39;)">SST-UD + Adjust</button>';
     }else{
-      html+='<button class="rad-btn" onclick="selectRadiantSensor(\'sst3\')" disabled>SST3 (max '+(isSmallCtrl?3:7)+' heaters)</button>';
-      html+='<button class="rad-btn" onclick="selectRadiantSensor(\'sst-ud\')" disabled>SST-UD (max '+(isSmallCtrl?3:7)+' heaters)</button>';
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst3&#39;)" disabled>SST3 (max '+(isSmallCtrl?3:7)+' heaters)</button>';
+      html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;sst-ud&#39;)" disabled>SST-UD (max '+(isSmallCtrl?3:7)+' heaters)</button>';
     }
-    html+='<button class="rad-btn" onclick="selectRadiantSensor(\'ss3\')">SS3 Communicating</button>';
-    html+='<button class="rad-btn" onclick="selectRadiantSensor(\'network\')">Network Source</button>';
+    html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;ss3&#39;)">SS3 Communicating</button>';
+    html+='<button class="rad-btn" onclick="selectRadiantSensor(&#39;network&#39;)">Network Source</button>';
     document.getElementById('radSensorBtns').innerHTML=html;
     document.getElementById('radStep4').style.display='block';
   }
