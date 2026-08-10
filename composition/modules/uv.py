@@ -56,6 +56,16 @@ IF OCC-MODE = 0 THEN ACT-HTG-SP = CFG-UNOCC-HTG-SP
 REM Display mirrors of the active setpoints
 CLG-SP = ACT-CLG-SP
 HTG-SP = ACT-HTG-SP
+REM --- HVAC-MODE arbiter (single-path discharge control) ---
+REM Space temp vs active setpoints selects one mode. UV is a single-path
+REM terminal: one supply stream cannot heat and cool at once, so exactly one
+REM mode is active. Matches VAV core arbiter and SBS Space-family standard.
+REM Modes: 1=Vent(deadband) 2=Cool 3=Reheat(heat) 4=Heat(warmup) 5=Init.
+REM UV has no AHU warmup feed, so mode 4 has no source here; UV sets 1/2/3 only.
+REM Reheat(3) is UV's heating mode; outputs gate on (3 OR 4) to match VAV idiom.
+IF ACT-RMT > ACT-CLG-SP THEN HVAC-MODE = 2
+IF ACT-RMT < ACT-HTG-SP THEN HVAC-MODE = 3
+IF ( ACT-RMT >= ACT-HTG-SP ) AND ( ACT-RMT <= ACT-CLG-SP ) THEN HVAC-MODE = 1
 REM ACT-RMT is set by the selected thermostat module (wired or network)
 ACT-DAT = DAT
 REM --- OAT source select (DEFAULT = network) ---
@@ -499,6 +509,8 @@ def build_uv_core():
             ValuePoint(16, "FAN-CMD",          "BV", False, "Fan Command"),
             ValuePoint(17, "CFG-OAT-LOCAL",    "BV", False, "Use Local OAT Sensor (default FALSE = network)"),
             ValuePoint(18, "NET-OAT-OK",       "BV", True,  "Network OAT Comms OK (plausible-range)"),
+            # Mode control
+            ValuePoint(20, "HVAC-MODE",        "MV", 2,     "HVAC Mode",                   states={1:"Vent", 2:"Cool", 3:"Reheat", 4:"Heat", 5:"Init"}),
         ],
 
         loops=[
