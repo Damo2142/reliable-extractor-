@@ -458,6 +458,11 @@ def build_uv_freezestat():
     air low limit. Rolling-window counter prevents nuisance trips; manual reset
     clears lockout. Outputs FREEZE-TRIP signal that overrides heating/cooling
     outputs in hw-mod/chw-mod programs.
+
+    Hardware freezestat contact input (BI9) provides freeze detection with NC/NO
+    wiring option. DAT low-limit check in same program (PRG09). Rolling-window
+    counter with lockout prevents nuisance trips. Manual reset BV44 clears counter
+    and lockout.
     """
     return Module(
         id="uv-freezestat",
@@ -467,7 +472,4 @@ def build_uv_freezestat():
         requires=["uv-core"],
         # No additional I/O, values, or programs — all logic is in uv-core PRG09
         # This module's presence simply indicates freezestat feature is selected.
-        description_detail="""Hardware freezestat contact input (BI9) provides freeze detection
-with NC/NO wiring option. DAT low-limit check in same program. Rolling-window counter
-with lockout prevents nuisance trips. Manual reset BV44 clears counter and lockout.""",
     )
