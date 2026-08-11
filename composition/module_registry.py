@@ -54,12 +54,8 @@ from composition.modules.fcu import (
     build_fcu_hp_core, build_fcu_hp_aux, build_fcu_freezestat,
 )
 from composition.modules.uv import (
-    build_uv_core, build_uv_fan_cv, build_uv_fan_vfd,
-    build_uv_oad_mod, build_uv_oad_flt, build_uv_fbp_mod, build_uv_fbp_flt,
-    build_uv_hw_mod, build_uv_hw_flt, build_uv_hw_mod_fbp,
-    build_uv_steam_mod, build_uv_steam_onoff, build_uv_steam_onoff_fbp,
-    build_uv_chw_mod, build_uv_chw_flt, build_uv_dx_1, build_uv_dx_2,
-    build_uv_dcv, build_uv_freezestat, build_uv_radiant_heat,
+    build_uv_core, build_uv_hw_mod, build_uv_chw_mod,
+    build_uv_oad, build_uv_freezestat,
 )
 from composition.modules.rhc import (
     build_rhc_core, build_rhc_hw_mod, build_rhc_hw_flt,
@@ -215,27 +211,12 @@ _register("fcu-hp-core", build_fcu_hp_core)
 _register("fcu-hp-aux", build_fcu_hp_aux)
 _register("fcu-freezestat", build_fcu_freezestat)
 
-# UV modules
+# UV modules (single-zone constant-volume)
 _register("uv-core", build_uv_core)
-_register("uv-fan-cv", build_uv_fan_cv)
-_register("uv-fan-vfd", build_uv_fan_vfd)
-_register("uv-oad-mod", build_uv_oad_mod)
-_register("uv-oad-flt", build_uv_oad_flt)
-_register("uv-fbp-mod", build_uv_fbp_mod)
-_register("uv-fbp-flt", build_uv_fbp_flt)
 _register("uv-hw-mod", build_uv_hw_mod)
-_register("uv-hw-flt", build_uv_hw_flt)
-_register("uv-hw-mod-fbp", build_uv_hw_mod_fbp)
-_register("uv-steam-mod", build_uv_steam_mod)
-_register("uv-steam-onoff", build_uv_steam_onoff)
-_register("uv-steam-onoff-fbp", build_uv_steam_onoff_fbp)
 _register("uv-chw-mod", build_uv_chw_mod)
-_register("uv-chw-flt", build_uv_chw_flt)
-_register("uv-dx-1", build_uv_dx_1)
-_register("uv-dx-2", build_uv_dx_2)
-_register("uv-dcv", build_uv_dcv)
+_register("uv-oad", build_uv_oad)
 _register("uv-freezestat", build_uv_freezestat)
-_register("uv-radiant-heat", build_uv_radiant_heat)
 
 # RHC — Standalone Duct Reheat Coil (SBS-RHC-801)
 _register("rhc-core", build_rhc_core)
