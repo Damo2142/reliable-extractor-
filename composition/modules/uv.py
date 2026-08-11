@@ -374,6 +374,7 @@ def build_uv_hw_mod():
     Reverse-acting valve (100% = fully open, driven by output scaling).
     Gated on HVAC-MODE = Heat (mode 3). Includes freeze override (comma-END syntax).
     Reads DAT-LOOP output from uv-core. Discharge high limit applied as safety cutoff.
+    Can be combined with uv-chw-mod; HVAC-MODE gates which is active.
     """
     return Module(
         id="uv-hw-mod",
@@ -386,8 +387,6 @@ def build_uv_hw_mod():
                        "HW valve from DAT-LOOP, Heat-mode gated, freeze override", exec_order=5)
         ],
         requires=["uv-core"],
-        conflicts=["uv-chw-mod"],
-        mutually_exclusive_group=None,  # Can be combined with other modules
         trends=True,  # HW-VLV trended
     )
 
@@ -403,6 +402,7 @@ def build_uv_chw_mod():
     Gated on HVAC-MODE = Cool (mode 2). Economizer gate: valve stays closed until
     OAD reaches 100% (economizer exhausted). Discharge low limit safety cutoff.
     Reads DAT-LOOP output from uv-core.
+    Can be combined with uv-hw-mod; HVAC-MODE gates which is active.
     """
     return Module(
         id="uv-chw-mod",
@@ -411,8 +411,6 @@ def build_uv_chw_mod():
         description="CHW modulating valve, direct-acting, gated on Cool mode, economizer gate",
         outputs=[OutputPoint(4, "CHW-VLV", "AO", "0.0->100%", "CHW Valve", 2.0, 10.0)],
         requires=["uv-core"],
-        conflicts=["uv-hw-mod"],
-        mutually_exclusive_group=None,
         programs=[
             ProgramDef(6, "CLG-OUTPUT", "PRG06-CLG-OUTPUT.bas", _PRG06_CLG_MOD, True,
                        "CHW valve from DAT-LOOP, Cool-mode gated, economizer gate", exec_order=6)
