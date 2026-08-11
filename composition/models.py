@@ -145,7 +145,7 @@ class TrendDef:
     trend_type: str = "cov"         # "polled" or "cov"
     interval: str = "00:15:00"      # For polled trends
     cov_delta: float = 0.2          # For COV trends
-    buffer_size: int = 512
+    buffer_size: int = 1334
     module: str = ""
 
 

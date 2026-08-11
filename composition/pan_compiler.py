@@ -738,7 +738,7 @@ _DT_WILDCARD = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xB4, 0xFF, 0xFF, 0xFF, 0xFF])
 
 def write_stl_block(instance: int, name: str, logging_type: int,
                     mon_type: int, mon_instance: int,
-                    buffer_size: int = 512, log_interval: int = 0,
+                    buffer_size: int = 1334, log_interval: int = 0,
                     cov_increment: float = 0.2) -> bytes:
     """STL block: 22 properties — 16 fixed + 6 variable from Excel.
     logging_type: 1=Polled, 2=COV.
