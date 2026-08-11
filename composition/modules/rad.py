@@ -225,8 +225,8 @@ def build_rad_heaters(num_heaters, mode, valve, sensor="sst3"):
             share_code += "REM **** Map each zone temp from network source at commissioning\n"
             for n in range(1, num_heaters + 1):
                 share_code += f"REM **** {{device-name}}-RAD-{n}-RMT = [network device].[zone temp point]\n"
-            programs.append(ProgramDef(2, "NETWORK-SHARE", "PRG02-NETWORK-SHARE.bas", share_code, True,
-                                       f"Network binding instructions for tech commissioning", exec_order=2))
+            programs.append(ProgramDef(3, "NETWORK-SHARE", "PRG03-NETWORK-SHARE.bas", share_code, True,
+                                       f"Network binding instructions for tech commissioning", exec_order=3))
 
         for n in range(1, num_heaters + 1):
             if floating:
