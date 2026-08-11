@@ -46,9 +46,10 @@ from composition.models import (
 
 _PRG00_OAT_SOURCE = """\
 REM --- OAT-SOURCE ---
-REM Read network outdoor temperature from parent controller
+REM Read network outdoor temperature from parent controller with validation
+REM Range check: -60°F to 140°F. Fallback 10°F (fails warm).
 REM
-NET-OAT = {parent}AV1
+IF {parent}AV1 < -60 OR {parent}AV1 > 140 THEN NET-OAT = 10 ELSE NET-OAT = {parent}AV1
 """
 
 _PRG01_OAT_ENABLE = """\
