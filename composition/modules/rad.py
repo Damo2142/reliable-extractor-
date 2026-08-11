@@ -79,10 +79,10 @@ def build_rad_core():
         ],
 
         programs=[
-            ProgramDef(0, "OAT-SOURCE", "PRG00-OAT-SOURCE.bas", _PRG00_OAT_SOURCE, True,
-                       "Read network outdoor temperature from parent controller", exec_order=0),
-            ProgramDef(1, "OAT-ENABLE", "PRG01-OAT-ENABLE.bas", _PRG01_OAT_ENABLE, True,
-                       "Outdoor enable — disable radiant above enable temp", exec_order=1),
+            ProgramDef(1, "OAT-SOURCE", "PRG01-OAT-SOURCE.bas", _PRG00_OAT_SOURCE, True,
+                       "Read network outdoor temperature from parent controller", exec_order=1),
+            ProgramDef(2, "OAT-ENABLE", "PRG02-OAT-ENABLE.bas", _PRG01_OAT_ENABLE, True,
+                       "Outdoor enable — disable radiant above enable temp", exec_order=2),
         ],
 
         system_groups=[
