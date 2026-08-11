@@ -414,8 +414,8 @@ def _generate_trends(config: ControllerConfig) -> list:
                 instance=stl_num,
                 name=_make_stl_name(inp.name),
                 monitored_point=inp.name,
-                trend_type="cov",
-                cov_delta=0.2,
+                trend_type="polled",
+                interval="00:15:00",
             ))
             stl_num += 1
 
@@ -425,8 +425,8 @@ def _generate_trends(config: ControllerConfig) -> list:
             instance=stl_num,
             name=_make_stl_name(out.name),
             monitored_point=out.name,
-            trend_type="cov",
-            cov_delta=0.2,
+            trend_type="polled",
+            interval="00:15:00",
         ))
         stl_num += 1
 
@@ -436,8 +436,8 @@ def _generate_trends(config: ControllerConfig) -> list:
             instance=stl_num,
             name=_make_stl_name(val.name),
             monitored_point=val.name,
-            trend_type="cov",
-            cov_delta=0.2,
+            trend_type="polled",
+            interval="00:15:00",
         ))
         stl_num += 1
 

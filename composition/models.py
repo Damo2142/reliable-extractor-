@@ -142,7 +142,7 @@ class TrendDef:
     instance: int
     name: str
     monitored_point: str            # Point name to trend
-    trend_type: str = "cov"         # "polled" or "cov"
+    trend_type: str = "polled"      # "polled" or "cov"
     interval: str = "00:15:00"      # For polled trends
     cov_delta: float = 0.2          # For COV trends
     buffer_size: int = 1334
