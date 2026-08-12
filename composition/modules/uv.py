@@ -384,7 +384,7 @@ IF NOT CFG-FRZ-STAT-NC AND FREEZE-STAT THEN FREEZE-TRIP = 1
 IF ACT-DAT < CFG-DAT-FREEZE THEN FREEZE-TRIP = 1
 REM CFG-FRZ-TRIP-CNT trips inside CFG-FRZ-TRIP-WIN minutes latch the lockout
 IF+ FREEZE-TRIP THEN FRZ-TRIP-CNT = FRZ-TRIP-CNT + 1
-IF TIME-OFF( FREEZE-TRIP ) > CFG-FRZ-TRIP-WIN * 1.667 THEN FRZ-TRIP-CNT = 0
+IF TIME-OFF( FREEZE-TRIP ) > CFG-FRZ-TRIP-WIN * 1.6667 THEN FRZ-TRIP-CNT = 0
 IF FRZ-TRIP-CNT >= CFG-FRZ-TRIP-CNT THEN FREEZE-LATCH = 1
 REM Lockout clears only on manual reset with the discharge recovered
 IF FREEZE-LATCH AND FREEZE-RST AND ACT-DAT > ( CFG-DAT-FREEZE + 5 ) THEN FREEZE-LATCH = 0 , FRZ-TRIP-CNT = 0 , STOP FREEZE-RST
@@ -395,19 +395,19 @@ FRZ-SD = FREEZE-TRIP OR FREEZE-LATCH
 _PRG12_MECH_CLG = """\
 REM --- MECH-CLG-ENAB-PRG ---
 REM Mechanical cooling waits for the economizer to run out of capacity
-A = OAD > CFG-MECH-CLG-ENAB-POS
-B = OAD < CFG-MECH-CLG-DISB-POS
-IF TIME-ON( A ) > CFG-MECH-CLG-ENAB-TM * 1.667 THEN MECH-CLG-ENAB = 1
-IF TIME-ON( B ) > CFG-MECH-CLG-DISB-TM * 1.667 THEN MECH-CLG-ENAB = 0
+A = OAD > CFG-MCLG-ON-POS
+B = OAD < CFG-MCLG-OFF-POS
+IF TIME-ON( A ) > CFG-MCLG-ON-TM * 1.6667 THEN MECH-CLG-ENAB = 1
+IF TIME-ON( B ) > CFG-MCLG-OFF-TM * 1.6667 THEN MECH-CLG-ENAB = 0
 """
 
 _PRG12_MECH_CLG_FLT = """\
 REM --- MECH-CLG-ENAB-PRG ---
 REM Mechanical cooling waits for the economizer to run out of capacity
-A = DMP-POS-CMD > CFG-MECH-CLG-ENAB-POS
-B = DMP-POS-CMD < CFG-MECH-CLG-DISB-POS
-IF TIME-ON( A ) > CFG-MECH-CLG-ENAB-TM * 1.667 THEN MECH-CLG-ENAB = 1
-IF TIME-ON( B ) > CFG-MECH-CLG-DISB-TM * 1.667 THEN MECH-CLG-ENAB = 0
+A = DMP-POS-CMD > CFG-MCLG-ON-POS
+B = DMP-POS-CMD < CFG-MCLG-OFF-POS
+IF TIME-ON( A ) > CFG-MCLG-ON-TM * 1.6667 THEN MECH-CLG-ENAB = 1
+IF TIME-ON( B ) > CFG-MCLG-OFF-TM * 1.6667 THEN MECH-CLG-ENAB = 0
 """
 
 _PRG_DCV = """\
@@ -635,10 +635,10 @@ def build_uv_oad_mod():
             ValuePoint(80, "CFG-OAD-MIN",       "AV", 10.0, "Min OA Damper Position",  "%"),
             ValuePoint(81, "CFG-ECON-ENABLE-T",  "AV", 65.0, "Economizer Enable Temp",  "°F"),
             ValuePoint(82, "CYCLE2-ENABLE",      "BV", False, "Cycle 2 Free Cooling"),
-            ValuePoint(105, "CFG-MECH-CLG-ENAB-POS", "AV", 99.0, "Damper Pos To Enable Mech Cooling",  "%"),
-            ValuePoint(106, "CFG-MECH-CLG-DISB-POS", "AV", 90.0, "Damper Pos To Disable Mech Cooling", "%"),
-            ValuePoint(107, "CFG-MECH-CLG-ENAB-TM",  "AV", 10.0, "Time Above Enable Pos",              "Min"),
-            ValuePoint(108, "CFG-MECH-CLG-DISB-TM",  "AV", 10.0, "Time Below Disable Pos",             "Min"),
+            ValuePoint(105, "CFG-MCLG-ON-POS", "AV", 99.0, "Damper Pos To Enable Mech Cooling",  "%"),
+            ValuePoint(106, "CFG-MCLG-OFF-POS", "AV", 90.0, "Damper Pos To Disable Mech Cooling", "%"),
+            ValuePoint(107, "CFG-MCLG-ON-TM",  "AV", 10.0, "Time Above Enable Pos",              "Min."),
+            ValuePoint(108, "CFG-MCLG-OFF-TM",  "AV", 10.0, "Time Below Disable Pos",             "Min."),
         ],
         programs=[
             ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD, True,
@@ -669,10 +669,10 @@ def build_uv_oad_flt():
             ValuePoint(96, "CFG-DMP-POS-DB",    "AV", 2.0,   "Damper Float Position Deadband","%"),
             ValuePoint(97, "CFG-DMP-DRV-TIME",  "AV", 150.0, "Damper Full Stroke Time",      "Sec"),
             ValuePoint(98, "DMP-FLOAT-SYNC",    "BV", False, "Damper Float Sync Trigger"),
-            ValuePoint(105, "CFG-MECH-CLG-ENAB-POS", "AV", 99.0, "Damper Pos To Enable Mech Cooling",  "%"),
-            ValuePoint(106, "CFG-MECH-CLG-DISB-POS", "AV", 90.0, "Damper Pos To Disable Mech Cooling", "%"),
-            ValuePoint(107, "CFG-MECH-CLG-ENAB-TM",  "AV", 10.0, "Time Above Enable Pos",              "Min"),
-            ValuePoint(108, "CFG-MECH-CLG-DISB-TM",  "AV", 10.0, "Time Below Disable Pos",             "Min"),
+            ValuePoint(105, "CFG-MCLG-ON-POS", "AV", 99.0, "Damper Pos To Enable Mech Cooling",  "%"),
+            ValuePoint(106, "CFG-MCLG-OFF-POS", "AV", 90.0, "Damper Pos To Disable Mech Cooling", "%"),
+            ValuePoint(107, "CFG-MCLG-ON-TM",  "AV", 10.0, "Time Above Enable Pos",              "Min."),
+            ValuePoint(108, "CFG-MCLG-OFF-TM",  "AV", 10.0, "Time Below Disable Pos",             "Min."),
         ],
         programs=[
             ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD_FLT, True,
@@ -975,7 +975,7 @@ def build_uv_freezestat():
             # Two-stage trip: the contact stops the fan every time it opens,
             # and CFG-FRZ-TRIP-CNT trips inside the window latch the lockout.
             ValuePoint(53, "CFG-FRZ-TRIP-CNT", "AV", 3.0,  "Trips Before Lockout",       ""),
-            ValuePoint(54, "CFG-FRZ-TRIP-WIN", "AV", 30.0, "Trip Count Window",          "Min"),
+            ValuePoint(54, "CFG-FRZ-TRIP-WIN", "AV", 30.0, "Trip Count Window",          "Min."),
             ValuePoint(55, "FRZ-TRIP-CNT",     "AV", 0.0,  "Trips In Current Window",    ""),
         ],
         # exec_order 0 — a safety runs before everything that consumes it.
