@@ -151,8 +151,156 @@ def generate_alarms(config: ControllerConfig) -> List[AlarmDef]:
     return alarms
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  UV alarm program
+# ═══════════════════════════════════════════════════════════════════════════
+# UV alarms are built from an explicit spec instead of point-name pattern
+# matching. Two reasons: the description has to name the fault AND what it
+# costs the building, which no generic rule can produce; and most real UV
+# faults are derived conditions (commanded vs proven, discharge vs limit)
+# that no single point carries. Derived conditions latch into a local, and
+# the DALARM delay does the debounce.
+
+DALARM_MAX_DESC = 69   # Control-BASIC manual limit on the DALARM string
+
+# Locals used for latched conditions, assigned in order of appearance.
+_UV_LOCALS = "ABCDEFGHIJ"
+
+
+@dataclass
+class UVAlarm:
+    """One UV alarm — either a point alarm or a latched derived condition."""
+    description: str
+    delay: int
+    alarm_type: str = "Critical"
+    priority: str = "Critical"
+    point: str = ""      # existing point, alarmed directly
+    latch: str = ""      # expression latched into a local first
+    local: str = ""      # assigned by the builder when latch is set
+
+
+def _uv_alarm_specs(config: ControllerConfig) -> List[UVAlarm]:
+    """Build the UV alarm list for whatever modules this config actually has."""
+    names = {p.name for p in list(config.inputs) + list(config.outputs) + list(config.values)}
+    mods = set(getattr(config, "selected_modules", []) or [])
+    d = "{device-name}-"
+    alarms: List[UVAlarm] = []
+
+    # Fan proof — commanded but no status feedback. CV fan proves off the
+    # start/stop output, VFD fan off commanded speed.
+    if "SF-STS" in names:
+        if "FAN-S/S" in names:
+            cmd = f"{d}FAN-S/S"
+        elif "FAN-SPD" in names:
+            cmd = f"{d}FAN-SPD > 0"
+        else:
+            cmd = f"{d}FAN-CMD"
+        alarms.append(UVAlarm(
+            description="Fan Failure - No Status",
+            delay=60, alarm_type="Critical", priority="Critical",
+            latch=f"{cmd} AND NOT {d}SF-STS"))
+
+    # Freezestat — already latched by FREEZESTAT, so it alarms with no delay.
+    if "FREEZE-ALARM" in names:
+        alarms.insert(0, UVAlarm(
+            description="Freeze Trip - Coil Protection",
+            delay=0, alarm_type="Critical", priority="Critical",
+            point="FREEZE-ALARM"))
+
+    # Discharge outside its limits while air is actually moving.
+    if {"SF-STS", "ACT-DAT", "CFG-DAT-LL"} <= names:
+        alarms.append(UVAlarm(
+            description="Discharge Air Low Limit - Coil Freeze Risk",
+            delay=120, alarm_type="Critical", priority="Critical2",
+            latch=f"{d}SF-STS AND {d}ACT-DAT < {d}CFG-DAT-LL"))
+    if {"SF-STS", "ACT-DAT", "CFG-DAT-HL"} <= names:
+        alarms.append(UVAlarm(
+            description="Discharge Air High Limit - Coil Overheat",
+            delay=120, alarm_type="Critical", priority="Critical2",
+            latch=f"{d}SF-STS AND {d}ACT-DAT > {d}CFG-DAT-HL"))
+
+    # Hot water lost while the arbiter is calling for heat. HW families only —
+    # HWS-OK exists on every UV, but it means nothing on a steam or DX unit.
+    if mods & {"uv-hw-mod", "uv-hw-flt", "uv-hw-mod-fbp"} and {"HWS-OK", "HVAC-MODE"} <= names:
+        alarms.append(UVAlarm(
+            description="Hot Water Unavailable - No Heating Capacity",
+            delay=300, alarm_type="Warning", priority="Warning1",
+            latch=f"{d}HVAC-MODE = 4 AND NOT {d}HWS-OK"))
+
+    # CO2 above setpoint — DCV module sets this.
+    if "CO2-ALARM" in names:
+        alarms.append(UVAlarm(
+            description="High CO2 - Ventilation Below Demand",
+            delay=300, alarm_type="Warning", priority="Warning1",
+            point="CO2-ALARM"))
+
+    # Return air high — rat-local sensor module sets this.
+    if "RAT-HI" in names:
+        alarms.append(UVAlarm(
+            description="Return Air High Temp - Check Unit",
+            delay=300, alarm_type="Warning", priority="Warning1",
+            point="RAT-HI"))
+
+    # A single freeze trip stops the fan without latching the lockout, so it
+    # would otherwise be silent until the third trip inside the window.
+    if mods & {"uv-freezestat"} and "FRZ-SD" in names:
+        alarms.append(UVAlarm(
+            description="Freeze Trip Active - Fan Stopped",
+            delay=0, alarm_type="Warning", priority="Warning1",
+            point="FRZ-SD"))
+
+    # Parent OAT reference dead or implausible — unit is on its local sensor.
+    if "NET-OAT-OK" in names:
+        alarms.append(UVAlarm(
+            description="Parent OAT Comms Lost - Local Sensor In Use",
+            delay=300, alarm_type="Warning", priority="Warning1",
+            latch=f"NOT {d}NET-OAT-OK"))
+
+    # Assign locals to the latched conditions, in order.
+    nxt = 0
+    for alm in alarms:
+        if alm.latch:
+            if nxt >= len(_UV_LOCALS):
+                raise ValueError("UV alarm program needs more locals than A-J")
+            alm.local = _UV_LOCALS[nxt]
+            nxt += 1
+        if len(alm.description) > DALARM_MAX_DESC:
+            raise ValueError(
+                f"DALARM description over {DALARM_MAX_DESC} chars: {alm.description!r}")
+    return alarms
+
+
+def _generate_uv_alarm_bas(config: ControllerConfig) -> str:
+    """UV alarm .BAS — ALARM-TYPE, then its latches, then its DALARM lines."""
+    alarms = _uv_alarm_specs(config)
+    if not alarms:
+        return ""
+
+    lines = ["REM --- Alarm Definitions ---", "REM"]
+    current = None
+    for alm in alarms:
+        group = [a for a in alarms
+                 if (a.alarm_type, a.priority) == (alm.alarm_type, alm.priority)]
+        if (alm.alarm_type, alm.priority) == current:
+            continue
+        current = (alm.alarm_type, alm.priority)
+        lines.append(f"ALARM-TYPE {alm.alarm_type} {alm.priority}")
+        for a in group:
+            if a.latch:
+                lines.append(f"IF {a.latch} THEN START {a.local} ELSE STOP {a.local}")
+        for a in group:
+            ref = a.local if a.local else "{device-name}-" + a.point
+            lines.append(f"DALARM {ref} , {a.delay} ,  {a.description}")
+    lines.append("END")
+
+    return "\n".join(f"{(i + 1) * 10} {ln}" for i, ln in enumerate(lines))
+
+
 def generate_alarm_bas(config: ControllerConfig) -> str:
     """Generate the alarm .BAS program code."""
+    if str(getattr(config, "equipment_family", "")).startswith("UV-"):
+        return _generate_uv_alarm_bas(config)
+
     alarms = generate_alarms(config)
     if not alarms:
         return ""
@@ -204,6 +352,24 @@ def generate_alarm_bas(config: ControllerConfig) -> str:
 
 def generate_alarm_excel_data(config: ControllerConfig) -> List[dict]:
     """Generate alarm data for Excel tab."""
+    if str(getattr(config, "equipment_family", "")).startswith("UV-"):
+        rows = []
+        for alm in _uv_alarm_specs(config):
+            rows.append({
+                "Point": alm.local if alm.local else "{device-name}-" + alm.point,
+                "Type": "LOCAL" if alm.local else "BV",
+                "AlarmType": alm.alarm_type,
+                "Priority": alm.priority,
+                "Delay": alm.delay,
+                "Deadband": "",
+                "High": "",
+                "Low": "",
+                "Condition": alm.latch if alm.latch else "ACTIVE",
+                "Message": alm.description,
+                "ReverseLogic": "",
+            })
+        return rows
+
     alarms = generate_alarms(config)
     rows = []
     for alm in alarms:

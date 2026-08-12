@@ -11,13 +11,24 @@ Standard I/O:
        or stat-remote network read); no longer hardwired in uv-core
   BI = SF-STS (fan status feedback)
 
-Control Architecture — Cascaded PID:
-  PRG01 MODE-CTRL: occupancy, setpoint selection
-  PRG02 DAT-RESET: space temp loops reset DAT setpoints
-  PRG03 UNOCC-OAT-LOWECT: unoccupied freeze logic
+Control Architecture — single-setpoint cascade with a latching mode arbiter:
+
+  One effective zone setpoint (EFF-RMT-SP) with one deadband
+  -> latching HVAC-MODE arbiter (1=Vent 2=Cool 3=Reheat 4=Heat 5=Init)
+  -> one DAT setpoint (DAT-SP) reset by one RESET-LOOP
+  -> one DAT-LOOP whose ACTION FLIPS BY MODE (LOOP:2, 0=direct 1=reverse)
+  -> the idle coil is forced closed three independent ways.
+
+  There is exactly ONE live DAT loop. Heating and cooling can never modulate
+  at the same time: the modes are mutually exclusive, each coil is gated on
+  its own mode, and each coil re-checks the loop action before it drives.
+  Reheat (3) exists only to keep the enum aligned with VAV — UV never sets it.
+
+  PRG01 MODE-CTRL: network reads, occupancy mode, EFF-RMT-SP, mode arbiter
+  PRG02 DAT-RESET: RESET-LOOP slides the single DAT-SP
   PRG04 FBP-CTRL: face/bypass cold/mild mode (FBP families)
-  PRG05 HTG-OUTPUT: heating valve from HTG-DAT-LOOP
-  PRG06 CLG-OUTPUT: cooling valve/stage from CLG-DAT-LOOP
+  PRG05 HTG-OUTPUT: heating valve from DAT-LOOP, MAX'd with DAT-LL-LOOP
+  PRG06 CLG-OUTPUT: cooling valve/stage from DAT-LOOP
   PRG07 OAD-CTRL: OA damper ASHRAE Cycle 1+2 (OAD families)
   PRG08 FAN-CTRL: fan on/off or VFD speed
   PRG09 FREEZESTAT: hardware freezestat + DAT latch (optional)
@@ -37,252 +48,273 @@ from composition.models import (
 
 _PRG01_MODE = """\
 REM --- MODE-CTRL ---
-REM Occupancy mode and setpoint selection
-REM {parent} = parent device for network variables
-REM
-IF NET-OCC-CMD = 1 THEN OCC-MODE = 1 ELSE OCC-MODE = 0
-REM
-REM --- Active Setpoints ---
-REM Single operator zone setpoint (RMT-SP) with symmetric deadband.
-REM Cooling setpoint = operator SP + deadband ; heating setpoint = operator SP - deadband.
-REM Occupied: derive both actives from the one setpoint so they stay locked
-REM around it and cannot drift or cross.
-REM Unoccupied: use the unoccupied setback pair (unchanged this step).
-ACT-RMT-SP-DB = DB-MTPLR * CFG-RMT-SP-DB
-IF OCC-MODE = 1 THEN ACT-CLG-SP = RMT-SP + ACT-RMT-SP-DB
-IF OCC-MODE = 1 THEN ACT-HTG-SP = RMT-SP - ACT-RMT-SP-DB
-IF OCC-MODE = 0 THEN ACT-CLG-SP = CFG-UNOCC-CLG-SP
-IF OCC-MODE = 0 THEN ACT-HTG-SP = CFG-UNOCC-HTG-SP
-REM Display mirrors of the active setpoints
-CLG-SP = ACT-CLG-SP
-HTG-SP = ACT-HTG-SP
-REM ACT-RMT is set by the selected thermostat module (wired or network)
-ACT-DAT = DAT
-REM --- OAT source select (DEFAULT = network) ---
-REM CFG-OAT-LOCAL FALSE (default) uses the global OAT from the parent controller;
-REM local unit OA sensors are often poorly sited, so the parent's single OAT is
-REM preferred. Set CFG-OAT-LOCAL TRUE to use this unit's hardwired OAT instead.
-REM {parent}AV1 is ALWAYS outdoor air temp in the parent controller.
+REM *** VERIFY PARENT BV20=OCC-CMD BV22=HW-AVAIL AV1=OUTSIDE-AIR ***
+NET-OCC-CMD = {parent}BV20
+HWS-OK = {parent}BV22
 NET-OAT = {parent}AV1
-REM Comms health via plausible-range check (mirrors stat-remote). Network OAT is
-REM used only while plausible; if the {parent}AV1 reference is dead/garbage the
-REM value is implausible and ACT-OAT falls back to the local OAT sensor.
-REM NOTE: a plausible-but-frozen value (parent alive but OAT stuck) is NOT
-REM detected by this range check.
+REM --- Outside air source ---
 IF NET-OAT > -60 AND NET-OAT < 140 THEN NET-OAT-OK = 1 ELSE NET-OAT-OK = 0
 IF CFG-OAT-LOCAL OR NOT NET-OAT-OK THEN ACT-OAT = OAT
 IF NOT CFG-OAT-LOCAL AND NET-OAT-OK THEN ACT-OAT = NET-OAT
-REM *** VERIFY OCCUPANCY BV: {parent}BV21 below must be the parent BV tied to
-REM *** THIS job's occupancy schedule. The correct instance VARIES with the
-REM *** number of schedules in the parent controller — confirm/set it in the
-REM *** template before download. ***
-NET-OCC-CMD = {parent}BV21
-REM *** VERIFY HW-AVAILABLE BV: {parent}BV22 below must be the parent BV that
-REM *** carries HW-available for THIS job. This is NOT a fixed instance like OAT
-REM *** (AV1); the plant publishes HW-AVAIL and the integrator maps it into the
-REM *** parent's point list — confirm/set {parent}BVnn in the template. ***
-HWS-OK = {parent}BV22
+ACT-DAT = DAT
+REM --- Occupancy mode ---
+REM 1=Occupied 2=Bypass 3=Standby 4=Unoccupied 5=NSB 6=NSF
+IF NET-OCC-CMD THEN OCC-MODE = 1
+IF NOT NET-OCC-CMD THEN OCC-MODE = 4
+ACT-RMT-SP-DB = DB-MTPLR * CFG-RMT-SP-DB
+F = SWITCH( F , ACT-RMT , NSB-SP + ACT-RMT-SP-DB , NSB-SP )
+G = SWITCH( G , ACT-RMT , NSF-SP - ACT-RMT-SP-DB , NSF-SP )
+IF OCC-MODE = 4 AND F THEN OCC-MODE = 5
+IF OCC-MODE = 4 AND G THEN OCC-MODE = 6
+REM --- Effective setpoint ---
+IF OCC-MODE <= 3 THEN EFF-RMT-SP = RMT-SP
+IF OCC-MODE = 4 THEN EFF-RMT-SP = NSB-SP
+IF OCC-MODE = 5 THEN EFF-RMT-SP = NSB-SP
+IF OCC-MODE = 6 THEN EFF-RMT-SP = NSF-SP
+CLG-SP = EFF-RMT-SP + ACT-RMT-SP-DB
+HTG-SP = EFF-RMT-SP - ACT-RMT-SP-DB
+REM --- Mode arbiter ---
+REM 1=Ventilation 2=Cool 3=Reheat 4=Heat 5=Initialize
+D = SWITCH( D , ACT-RMT , EFF-RMT-SP , EFF-RMT-SP - ACT-RMT-SP-DB )
+IF D THEN HVAC-MODE = 4 , GOTO 340
+E = SWITCH( E , ACT-RMT , EFF-RMT-SP , EFF-RMT-SP + ACT-RMT-SP-DB )
+IF E THEN HVAC-MODE = 2 ELSE HVAC-MODE = 1
+REM LOOP:2 action 0=direct 1=reverse
+IF HVAC-MODE = 4 THEN DAT-LOOP:2 = 1
+IF HVAC-MODE = 2 THEN DAT-LOOP:2 = 0
+IF OCC-MODE = 4 THEN HVAC-MODE = 1
+IF POWER-LOSS THEN START INIT-MODE
+IF TIME-ON( INIT-MODE ) > 0:05:00 THEN STOP INIT-MODE
+IF INIT-MODE THEN HVAC-MODE = 5
 """
 
 _PRG02_DAT_RESET = """\
 REM --- DAT-RESET ---
-REM Space temp loops reset DAT setpoints via SLIDE
-REM CLG-RESET-LOOP: ACT-RMT vs ACT-CLG-SP direct acting
-REM HTG-RESET-LOOP: ACT-RMT vs ACT-HTG-SP reverse acting
-REM
-HTG-DAT-SP = SLIDE( HTG-RESET-LOOP, 0.0, 100.0, CFG-HTG-DAT-MIN, CFG-HTG-DAT-MAX )
-CLG-DAT-SP = SLIDE( CLG-RESET-LOOP, 0.0, 100.0, CFG-CLG-DAT-MIN, CFG-CLG-DAT-MAX )
+DAT-SP = SLIDE( RESET-LOOP , 0 , 100 , CFG-DAT-MIN-SP , CFG-DAT-MAX-SP )
+DAT-SP = LIMIT( DAT-SP , CFG-DAT-MIN-SP , CFG-DAT-MAX-SP )
 """
 
 _PRG02B_CAB_PROT = """\
 REM --- CAB-PROT-RESET ---
-REM Cabinet protection reset: OAT-based linear interpolation
-REM OAT >= CFG-CAB-OAT-HI -> valve = CFG-CAB-VLV-MIN (no trickle)
-REM OAT <= CFG-CAB-OAT-LO -> valve = CFG-CAB-VLV-MAX (full trickle)
-REM between -> linear interpolation (explicit, divide-by-zero guarded)
-REM Open loop only, no DAT feedback, no PID
-REM
 IF ACT-OAT >= CFG-CAB-OAT-HI THEN CAB-PROT-VLV = CFG-CAB-VLV-MIN
 IF ACT-OAT <= CFG-CAB-OAT-LO THEN CAB-PROT-VLV = CFG-CAB-VLV-MAX
-REM If OAT-HI == OAT-LO, condition below cannot be true, so guard is implicit
 IF ACT-OAT > CFG-CAB-OAT-LO AND ACT-OAT < CFG-CAB-OAT-HI THEN CAB-PROT-VLV = CFG-CAB-VLV-MAX - ( ( ACT-OAT - CFG-CAB-OAT-LO ) / ( CFG-CAB-OAT-HI - CFG-CAB-OAT-LO ) ) * ( CFG-CAB-VLV-MAX - CFG-CAB-VLV-MIN )
-"""
-
-_PRG03_UNOCC_OAT = """\
-REM --- UNOCC-OAT-LIMIT ---
-REM Unoccupied freeze protection based on OAT low limit
-REM
-UNOCC-OAT-LOW = 0
-IF OCC-MODE = 0 AND ACT-OAT < CFG-UNOCC-OAT-LIM THEN UNOCC-OAT-LOW = 1
-IF UNOCC-OAT-LOW = 1 THEN OAD = 0
 """
 
 _PRG04_FBP = """\
 REM --- FBP-CTRL ---
-REM Face/bypass cold/mild mode control
-REM Cold mode (OAT < switchover): valve full open, FBP modulates DAT
-REM Mild mode (OAT >= switchover): full face, valve modulates DAT
-REM
+REM FBP-MODE 1=cold (valve open, damper modulates) 0=mild (full face)
+IF FRZ-SD THEN FBP = 100 , HW-DEMAND = 100 , END
+IF OCC-MODE = 6 THEN FBP = 100 , HW-DEMAND = 0 , END
+IF OCC-MODE = 5 THEN FBP = 100 , HW-DEMAND = CFG-NSB-HTG-POS , END
 IF ACT-OAT < CFG-FBP-SWITCHOVER-T THEN FBP-MODE = 1 ELSE FBP-MODE = 0
+A = DAT-LOOP
+IF ACT-DAT > CFG-DAT-HL THEN A = 0
+IF HVAC-MODE < 3 THEN A = 0
+IF DAT-LOOP:2 = 0 THEN A = 0
+A = MAX( A , DAT-LL-LOOP )
+IF HVAC-MODE = 5 THEN A = 100
 IF FBP-MODE = 1 THEN HW-DEMAND = 100
-IF FBP-MODE = 1 THEN FBP = HTG-DAT-LOOP
+IF FBP-MODE = 1 THEN FBP = A
 IF FBP-MODE = 0 THEN FBP = 100
-IF FBP-MODE = 0 THEN HW-DEMAND = HTG-DAT-LOOP
-IF UNOCC-OAT-LOW = 1 THEN FBP = 100
+IF FBP-MODE = 0 THEN HW-DEMAND = A
 """
 
 _PRG04_FBP_FLT = """\
 REM --- FBP-CTRL ---
-REM Face/bypass floating damper using CBAS FLOAT() function
-REM Cold mode (OAT < switchover): valve full open, FBP modulates DAT
-REM Mild mode (OAT >= switchover): full face position, valve modulates DAT
+REM FBP-MODE 1=cold (valve open, damper modulates) 0=mild (full face)
 REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
-REM
+IF FRZ-SD THEN FBP-POS-CMD = 100 , HW-DEMAND = 100 , GOTO 220
+IF OCC-MODE = 6 THEN FBP-POS-CMD = 100 , HW-DEMAND = 0 , GOTO 220
+IF OCC-MODE = 5 THEN FBP-POS-CMD = 100 , HW-DEMAND = CFG-NSB-HTG-POS , GOTO 220
 IF ACT-OAT < CFG-FBP-SWITCHOVER-T THEN FBP-MODE = 1 ELSE FBP-MODE = 0
-REM
-REM Position command and HW demand based on mode
-IF FBP-MODE = 1 THEN FBP-POS-CMD = HTG-DAT-LOOP
+A = DAT-LOOP
+IF ACT-DAT > CFG-DAT-HL THEN A = 0
+IF HVAC-MODE < 3 THEN A = 0
+IF DAT-LOOP:2 = 0 THEN A = 0
+A = MAX( A , DAT-LL-LOOP )
+IF HVAC-MODE = 5 THEN A = 100
+IF FBP-MODE = 1 THEN FBP-POS-CMD = A
 IF FBP-MODE = 1 THEN HW-DEMAND = 100
 IF FBP-MODE = 0 THEN FBP-POS-CMD = 100
-IF FBP-MODE = 0 THEN HW-DEMAND = HTG-DAT-LOOP
-REM
-REM Freeze: drive damper to full face
-IF UNOCC-OAT-LOW = 1 THEN FBP-POS-CMD = 100
-REM
-REM Floating sync on power cycle and mode change
+IF FBP-MODE = 0 THEN HW-DEMAND = A
 IF+ POWER-LOSS THEN START FBP-FLOAT-SYNC
 IF+ FBP-MODE = 1 THEN START FBP-FLOAT-SYNC
 IF+ FBP-MODE = 0 THEN START FBP-FLOAT-SYNC
 IF TIME-ON( FBP-FLOAT-SYNC ) > 0:00:05 THEN STOP FBP-FLOAT-SYNC
-REM
-REM FLOAT() drives the open/close relays
 FBP-POS = FLOAT( FBP-OPEN , FBP-CLOSE , FBP-POS-CMD , CFG-FBP-DRV-TIME , CFG-FBP-POS-DB , FBP-FLOAT-SYNC )
 """
 
 _PRG05_STEAM_ONOFF_FBP = """\
 REM --- HTG-OUTPUT ---
-REM Steam on/off coupled to face/bypass. FBP-MODE and the face/bypass damper
-REM position are owned by FBP-CTRL (the face/bypass module); this program only
-REM drives the steam valve, the same way HW-mod-FBP drives the HW valve.
-REM Cold mode (FBP-MODE=1): steam on whenever heating is demanded; FBP modulates.
-REM Mild mode (FBP-MODE=0): full face; steam cycles on rising/falling DAT demand.
-REM
-IF FBP-MODE = 1 AND HTG-DAT-LOOP > 0 THEN STM-VLV = 1
-IF FBP-MODE = 0 AND HTG-DAT-LOOP > 50 THEN STM-VLV = 1
-IF FBP-MODE = 0 AND HTG-DAT-LOOP < 40 THEN STM-VLV = 0
-IF HTG-DAT-LOOP = 0 THEN STM-VLV = 0
-IF UNOCC-OAT-LOW = 1 THEN STM-VLV = 1
+REM FBP-MODE is set by FBP-CTRL
+IF FRZ-SD THEN STM-VLV = 1 , END
+IF OCC-MODE = 6 THEN STM-VLV = 0 , END
+IF OCC-MODE = 5 THEN STM-VLV = ( CFG-NSB-HTG-POS > 0 ) , GOTO 170
+A = DAT-LOOP
+IF ACT-DAT > CFG-DAT-HL THEN A = 0
+IF HVAC-MODE < 3 THEN A = 0
+IF DAT-LOOP:2 = 0 THEN A = 0
+A = MAX( A , DAT-LL-LOOP )
+IF FBP-MODE = 1 AND A > 0 THEN STM-VLV = 1
+IF FBP-MODE = 0 AND A > 50 THEN STM-VLV = 1
+IF FBP-MODE = 0 AND A < 40 THEN STM-VLV = 0
+IF A = 0 THEN STM-VLV = 0
+IF HVAC-MODE = 5 THEN STM-VLV = 1
+IF OCC-MODE >= 4 AND ACT-OAT < CFG-CAB-OAT-HI THEN STM-VLV = 1
+IF ACT-DAT > CFG-DAT-HL THEN STM-VLV = 0
 """
 
 _PRG05_HW_MOD = """\
 REM --- HTG-OUTPUT ---
-REM HW modulating valve from HTG-DAT-LOOP
-REM Cabinet protection reset applies when unoccupied OAT low
-REM
-IF UNOCC-OAT-LOW = 0 THEN HW-VLV = HTG-DAT-LOOP
+IF FRZ-SD THEN HW-VLV = 100 , END
+IF OCC-MODE = 6 THEN HW-VLV = 0 , END
+IF OCC-MODE = 5 THEN HW-VLV = CFG-NSB-HTG-POS , GOTO 120
+A = DAT-LOOP
+IF ACT-DAT > CFG-DAT-HL THEN A = 0
+IF HVAC-MODE < 3 THEN A = 0
+IF DAT-LOOP:2 = 0 THEN A = 0
+HW-VLV = MAX( A , DAT-LL-LOOP )
+IF HVAC-MODE = 5 THEN HW-VLV = 100
+IF OCC-MODE >= 4 AND ACT-OAT < CFG-CAB-OAT-HI THEN HW-VLV = MAX( CAB-PROT-VLV , DAT-LL-LOOP )
 IF ACT-DAT > CFG-DAT-HL THEN HW-VLV = 0
-IF UNOCC-OAT-LOW = 1 THEN HW-VLV = CAB-PROT-VLV
 """
 
 _PRG05_HW_FLT = """\
 REM --- HTG-OUTPUT ---
-REM HW floating valve using CBAS FLOAT() function
 REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
-REM
-REM Position command from heating DAT loop or cabinet protection reset
-IF UNOCC-OAT-LOW = 0 THEN RH-POS-CMD = HTG-DAT-LOOP
-IF UNOCC-OAT-LOW = 1 THEN RH-POS-CMD = CAB-PROT-VLV
-REM
-REM Safety overrides
+IF FRZ-SD THEN RH-POS-CMD = 100 , GOTO 170
+IF OCC-MODE = 6 THEN RH-POS-CMD = 0 , GOTO 170
+IF OCC-MODE = 5 THEN RH-POS-CMD = CFG-NSB-HTG-POS , GOTO 130
+A = DAT-LOOP
+IF ACT-DAT > CFG-DAT-HL THEN A = 0
+IF HVAC-MODE < 3 THEN A = 0
+IF DAT-LOOP:2 = 0 THEN A = 0
+RH-POS-CMD = MAX( A , DAT-LL-LOOP )
+IF HVAC-MODE = 5 THEN RH-POS-CMD = 100
+IF OCC-MODE >= 4 AND ACT-OAT < CFG-CAB-OAT-HI THEN RH-POS-CMD = MAX( CAB-PROT-VLV , DAT-LL-LOOP )
 IF ACT-DAT > CFG-DAT-HL THEN RH-POS-CMD = 0
-REM
-REM Floating sync on power cycle and unoccupied
 IF+ POWER-LOSS THEN START RH-FLOAT-SYNC
-IF+ OCC-MODE = 0 THEN START RH-FLOAT-SYNC
+IF+ OCC-MODE >= 4 THEN START RH-FLOAT-SYNC
 IF TIME-ON( RH-FLOAT-SYNC ) > 0:00:05 THEN STOP RH-FLOAT-SYNC
-REM
-REM FLOAT() drives the open/close relays
 RH-POS = FLOAT( RH-OPEN , RH-CLOSE , RH-POS-CMD , CFG-RH-DRV-TIME , CFG-RH-POS-DB , RH-FLOAT-SYNC )
 """
 
 _PRG05_STEAM_MOD = """\
 REM --- HTG-OUTPUT ---
-REM Steam modulating valve from HTG-DAT-LOOP
-REM
-IF UNOCC-OAT-LOW = 0 THEN STM-VLV = HTG-DAT-LOOP
+IF FRZ-SD THEN STM-VLV = 100 , END
+IF OCC-MODE = 6 THEN STM-VLV = 0 , END
+IF OCC-MODE = 5 THEN STM-VLV = CFG-NSB-HTG-POS , GOTO 110
+A = DAT-LOOP
+IF ACT-DAT > CFG-DAT-HL THEN A = 0
+IF HVAC-MODE < 3 THEN A = 0
+IF DAT-LOOP:2 = 0 THEN A = 0
+STM-VLV = MAX( A , DAT-LL-LOOP )
+IF HVAC-MODE = 5 THEN STM-VLV = 100
 IF ACT-DAT > CFG-DAT-HL THEN STM-VLV = 0
 """
 
 _PRG05_STEAM_ONOFF = """\
 REM --- HTG-OUTPUT ---
-REM Steam on/off valve from HTG-DAT-LOOP threshold
-REM
-IF HTG-DAT-LOOP > 50 THEN STM-VLV = 1
-IF HTG-DAT-LOOP < 40 THEN STM-VLV = 0
+IF FRZ-SD THEN STM-VLV = 1 , END
+IF OCC-MODE = 6 THEN STM-VLV = 0 , END
+IF OCC-MODE = 5 THEN STM-VLV = ( CFG-NSB-HTG-POS > 0 ) , GOTO 140
+A = DAT-LOOP
+IF ACT-DAT > CFG-DAT-HL THEN A = 0
+IF HVAC-MODE < 3 THEN A = 0
+IF DAT-LOOP:2 = 0 THEN A = 0
+A = MAX( A , DAT-LL-LOOP )
+IF A > 50 THEN STM-VLV = 1
+IF A < 40 THEN STM-VLV = 0
+IF HVAC-MODE = 5 THEN STM-VLV = 1
+IF OCC-MODE >= 4 AND ACT-OAT < CFG-CAB-OAT-HI THEN STM-VLV = 1
 IF ACT-DAT > CFG-DAT-HL THEN STM-VLV = 0
-IF UNOCC-OAT-LOW = 1 THEN STM-VLV = 1
 """
 
 _PRG05_HW_MOD_FBP = """\
 REM --- HTG-OUTPUT ---
-REM HW modulating valve (face/bypass mode)
-REM In cold mode: valve = HW-DEMAND (100%)
-REM In mild mode: valve = HW-DEMAND (from loop)
-REM
+REM HW-DEMAND is set by FBP-CTRL, already mode and action guarded
+IF FRZ-SD THEN HW-VLV = 100 , END
+IF OCC-MODE = 6 THEN HW-VLV = 0 , END
+IF OCC-MODE = 5 THEN HW-VLV = CFG-NSB-HTG-POS , GOTO 80
 HW-VLV = HW-DEMAND
+IF HVAC-MODE = 5 THEN HW-VLV = 100
 IF ACT-DAT > CFG-DAT-HL THEN HW-VLV = 0
 """
 
 _PRG06_CHW_MOD = """\
 REM --- CLG-OUTPUT ---
-REM CHW modulating valve from CLG-DAT-LOOP
-REM
-CHW-VLV = CLG-DAT-LOOP
+IF FRZ-SD THEN CHW-VLV = 0 , END
+IF OCC-MODE = 5 THEN CHW-VLV = 0 , END
+IF OCC-MODE = 6 THEN CHW-VLV = CFG-NSF-CLG-POS , GOTO 120
+A = DAT-LOOP
+IF ACT-DAT < CFG-DAT-LL THEN A = 0
+IF OCC-MODE >= 4 THEN A = 0
+IF HVAC-MODE <> 2 THEN A = 0
+IF DAT-LOOP:2 = 1 THEN A = 0
+IF NOT MECH-CLG-ENAB THEN A = 0
+CHW-VLV = A
 IF ACT-DAT < CFG-DAT-LL THEN CHW-VLV = 0
-IF UNOCC-OAT-LOW = 1 THEN CHW-VLV = 0
 """
 
 _PRG06_CHW_FLT = """\
 REM --- CLG-OUTPUT ---
-REM CHW floating valve using CBAS FLOAT() function
 REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
-REM
-REM Position command from cooling DAT loop
-CHW-POS-CMD = CLG-DAT-LOOP
-REM
-REM Safety overrides force valve closed
+IF FRZ-SD THEN CHW-POS-CMD = 0 , GOTO 170
+IF OCC-MODE = 5 THEN CHW-POS-CMD = 0 , GOTO 170
+IF OCC-MODE = 6 THEN CHW-POS-CMD = CFG-NSF-CLG-POS , GOTO 130
+A = DAT-LOOP
+IF ACT-DAT < CFG-DAT-LL THEN A = 0
+IF OCC-MODE >= 4 THEN A = 0
+IF HVAC-MODE <> 2 THEN A = 0
+IF DAT-LOOP:2 = 1 THEN A = 0
+IF NOT MECH-CLG-ENAB THEN A = 0
+CHW-POS-CMD = A
 IF ACT-DAT < CFG-DAT-LL THEN CHW-POS-CMD = 0
-IF UNOCC-OAT-LOW = 1 THEN CHW-POS-CMD = 0
-REM
-REM Floating sync on power cycle and unoccupied
 IF+ POWER-LOSS THEN START CHW-FLOAT-SYNC
-IF+ OCC-MODE = 0 THEN START CHW-FLOAT-SYNC
+IF+ OCC-MODE >= 4 THEN START CHW-FLOAT-SYNC
 IF TIME-ON( CHW-FLOAT-SYNC ) > 0:00:05 THEN STOP CHW-FLOAT-SYNC
-REM
-REM FLOAT() drives the open/close relays
 CHW-POS = FLOAT( CHW-OPEN , CHW-CLOSE , CHW-POS-CMD , CFG-CHW-DRV-TIME , CFG-CHW-POS-DB , CHW-FLOAT-SYNC )
 """
 
 _PRG06_DX_1 = """\
 REM --- CLG-OUTPUT ---
-REM DX single stage from CLG-DAT-LOOP
-REM
-IF CLG-DAT-LOOP > CFG-STG1-T AND DX1-OFF-TMR > 180 THEN DX-STG1 = 1
-IF CLG-DAT-LOOP < ( CFG-STG1-T - 10 ) THEN DX-STG1 = 0
-IF UNOCC-OAT-LOW = 1 THEN DX-STG1 = 0
+IF FRZ-SD THEN DX-STG1 = 0 , END
+IF OCC-MODE = 5 THEN DX-STG1 = 0 , END
+IF OCC-MODE = 6 AND DX1-OFF-TMR > 180 THEN DX-STG1 = 1
+IF OCC-MODE = 6 THEN GOTO 140
+A = DAT-LOOP
+IF ACT-DAT < CFG-DAT-LL THEN A = 0
+IF OCC-MODE >= 4 THEN A = 0
+IF HVAC-MODE <> 2 THEN A = 0
+IF DAT-LOOP:2 = 1 THEN A = 0
+IF NOT MECH-CLG-ENAB THEN A = 0
+IF A > CFG-STG1-T AND DX1-OFF-TMR > 180 THEN DX-STG1 = 1
+IF A < ( CFG-STG1-T - 10 ) THEN DX-STG1 = 0
+IF ACT-DAT < CFG-DAT-LL THEN DX-STG1 = 0
 IF DX-STG1 = 0 THEN DX1-OFF-TMR = 0
 IF DX-STG1 = 1 THEN DX1-OFF-TMR = 999
 """
 
 _PRG06_DX_2 = """\
 REM --- CLG-OUTPUT ---
-REM DX two stage from CLG-DAT-LOOP
-REM
-IF CLG-DAT-LOOP > CFG-STG1-T AND DX1-OFF-TMR > 180 THEN DX-STG1 = 1
-IF CLG-DAT-LOOP < ( CFG-STG1-T - 10 ) THEN DX-STG1 = 0
-IF CLG-DAT-LOOP > CFG-STG2-T AND DX-STG1 = 1 AND DX2-OFF-TMR > 300 THEN DX-STG2 = 1
-IF CLG-DAT-LOOP < ( CFG-STG2-T - 10 ) THEN DX-STG2 = 0
-IF UNOCC-OAT-LOW = 1 THEN DX-STG1 = 0 : DX-STG2 = 0
+IF FRZ-SD THEN DX-STG1 = 0 , DX-STG2 = 0 , END
+IF OCC-MODE = 5 THEN DX-STG1 = 0 , DX-STG2 = 0 , END
+IF OCC-MODE = 6 AND DX1-OFF-TMR > 180 THEN DX-STG1 = 1
+IF OCC-MODE = 6 AND CFG-NSF-CLG-POS > 50 AND DX2-OFF-TMR > 300 THEN DX-STG2 = 1
+IF OCC-MODE = 6 AND CFG-NSF-CLG-POS <= 50 THEN DX-STG2 = 0
+IF OCC-MODE = 6 THEN GOTO 180
+A = DAT-LOOP
+IF ACT-DAT < CFG-DAT-LL THEN A = 0
+IF OCC-MODE >= 4 THEN A = 0
+IF HVAC-MODE <> 2 THEN A = 0
+IF DAT-LOOP:2 = 1 THEN A = 0
+IF NOT MECH-CLG-ENAB THEN A = 0
+IF A > CFG-STG1-T AND DX1-OFF-TMR > 180 THEN DX-STG1 = 1
+IF A < ( CFG-STG1-T - 10 ) THEN DX-STG1 = 0
+IF A > CFG-STG2-T AND DX-STG1 = 1 AND DX2-OFF-TMR > 300 THEN DX-STG2 = 1
+IF A < ( CFG-STG2-T - 10 ) THEN DX-STG2 = 0
+IF ACT-DAT < CFG-DAT-LL THEN DX-STG1 = 0 , DX-STG2 = 0
 IF DX-STG1 = 0 THEN DX1-OFF-TMR = 0 : DX-STG2 = 0
 IF DX-STG1 = 1 THEN DX1-OFF-TMR = 999
 IF DX-STG2 = 0 THEN DX2-OFF-TMR = 0
@@ -292,98 +324,104 @@ IF DX-STG2 = 1 THEN DX2-OFF-TMR = 999
 _PRG07_OAD = """\
 REM --- OAD-CTRL ---
 REM ASHRAE Cycle 1 (min OA) + Cycle 2 (free cooling)
-REM
-OAD = CFG-OAD-MIN
-IF OCC-MODE = 0 THEN OAD = 0
-IF UNOCC-OAT-LOW = 1 THEN OAD = 0
+IF FRZ-SD THEN OAD = 0 , END
+A = CFG-OAD-MIN
 IF ACT-OAT < ACT-RMT AND ACT-OAT < CFG-ECON-ENABLE-T THEN CYCLE2-ENABLE = 1 ELSE CYCLE2-ENABLE = 0
-IF CYCLE2-ENABLE = 1 AND OCC-MODE = 1 THEN OAD = SLIDE( CLG-DAT-LOOP, 0.0, 100.0, CFG-OAD-MIN, 100.0 )
-IF OCC-MODE = 0 THEN OAD = 0
-IF UNOCC-OAT-LOW = 1 THEN OAD = 0
+IF CYCLE2-ENABLE = 1 AND OCC-MODE <= 3 AND HVAC-MODE = 2 THEN A = SLIDE( DAT-LOOP , 0.0 , 100.0 , CFG-OAD-MIN , 100.0 )
+IF OCC-MODE >= 4 THEN A = 0
+A = MAX( A , OAD-DCV )
+REM Discharge low limit closes the damper as the heating coil opens
+C = SLIDE( DAT-LL-LOOP , 0 , 100 , 100 , 0 )
+OAD = MIN( A , C )
 """
 
 _PRG07_OAD_FLT = """\
 REM --- OAD-CTRL ---
-REM ASHRAE Cycle 1+2 floating OA damper using CBAS FLOAT() function
+REM ASHRAE Cycle 1 (min OA) + Cycle 2 (free cooling)
 REM FLOAT( open-BO , close-BO , pos-cmd , drive-time , deadband , sync )
-REM
-REM Cycle 2 enable: OAT < RAT AND OAT < enable temp
+IF FRZ-SD THEN DMP-POS-CMD = 0 , GOTO 160
 IF ACT-OAT < ACT-RMT AND ACT-OAT < CFG-ECON-ENABLE-T THEN CYCLE2-ENABLE = 1 ELSE CYCLE2-ENABLE = 0
-REM
-REM Position command: min position when occupied, free cooling when Cycle 2 enabled
-DMP-POS-CMD = CFG-OAD-MIN
-IF CYCLE2-ENABLE = 1 AND OCC-MODE = 1 THEN DMP-POS-CMD = SLIDE( CLG-DAT-LOOP , 0.0 , 100.0 , CFG-OAD-MIN , 100.0 )
-REM
-REM Safety overrides force damper closed
-IF OCC-MODE = 0 THEN DMP-POS-CMD = 0
-IF UNOCC-OAT-LOW = 1 THEN DMP-POS-CMD = 0
-REM
-REM Floating sync on power cycle and unoccupied
+A = CFG-OAD-MIN
+IF CYCLE2-ENABLE = 1 AND OCC-MODE <= 3 AND HVAC-MODE = 2 THEN A = SLIDE( DAT-LOOP , 0.0 , 100.0 , CFG-OAD-MIN , 100.0 )
+IF OCC-MODE >= 4 THEN A = 0
+A = MAX( A , OAD-DCV )
+REM Discharge low limit closes the damper as the heating coil opens
+C = SLIDE( DAT-LL-LOOP , 0 , 100 , 100 , 0 )
+DMP-POS-CMD = MIN( A , C )
 IF+ POWER-LOSS THEN START DMP-FLOAT-SYNC
-IF+ OCC-MODE = 0 THEN START DMP-FLOAT-SYNC
+IF+ OCC-MODE >= 4 THEN START DMP-FLOAT-SYNC
 IF TIME-ON( DMP-FLOAT-SYNC ) > 0:00:05 THEN STOP DMP-FLOAT-SYNC
-REM
-REM FLOAT() drives the open/close relays
 DMP-POS = FLOAT( DMP-OPEN , DMP-CLOSE , DMP-POS-CMD , CFG-DMP-DRV-TIME , CFG-DMP-POS-DB , DMP-FLOAT-SYNC )
 """
 
 _PRG08_FAN_CV = """\
 REM --- FAN-CTRL ---
-REM Constant volume on/off
-REM
-IF OCC-MODE = 1 THEN FAN-CMD = 1
-IF OCC-MODE = 0 AND ( ACT-RMT < ACT-HTG-SP OR ACT-RMT > ACT-CLG-SP ) THEN FAN-CMD = 1
-IF OCC-MODE = 0 AND ACT-RMT >= ACT-HTG-SP AND ACT-RMT <= ACT-CLG-SP THEN FAN-CMD = 0
-IF UNOCC-OAT-LOW = 1 THEN FAN-CMD = 0
+IF FRZ-SD THEN FAN-CMD = 0 , STOP FAN-S/S , END
+IF OCC-MODE <= 3 THEN FAN-CMD = 1
+IF OCC-MODE >= 4 AND HVAC-MODE <> 1 THEN FAN-CMD = 1
+IF OCC-MODE >= 4 AND HVAC-MODE = 1 THEN FAN-CMD = 0
 FAN-S/S = FAN-CMD
 """
 
 _PRG08_FAN_VFD = """\
 REM --- FAN-CTRL ---
-REM VFD speed from max loop demand
-REM
-FAN-DMD = MAX( CLG-DAT-LOOP, HTG-DAT-LOOP )
-FAN-SPD = SLIDE( FAN-DMD, 0.0, 100.0, CFG-FAN-MIN-SPD, 100.0 )
-IF OCC-MODE = 0 AND ACT-RMT >= ACT-HTG-SP AND ACT-RMT <= ACT-CLG-SP THEN FAN-SPD = 0
-IF UNOCC-OAT-LOW = 1 THEN FAN-SPD = 0
+IF FRZ-SD THEN FAN-CMD = 0 , FAN-SPD = 0 , END
+FAN-DMD = DAT-LOOP
+IF HVAC-MODE = 1 THEN FAN-DMD = 0
+FAN-SPD = SLIDE( FAN-DMD , 0.0 , 100.0 , CFG-FAN-MIN-SPD , 100.0 )
+IF OCC-MODE >= 4 AND HVAC-MODE = 1 THEN FAN-SPD = 0
 """
 
 _PRG09_FREEZESTAT = """\
 REM --- FREEZESTAT ---
-REM Hardware freezestat + DAT low limit, latching
-REM
+REM CFG-FRZ-STAT-NC On = normally closed contact, opens on trip
 FREEZE-TRIP = 0
+IF CFG-FRZ-STAT-NC AND NOT FREEZE-STAT THEN FREEZE-TRIP = 1
+IF NOT CFG-FRZ-STAT-NC AND FREEZE-STAT THEN FREEZE-TRIP = 1
 IF ACT-DAT < CFG-DAT-FREEZE THEN FREEZE-TRIP = 1
-IF FREEZE-STAT = 0 THEN FREEZE-TRIP = 1
-IF FREEZE-TRIP = 1 AND FREEZE-LATCH = 0 THEN FREEZE-LATCH = 1
-IF FREEZE-LATCH = 1 AND FREEZE-RST = 1 AND ACT-DAT > ( CFG-DAT-FREEZE + 5 ) THEN FREEZE-LATCH = 0
-IF FREEZE-LATCH = 1 THEN FREEZE-TRIP = 1
+REM CFG-FRZ-TRIP-CNT trips inside CFG-FRZ-TRIP-WIN minutes latch the lockout
+IF+ FREEZE-TRIP THEN FRZ-TRIP-CNT = FRZ-TRIP-CNT + 1
+IF TIME-OFF( FREEZE-TRIP ) > CFG-FRZ-TRIP-WIN * 1.667 THEN FRZ-TRIP-CNT = 0
+IF FRZ-TRIP-CNT >= CFG-FRZ-TRIP-CNT THEN FREEZE-LATCH = 1
+REM Lockout clears only on manual reset with the discharge recovered
+IF FREEZE-LATCH AND FREEZE-RST AND ACT-DAT > ( CFG-DAT-FREEZE + 5 ) THEN FREEZE-LATCH = 0 , FRZ-TRIP-CNT = 0 , STOP FREEZE-RST
 FREEZE-ALARM = FREEZE-LATCH
+FRZ-SD = FREEZE-TRIP OR FREEZE-LATCH
+"""
+
+_PRG12_MECH_CLG = """\
+REM --- MECH-CLG-ENAB ---
+REM Mechanical cooling waits for the economizer to run out of capacity
+A = OAD > CFG-MECH-CLG-ENAB-POS
+B = OAD < CFG-MECH-CLG-DISB-POS
+IF TIME-ON( A ) > CFG-MECH-CLG-ENAB-TM * 1.667 THEN MECH-CLG-ENAB = 1
+IF TIME-ON( B ) > CFG-MECH-CLG-DISB-TM * 1.667 THEN MECH-CLG-ENAB = 0
+"""
+
+_PRG12_MECH_CLG_FLT = """\
+REM --- MECH-CLG-ENAB ---
+REM Mechanical cooling waits for the economizer to run out of capacity
+A = DMP-POS-CMD > CFG-MECH-CLG-ENAB-POS
+B = DMP-POS-CMD < CFG-MECH-CLG-DISB-POS
+IF TIME-ON( A ) > CFG-MECH-CLG-ENAB-TM * 1.667 THEN MECH-CLG-ENAB = 1
+IF TIME-ON( B ) > CFG-MECH-CLG-DISB-TM * 1.667 THEN MECH-CLG-ENAB = 0
 """
 
 _PRG_DCV = """\
 REM --- DCV-CTRL ---
-REM Demand Controlled Ventilation from CO2 sensor
-REM Overrides OA damper minimum when CO2 > setpoint
-REM
+REM OAD-DCV is a demand only — the damper programs MAX it in, then clamp
+REM it with the discharge low limit, so DCV cannot defeat that protection.
 ACT-CO2 = CO2
 OAD-DCV = 0
-IF OCC-MODE = 1 AND UNOCC-OAT-LOW = 0 THEN OAD-DCV = SLIDE( ACT-CO2, CFG-CO2-SP, CFG-CO2-MAX, CFG-OAD-MIN, 100.0 )
-IF OCC-MODE = 0 THEN OAD-DCV = 0
-IF UNOCC-OAT-LOW = 1 THEN OAD-DCV = 0
-IF ACT-CO2 > CFG-CO2-SP THEN OAD = MAX( OAD, OAD-DCV )
+IF OCC-MODE <= 3 THEN OAD-DCV = SLIDE( ACT-CO2 , CFG-CO2-SP , CFG-CO2-MAX , 0 , 100.0 )
+IF ACT-CO2 <= CFG-CO2-SP THEN OAD-DCV = 0
+IF OCC-MODE >= 4 THEN OAD-DCV = 0
 IF ACT-CO2 > CFG-CO2-ALARM THEN CO2-ALARM = 1 ELSE CO2-ALARM = 0
 """
 
 _PRG_RAD_HTG = """\
 REM --- RAD-HTG-PRG ---
-REM Radiant heat — reverse-acting OAT reset. Independent of the primary
-REM heating coil; runs in parallel. Colder OAT opens the valve, warmer
-REM OAT closes it.
-REM   OAT <= CFG-RAD-OA-MIN : enabled, valve = CFG-RAD-VLV-MAX (full open)
-REM   OAT >= CFG-RAD-OA-MAX : disabled, valve = CFG-RAD-VLV-MIN (closed)
-REM   between               : SLIDE reset from VLV-MAX down to VLV-MIN
-REM
+REM Runs in parallel with the primary heating coil, independent of HVAC-MODE
 IF ACT-OAT <= CFG-RAD-OA-MIN THEN RAD-HTG-ENAB = 1
 IF ACT-OAT <= CFG-RAD-OA-MIN THEN RAD-HTG-VLV = CFG-RAD-VLV-MAX
 IF ACT-OAT >= CFG-RAD-OA-MAX THEN RAD-HTG-ENAB = 0
@@ -431,55 +469,87 @@ def build_uv_core():
             # New AV instances 12/13 (next free in uv-core) — add to point-location std.
             ValuePoint(12, "DB-MTPLR",         "AV", 1.5,   "Deadband Multiplier",         ""),
             ValuePoint(13, "ACT-RMT-SP-DB",    "AV", 1.5,   "Active Setpoint Deadband",    "°F"),
-            ValuePoint(6, "CFG-UNOCC-CLG-SP",  "AV", 85.0,  "Unoccupied Cooling SP",       "°F"),
-            ValuePoint(7, "CFG-UNOCC-HTG-SP",  "AV", 60.0,  "Unoccupied Heating SP",       "°F"),
-            ValuePoint(8, "ACT-CLG-SP",        "AV", 73.5,  "Active Cooling SP",           "°F"),
-            ValuePoint(9, "ACT-HTG-SP",        "AV", 70.5,  "Active Heating SP",           "°F"),
-            ValuePoint(10, "CLG-SP",           "AV", 73.5,  "Current Cooling SP",          "°F"),
-            ValuePoint(11, "HTG-SP",           "AV", 70.5,  "Current Heating SP",          "°F"),
-            # DAT setpoints
-            ValuePoint(31, "CLG-DAT-SP",       "AV", 55.0,  "Cooling DAT Setpoint",        "°F"),
-            ValuePoint(32, "HTG-DAT-SP",       "AV", 95.0,  "Heating DAT Setpoint",        "°F"),
-            ValuePoint(33, "CFG-CLG-DAT-MIN",  "AV", 52.0,  "Min Cooling DAT SP",          "°F"),
-            ValuePoint(34, "CFG-CLG-DAT-MAX",  "AV", 65.0,  "Max Cooling DAT SP",          "°F"),
-            ValuePoint(35, "CFG-HTG-DAT-MIN",  "AV", 85.0,  "Min Heating DAT SP",          "°F"),
-            ValuePoint(36, "CFG-HTG-DAT-MAX",  "AV", 110.0, "Max Heating DAT SP",          "°F"),
+            # NSB/NSF setbacks — AV6/AV7 renamed in place from the old unoccupied
+            # cooling/heating pair. Same instances, same defaults, same meaning:
+            # the single setpoint the arbiter works against while unoccupied.
+            ValuePoint(6, "NSF-SP",            "AV", 85.0,  "Night Setforward Setpoint",   "°F"),
+            ValuePoint(7, "NSB-SP",            "AV", 60.0,  "Night Setback Setpoint",      "°F"),
+            # THE zone setpoint the arbiter works against — one value, one
+            # deadband, selected by occupancy mode in MODE-CTRL.
+            # AV8 reused from the deleted ACT-CLG-SP.
+            ValuePoint(8, "EFF-RMT-SP",        "AV", 72.0,  "Effective Room Setpoint",     "°F"),
+            # AV9 free (was ACT-HTG-SP — deleted with the dual-setpoint scheme)
+            # Display mirrors of the deadband edges. NOTHING in the control path
+            # reads these — they exist so an operator can see the effective
+            # heat/cool edges around EFF-RMT-SP.
+            ValuePoint(10, "CLG-SP",           "AV", 73.5,  "Cooling Edge (display only)", "°F"),
+            ValuePoint(11, "HTG-SP",           "AV", 70.5,  "Heating Edge (display only)", "°F"),
+            # ONE discharge setpoint, reset by RESET-LOOP across the full range.
+            # AV31/33/34 reused from the deleted cooling DAT trio.
+            # AV32/35/36 free (was HTG-DAT-SP / CFG-HTG-DAT-MIN / CFG-HTG-DAT-MAX)
+            ValuePoint(31, "DAT-SP",           "AV", 55.0,  "Discharge Air Setpoint",      "°F"),
+            ValuePoint(33, "CFG-DAT-MIN-SP",   "AV", 55.0,  "Min DAT Setpoint (full cooling)", "°F"),
+            ValuePoint(34, "CFG-DAT-MAX-SP",   "AV", 105.0, "Max DAT Setpoint (full heating)", "°F"),
+            # Night setback / setforward are bang-bang, not modulated.
+            ValuePoint(35, "CFG-NSB-HTG-POS",  "AV", 100.0, "Heating Coil Position During NSB", "%"),
+            ValuePoint(36, "CFG-NSF-CLG-POS",  "AV", 100.0, "Cooling Coil Position During NSF", "%"),
+            # Owned by core, not uv-dcv, so the damper programs can read it
+            # whether or not the CO2 module is selected. Stays 0 without DCV.
+            ValuePoint(74, "OAD-DCV",          "AV", 0.0,   "DCV Damper Demand",               "%"),
             # Safety/config
             ValuePoint(37, "CFG-DAT-LL",  "AV", 45.0,  "DAT Low Limit (safety)",      "°F"),
             ValuePoint(38, "CFG-DAT-HL",  "AV", 110.0, "DAT High Limit (safety)",     "°F"),
             ValuePoint(39, "CFG-DAT-FREEZE",   "AV", 38.0,  "DAT Freeze Protection",       "°F"),
-            ValuePoint(40, "CFG-UNOCC-OAT-LIM","AV", 35.0,  "Freeze Enable OAT",           "°F"),
             # Cabinet protection reset (Part 2)
             ValuePoint(41, "CFG-CAB-OAT-HI",   "AV", 35.0,  "Cabinet Protection: OAT High (no trickle)", "°F"),
             ValuePoint(44, "CFG-CAB-OAT-LO",   "AV", 0.0,   "Cabinet Protection: OAT Low (max trickle)",  "°F"),
-            ValuePoint(45, "CFG-CAB-VLV-MIN",  "AV", 20.0,  "Cabinet Protection: Valve % at OAT-HI",     "%"),
+            ValuePoint(40, "CFG-CAB-VLV-MIN",  "AV", 20.0,  "Cabinet Protection: Valve % at OAT-HI",     "%"),
             ValuePoint(46, "CFG-CAB-VLV-MAX",  "AV", 60.0,  "Cabinet Protection: Valve % at OAT-LO",     "%"),
             ValuePoint(52, "CAB-PROT-VLV",     "AV", 0.0,   "Cabinet Protection: Computed Valve Output",  "%"),
             ValuePoint(42, "CFG-STG1-T",       "AV", 50.0,  "Stage 1 Threshold",           "%"),
             ValuePoint(43, "CFG-STG2-T",       "AV", 80.0,  "Stage 2 Threshold",           "%"),
             # Network/status
             ValuePoint(12, "NET-OCC-CMD",      "BV", True,  "Network Occupied Command"),
-            ValuePoint(13, "OCC-MODE",         "BV", True,  "Occupancy Mode"),
+            # BV13 reused from the old binary OCC-MODE, which is now MV19.
+            ValuePoint(13, "INIT-MODE",        "BV", False, "Initialize Window Active"),
             ValuePoint(14, "HWS-OK",           "BV", True,  "Hot Water Available"),
-            ValuePoint(15, "UNOCC-OAT-LOW",      "BV", False, "Unoccupied OAT Low Limit Active"),
             ValuePoint(16, "FAN-CMD",          "BV", False, "Fan Command"),
             ValuePoint(17, "CFG-OAT-LOCAL",    "BV", False, "Use Local OAT Sensor (default FALSE = network)"),
             ValuePoint(18, "NET-OAT-OK",       "BV", True,  "Network OAT Comms OK (plausible-range)"),
+            # Stub defaults for optional modules — the owning module drives them
+            # when selected, and the safe default applies when it is not.
+            # FRZ-SD is written by uv-freezestat; without that module it stays
+            # Off and every freeze guard is inert.
+            ValuePoint(19, "FRZ-SD",           "BV", False, "Freeze Shutdown Active"),
+            # MECH-CLG-ENAB is written by the OA damper modules. Face/bypass
+            # units have no economizer, so it defaults On and cooling is free
+            # to run.
+            ValuePoint(31, "MECH-CLG-ENAB",    "BV", True,  "Mechanical Cooling Enabled"),
+
+            # ── Multi-state values ──
+            # MV19/MV20 match the A201 convention and the VAV core enums.
+            ValuePoint(19, "OCC-MODE",  "MV", 4, "Occupancy Mode",
+                       states={1: "Occupied", 2: "Bypass", 3: "Standby",
+                               4: "Unoccupied", 5: "NSB", 6: "NSF"}),
+            # Reheat (3) is never set on a UV — the enum stays aligned with VAV
+            # so mode numbers mean the same thing on every SBS controller.
+            ValuePoint(20, "HVAC-MODE", "MV", 1, "HVAC Mode",
+                       states={1: "Ventilation", 2: "Cool", 3: "Reheat",
+                               4: "Heat", 5: "Initialize"}),
         ],
 
         loops=[
-            LoopDef(1, "CLG-RESET-LOOP", "ACT-RMT", "ACT-CLG-SP", "CLG-DAT-SP",
-                    p_band=4.0, integral=10.0, action="direct",
-                    description="Cooling: space temp resets CLG-DAT-SP"),
-            LoopDef(2, "HTG-RESET-LOOP", "ACT-RMT", "ACT-HTG-SP", "HTG-DAT-SP",
-                    p_band=4.0, integral=10.0, action="reverse",
-                    description="Heating: space temp resets HTG-DAT-SP"),
-            LoopDef(3, "CLG-DAT-LOOP", "ACT-DAT", "CLG-DAT-SP", "CLG-DAT-SP",
-                    p_band=8.0, integral=20.0, action="direct",
-                    description="Cooling DAT loop drives valve/stage"),
-            LoopDef(4, "HTG-DAT-LOOP", "ACT-DAT", "HTG-DAT-SP", "HTG-DAT-SP",
-                    p_band=8.0, integral=20.0, action="reverse",
-                    description="Heating DAT loop drives valve/stage"),
+            # Three loops, none self-referential. LOOP2's stored action is a
+            # starting value only — MODE-CTRL overwrites DAT-LOOP:2 every scan.
+            LoopDef(1, "RESET-LOOP", "ACT-RMT", "EFF-RMT-SP", "DAT-SP-LOOP1",
+                    p_band=18.0, integral=20.0, action="reverse",
+                    description="Zone resets DAT-SP (deadband 2.0)"),
+            LoopDef(2, "DAT-LOOP", "ACT-DAT", "DAT-SP", "DAT-PID",
+                    p_band=20.0, integral=40.0, action="reverse",
+                    description="Single DAT loop, action flips by mode (deadband 0.5, bias 50.0)"),
+            LoopDef(3, "DAT-LL-LOOP", "ACT-DAT", "CFG-DAT-LL", "LL-PID",
+                    p_band=4.0, integral=20.0, action="reverse",
+                    description="Discharge low limit floors the heating output"),
         ],
 
         programs=[
@@ -489,8 +559,6 @@ def build_uv_core():
                        "Space temp loops reset DAT setpoints", exec_order=2),
             ProgramDef(11, "CAB-PROT-RESET", "PRG02B-CAB-PROT-RESET.bas", _PRG02B_CAB_PROT, True,
                        "Cabinet protection OAT-based reset", exec_order=2),
-            ProgramDef(3, "UNOCC-OAT-LIMIT", "PRG03-UNOCC-OAT-LIMIT.bas", _PRG03_UNOCC_OAT, True,
-                       "Unoccupied OAT low limit protection", exec_order=3),
         ],
 
         schedules=[
@@ -504,10 +572,16 @@ def build_uv_core():
         ],
 
         soo_paragraph="""The unit ventilator shall be equipped with a direct digital controller
-providing cascaded PID control. Primary loops reset discharge air temperature
-setpoints from space temperature. Secondary DAT loops drive valve or stage
-outputs. Freeze protection activates when unoccupied and outdoor temperature
-drops below the freeze enable setpoint.""",
+providing cascaded PID control from a single effective zone setpoint with an
+adjustable deadband. A latching mode arbiter shall determine the unit mode —
+Ventilation, Cool, Heat or Initialize — and only one mode shall be active at a
+time. The zone reset loop shall reset a single discharge air temperature
+setpoint across its full range, and one discharge air loop, whose action
+reverses with the mode, shall drive the coil selected by that mode. The idle
+coil shall be driven closed. A discharge low limit loop shall hold the heating
+output above the minimum discharge temperature in any mode. Freeze protection
+activates when unoccupied and outdoor temperature drops below the freeze enable
+setpoint.""",
     )
 
 
@@ -534,7 +608,7 @@ def build_uv_fan_vfd():
         description="VFD fan speed from max loop demand",
         outputs=[OutputPoint(1, "FAN-SPD", "AO", "0.0 ->100%", "Fan Speed", 0.0, 10.0)],
         values=[
-            ValuePoint(48, "CFG-FAN-MIN-SPD", "AV", 30.0, "Fan Min Speed", "%"),
+            ValuePoint(9, "CFG-FAN-MIN-SPD", "AV", 30.0, "Fan Min Speed", "%"),
             ValuePoint(49, "FAN-DMD",         "AV", 0.0,  "Fan Demand",    "%"),
         ],
         programs=[ProgramDef(8, "FAN-CTRL", "PRG08-FAN-CTRL.bas", _PRG08_FAN_VFD, True,
@@ -558,9 +632,17 @@ def build_uv_oad_mod():
             ValuePoint(80, "CFG-OAD-MIN",       "AV", 10.0, "Min OA Damper Position",  "%"),
             ValuePoint(81, "CFG-ECON-ENABLE-T",  "AV", 65.0, "Economizer Enable Temp",  "°F"),
             ValuePoint(82, "CYCLE2-ENABLE",      "BV", False, "Cycle 2 Free Cooling"),
+            ValuePoint(105, "CFG-MECH-CLG-ENAB-POS", "AV", 99.0, "Damper Pos To Enable Mech Cooling",  "%"),
+            ValuePoint(106, "CFG-MECH-CLG-DISB-POS", "AV", 90.0, "Damper Pos To Disable Mech Cooling", "%"),
+            ValuePoint(107, "CFG-MECH-CLG-ENAB-TM",  "AV", 10.0, "Time Above Enable Pos",              "Min"),
+            ValuePoint(108, "CFG-MECH-CLG-DISB-TM",  "AV", 10.0, "Time Below Disable Pos",             "Min"),
         ],
-        programs=[ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD, True,
-                             "OA damper ASHRAE Cycle 1+2", exec_order=7)],
+        programs=[
+            ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD, True,
+                       "OA damper ASHRAE Cycle 1+2", exec_order=7),
+            ProgramDef(12, "MECH-CLG-ENAB", "PRG12-MECH-CLG-ENAB.bas", _PRG12_MECH_CLG, True,
+                       "Mechanical cooling enable, latched on damper position", exec_order=4),
+        ],
         requires=["uv-core"],
         conflicts=["uv-oad-flt"],
         mutually_exclusive_group="uv-oad",
@@ -584,9 +666,17 @@ def build_uv_oad_flt():
             ValuePoint(96, "CFG-DMP-POS-DB",    "AV", 2.0,   "Damper Float Position Deadband","%"),
             ValuePoint(97, "CFG-DMP-DRV-TIME",  "AV", 150.0, "Damper Full Stroke Time",      "Sec"),
             ValuePoint(98, "DMP-FLOAT-SYNC",    "BV", False, "Damper Float Sync Trigger"),
+            ValuePoint(105, "CFG-MECH-CLG-ENAB-POS", "AV", 99.0, "Damper Pos To Enable Mech Cooling",  "%"),
+            ValuePoint(106, "CFG-MECH-CLG-DISB-POS", "AV", 90.0, "Damper Pos To Disable Mech Cooling", "%"),
+            ValuePoint(107, "CFG-MECH-CLG-ENAB-TM",  "AV", 10.0, "Time Above Enable Pos",              "Min"),
+            ValuePoint(108, "CFG-MECH-CLG-DISB-TM",  "AV", 10.0, "Time Below Disable Pos",             "Min"),
         ],
-        programs=[ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD_FLT, True,
-                             "OA damper floating Cycle 1+2", exec_order=7)],
+        programs=[
+            ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD_FLT, True,
+                       "OA damper floating Cycle 1+2", exec_order=7),
+            ProgramDef(12, "MECH-CLG-ENAB", "PRG12-MECH-CLG-ENAB.bas", _PRG12_MECH_CLG_FLT, True,
+                       "Mechanical cooling enable, latched on damper position", exec_order=4),
+        ],
         requires=["uv-core"],
         conflicts=["uv-oad-mod"],
         mutually_exclusive_group="uv-oad",
@@ -648,10 +738,10 @@ def build_uv_fbp_flt():
 def build_uv_hw_mod():
     return Module(
         id="uv-hw-mod", name="UV HW Modulating", category="heating",
-        description="HW modulating valve from HTG-DAT-LOOP",
+        description="HW modulating valve — guarded DAT-LOOP, heating modes only",
         outputs=[OutputPoint(6, "HW-VLV", "AO", "0.0 ->100%", "HW Valve (reverse)", 10.0, 2.0, True)],
         programs=[ProgramDef(5, "HTG-OUTPUT", "PRG05-HTG-OUTPUT.bas", _PRG05_HW_MOD, True,
-                             "HW mod = HTG-DAT-LOOP", exec_order=5)],
+                             "HW mod = guarded DAT-LOOP", exec_order=5)],
         requires=["uv-core"],
         conflicts=["uv-hw-flt", "uv-steam-mod", "uv-steam-onoff"],
         mutually_exclusive_group="uv-heating",
@@ -667,14 +757,14 @@ def build_uv_hw_flt():
             OutputPoint(7, "RH-CLOSE", "BO", "Stop/Start", "HW Valve Close"),
         ],
         values=[
-            ValuePoint(46, "RH-POS",          "AV", 0.0,   "HW Valve Actual Position",    "%"),
+            ValuePoint(32, "RH-POS",          "AV", 0.0,   "HW Valve Actual Position",    "%"),
             ValuePoint(47, "RH-POS-CMD",      "AV", 0.0,   "HW Valve Commanded Position", "%"),
             ValuePoint(93, "CFG-RH-POS-DB",   "AV", 2.0,   "HW Float Position Deadband",  "%"),
             ValuePoint(94, "CFG-RH-DRV-TIME", "AV", 150.0, "HW Valve Full Stroke Time",   "Sec"),
             ValuePoint(95, "RH-FLOAT-SYNC",   "BV", False, "HW Float Sync Trigger"),
         ],
         programs=[ProgramDef(5, "HTG-OUTPUT", "PRG05-HTG-OUTPUT.bas", _PRG05_HW_FLT, True,
-                             "HW float = HTG-DAT-LOOP vs position", exec_order=5)],
+                             "HW float = guarded DAT-LOOP vs position", exec_order=5)],
         requires=["uv-core"],
         conflicts=["uv-hw-mod", "uv-steam-mod", "uv-steam-onoff"],
         mutually_exclusive_group="uv-heating",
@@ -698,10 +788,10 @@ def build_uv_hw_mod_fbp():
 def build_uv_steam_mod():
     return Module(
         id="uv-steam-mod", name="UV Steam Modulating", category="heating",
-        description="Steam modulating valve from HTG-DAT-LOOP",
+        description="Steam modulating valve — guarded DAT-LOOP, heating modes only",
         outputs=[OutputPoint(6, "STM-VLV", "AO", "0.0 ->100%", "Steam Valve", 2.0, 10.0)],
         programs=[ProgramDef(5, "HTG-OUTPUT", "PRG05-HTG-OUTPUT.bas", _PRG05_STEAM_MOD, True,
-                             "Steam mod = HTG-DAT-LOOP", exec_order=5)],
+                             "Steam mod = guarded DAT-LOOP", exec_order=5)],
         requires=["uv-core"],
         conflicts=["uv-hw-mod", "uv-hw-flt", "uv-hw-mod-fbp", "uv-steam-onoff"],
         mutually_exclusive_group="uv-heating",
@@ -711,7 +801,7 @@ def build_uv_steam_mod():
 def build_uv_steam_onoff():
     return Module(
         id="uv-steam-onoff", name="UV Steam On/Off", category="heating",
-        description="Steam on/off valve — cycles on HTG-DAT-LOOP threshold",
+        description="Steam on/off valve — cycles on guarded DAT-LOOP threshold",
         outputs=[OutputPoint(6, "STM-VLV", "BO", "Stop/Start", "Steam Valve")],
         programs=[ProgramDef(5, "HTG-OUTPUT", "PRG05-HTG-OUTPUT.bas", _PRG05_STEAM_ONOFF, True,
                              "Steam on/off from loop threshold", exec_order=5)],
@@ -773,10 +863,10 @@ def build_uv_radiant_heat():
 def build_uv_chw_mod():
     return Module(
         id="uv-chw-mod", name="UV CHW Modulating", category="cooling",
-        description="CHW modulating valve from CLG-DAT-LOOP",
+        description="CHW modulating valve — guarded DAT-LOOP, Cool mode only",
         outputs=[OutputPoint(4, "CHW-VLV", "AO", "0.0 ->100%", "CHW Valve", 2.0, 10.0)],
         programs=[ProgramDef(6, "CLG-OUTPUT", "PRG06-CLG-OUTPUT.bas", _PRG06_CHW_MOD, True,
-                             "CHW mod = CLG-DAT-LOOP", exec_order=6)],
+                             "CHW mod = guarded DAT-LOOP", exec_order=6)],
         requires=["uv-core"],
         conflicts=["uv-chw-flt", "uv-dx-1", "uv-dx-2"],
         mutually_exclusive_group="uv-cooling",
@@ -799,7 +889,7 @@ def build_uv_chw_flt():
             ValuePoint(92, "CHW-FLOAT-SYNC",   "BV", False, "CHW Float Sync Trigger"),
         ],
         programs=[ProgramDef(6, "CLG-OUTPUT", "PRG06-CLG-OUTPUT.bas", _PRG06_CHW_FLT, True,
-                             "CHW float = CLG-DAT-LOOP vs position", exec_order=6)],
+                             "CHW float = guarded DAT-LOOP vs position", exec_order=6)],
         requires=["uv-core"],
         conflicts=["uv-chw-mod", "uv-dx-1", "uv-dx-2"],
         mutually_exclusive_group="uv-cooling",
@@ -809,11 +899,11 @@ def build_uv_chw_flt():
 def build_uv_dx_1():
     return Module(
         id="uv-dx-1", name="UV DX 1-Stage", category="cooling",
-        description="DX single stage — CLG-DAT-LOOP > threshold, 3min timer",
+        description="DX single stage — guarded DAT-LOOP > threshold, 3min timer",
         outputs=[OutputPoint(4, "DX-STG1", "BO", "Stop/Start", "DX Stage 1")],
         values=[ValuePoint(50, "DX1-OFF-TMR", "AV", 999.0, "DX1 Off Timer", "Sec")],
         programs=[ProgramDef(6, "CLG-OUTPUT", "PRG06-CLG-OUTPUT.bas", _PRG06_DX_1, True,
-                             "DX stg1 from CLG-DAT-LOOP", exec_order=6)],
+                             "DX stg1 from guarded DAT-LOOP", exec_order=6)],
         requires=["uv-core"],
         conflicts=["uv-chw-mod", "uv-chw-flt", "uv-dx-2"],
         mutually_exclusive_group="uv-cooling",
@@ -833,7 +923,7 @@ def build_uv_dx_2():
             ValuePoint(51, "DX2-OFF-TMR", "AV", 999.0, "DX2 Off Timer", "Sec"),
         ],
         programs=[ProgramDef(6, "CLG-OUTPUT", "PRG06-CLG-OUTPUT.bas", _PRG06_DX_2, True,
-                             "DX 2-stage from CLG-DAT-LOOP", exec_order=6)],
+                             "DX 2-stage from guarded DAT-LOOP", exec_order=6)],
         requires=["uv-core"],
         conflicts=["uv-chw-mod", "uv-chw-flt", "uv-dx-1"],
         mutually_exclusive_group="uv-cooling",
@@ -854,7 +944,6 @@ def build_uv_dcv():
             ValuePoint(71, "CFG-CO2-SP",     "AV", 1000.0, "CO2 Setpoint",           "ppm"),
             ValuePoint(72, "CFG-CO2-MAX",    "AV", 1200.0, "CO2 Max (full OA)",      "ppm"),
             ValuePoint(73, "CFG-CO2-ALARM",  "AV", 1200.0, "CO2 Alarm Level",        "ppm"),
-            ValuePoint(74, "OAD-DCV",        "AV", 0.0,    "DCV Damper Override",     "%"),
             ValuePoint(75, "CO2-ALARM",      "BV", False,   "CO2 High Alarm"),
         ],
         programs=[ProgramDef(9, "DCV-CTRL", "PRG09-DCV-CTRL.bas", _PRG_DCV, True,
@@ -877,8 +966,17 @@ def build_uv_freezestat():
             ValuePoint(77, "FREEZE-LATCH", "BV", False, "Freeze Latch"),
             ValuePoint(78, "FREEZE-RST",   "BV", False, "Freeze Reset"),
             ValuePoint(79, "FREEZE-ALARM", "BV", False, "Freeze Alarm"),
+            # Contact polarity varies by unit. On = normally closed (SBS
+            # standard): the contact opens on trip, so the input reads 0.
+            ValuePoint(80, "CFG-FRZ-STAT-NC", "BV", True, "Freezestat Contact Normally Closed"),
+            # Two-stage trip: the contact stops the fan every time it opens,
+            # and CFG-FRZ-TRIP-CNT trips inside the window latch the lockout.
+            ValuePoint(53, "CFG-FRZ-TRIP-CNT", "AV", 3.0,  "Trips Before Lockout",       ""),
+            ValuePoint(54, "CFG-FRZ-TRIP-WIN", "AV", 30.0, "Trip Count Window",          "Min"),
+            ValuePoint(55, "FRZ-TRIP-CNT",     "AV", 0.0,  "Trips In Current Window",    ""),
         ],
+        # exec_order 0 — a safety runs before everything that consumes it.
         programs=[ProgramDef(10, "FREEZESTAT", "PRG09-FREEZESTAT.bas", _PRG09_FREEZESTAT, True,
-                             "Freezestat latch/reset", exec_order=10)],
+                             "Freezestat trip, count-to-lockout, manual reset", exec_order=0)],
         requires=["uv-core"],
     )
