@@ -32,7 +32,7 @@ Control Architecture — single-setpoint cascade with a latching mode arbiter:
   PRG07 OAD-CTRL: OA damper ASHRAE Cycle 1+2 (OAD families)
   PRG08 FAN-CTRL: fan on/off or VFD speed
   PRG09 DCV-CTRL: CO2 demand-controlled ventilation (optional)
-  PRG10 FREEZESTAT: hardware freezestat + DAT latch (optional)
+  PRG10 FREEZESTAT: hardware freezestat contact, count-to-lockout (optional)
   PRG12 MECH-CLG-ENAB-PRG: mech cooling enable, latched on damper position
   PRG13 RAD-HTG-PRG: radiant heat OAT reset (optional add-on)
 
@@ -377,17 +377,23 @@ IF OCC-MODE >= 4 AND HVAC-MODE = 1 THEN FAN-SPD = 0
 
 _PRG09_FREEZESTAT = """\
 REM --- FREEZESTAT ---
+REM The hardware freezestat contact is the ONLY trip source.
 REM CFG-FRZ-STAT-NC On = normally closed contact, opens on trip
 FREEZE-TRIP = 0
 IF CFG-FRZ-STAT-NC AND NOT FREEZE-STAT THEN FREEZE-TRIP = 1
 IF NOT CFG-FRZ-STAT-NC AND FREEZE-STAT THEN FREEZE-TRIP = 1
-IF ACT-DAT < CFG-DAT-FREEZE THEN FREEZE-TRIP = 1
-REM CFG-FRZ-TRIP-CNT trips inside CFG-FRZ-TRIP-WIN minutes latch the lockout
+REM Tumbling window: the FIRST trip starts FRZ-WIN, and CFG-FRZ-TRIP-CNT
+REM trips before FRZ-WIN expires latch the lockout. The window is anchored
+REM at the first trip, NOT rolling — a burst straddling the expiry is split
+REM across two windows and may not latch.
+IF+ FREEZE-TRIP AND FRZ-TRIP-CNT = 0 THEN START FRZ-WIN
 IF+ FREEZE-TRIP THEN FRZ-TRIP-CNT = FRZ-TRIP-CNT + 1
-IF TIME-OFF( FREEZE-TRIP ) > CFG-FRZ-TRIP-WIN * 1.6667 THEN FRZ-TRIP-CNT = 0
+IF TIME-ON( FRZ-WIN ) > CFG-FRZ-TRIP-WIN * 1.6667 THEN FRZ-TRIP-CNT = 0 , STOP FRZ-WIN
 IF FRZ-TRIP-CNT >= CFG-FRZ-TRIP-CNT THEN FREEZE-LATCH = 1
-REM Lockout clears only on manual reset with the discharge recovered
-IF FREEZE-LATCH AND FREEZE-RST AND ACT-DAT > ( CFG-DAT-FREEZE + 5 ) THEN FREEZE-LATCH = 0 , FRZ-TRIP-CNT = 0 , STOP FREEZE-RST
+REM Lockout clears only on manual reset with the contact reading normal.
+REM NOT FREEZE-TRIP is exactly that test — FREEZE-TRIP is recomputed from
+REM the contact above every scan, so the polarity is not duplicated here.
+IF FREEZE-LATCH AND FREEZE-RST AND NOT FREEZE-TRIP THEN FREEZE-LATCH = 0 , FRZ-TRIP-CNT = 0 , STOP FRZ-WIN , STOP FREEZE-RST
 FREEZE-ALARM = FREEZE-LATCH
 FRZ-SD = FREEZE-TRIP OR FREEZE-LATCH
 """
@@ -502,7 +508,9 @@ def build_uv_core():
             # Safety/config
             ValuePoint(37, "CFG-DAT-LL",  "AV", 45.0,  "DAT Low Limit (safety)",      "°F"),
             ValuePoint(38, "CFG-DAT-HL",  "AV", 110.0, "DAT High Limit (safety)",     "°F"),
-            ValuePoint(39, "CFG-DAT-FREEZE",   "AV", 38.0,  "DAT Freeze Protection",       "°F"),
+            # AV39 free (was CFG-DAT-FREEZE — deleted 2026-08-12 with the
+            # DAT-based freeze trip; the freezestat contact is the only trip
+            # source. fcu.py keeps its own independent AV39 CFG-DAT-FREEZE.)
             # Cabinet protection reset (Part 2)
             ValuePoint(41, "CFG-CAB-OAT-HI",   "AV", 35.0,  "Cabinet Protection: OAT High (no trickle)", "°F"),
             ValuePoint(44, "CFG-CAB-OAT-LO",   "AV", 0.0,   "Cabinet Protection: OAT Low (max trickle)",  "°F"),
@@ -583,8 +591,12 @@ setpoint across its full range, and one discharge air loop, whose action
 reverses with the mode, shall drive the coil selected by that mode. The idle
 coil shall be driven closed. A discharge low limit loop shall hold the heating
 output above the minimum discharge temperature in any mode. Freeze protection
-activates when unoccupied and outdoor temperature drops below the freeze enable
-setpoint.""",
+shall be initiated by the hardware freezestat contact only. The contact shall
+shut the unit down whenever it trips, and the configured number of trips within
+the trip-count window shall latch a lockout that clears only on manual reset
+with the contact restored to normal. Independently of the freezestat, cabinet
+protection shall hold the heating valve open on falling outdoor air temperature
+while the unit is unoccupied.""",
     )
 
 
@@ -977,6 +989,12 @@ def build_uv_freezestat():
             ValuePoint(53, "CFG-FRZ-TRIP-CNT", "AV", 3.0,  "Trips Before Lockout",       ""),
             ValuePoint(54, "CFG-FRZ-TRIP-WIN", "AV", 30.0, "Trip Count Window",          "Min."),
             ValuePoint(55, "FRZ-TRIP-CNT",     "AV", 0.0,  "Trips In Current Window",    ""),
+            # Window timer for the trip count. Started by the first trip and
+            # stopped when the window expires or the lockout is reset, so
+            # TIME-ON( FRZ-WIN ) always measures from the first trip.
+            # BV81 verified free across 37,800 maximal UV configs (2026-08-12):
+            # BV80 CFG-FRZ-STAT-NC below, BV82 CYCLE2-ENABLE above.
+            ValuePoint(81, "FRZ-WIN",          "BV", False, "Freeze Trip Window Active"),
         ],
         # exec_order 0 — a safety runs before everything that consumes it.
         programs=[ProgramDef(10, "FREEZESTAT", "PRG10-FREEZESTAT.bas", _PRG09_FREEZESTAT, True,
