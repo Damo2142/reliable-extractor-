@@ -37,6 +37,15 @@ def audit_one_config(cfg_id, cfg):
     for t in config.tables: local_names.add(t.name)
     for s in config.schedules: local_names.add(s.name)
 
+    # Probe: no program name may reuse a point name. A controller has one flat
+    # namespace — the assembler dedups points by name within their own bucket
+    # but never compares program names against point names, so a collision
+    # (e.g. program MECH-CLG-ENAB vs BV MECH-CLG-ENAB) passes silently into
+    # the .pan and corrupts the RC Studio display.
+    collisions = sorted(p.name for p in config.programs if p.name in local_names)
+    if collisions:
+        return ("FAIL-name-collision", collisions)
+
     import re
     missing = set()
     for prg in config.programs:

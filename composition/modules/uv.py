@@ -31,7 +31,10 @@ Control Architecture — single-setpoint cascade with a latching mode arbiter:
   PRG06 CLG-OUTPUT: cooling valve/stage from DAT-LOOP
   PRG07 OAD-CTRL: OA damper ASHRAE Cycle 1+2 (OAD families)
   PRG08 FAN-CTRL: fan on/off or VFD speed
-  PRG09 FREEZESTAT: hardware freezestat + DAT latch (optional)
+  PRG09 DCV-CTRL: CO2 demand-controlled ventilation (optional)
+  PRG10 FREEZESTAT: hardware freezestat + DAT latch (optional)
+  PRG12 MECH-CLG-ENAB-PRG: mech cooling enable, latched on damper position
+  PRG13 RAD-HTG-PRG: radiant heat OAT reset (optional add-on)
 
 Controller: MACH-ProZone 88 standard, MACH-ProView LCD optional
 """
@@ -390,7 +393,7 @@ FRZ-SD = FREEZE-TRIP OR FREEZE-LATCH
 """
 
 _PRG12_MECH_CLG = """\
-REM --- MECH-CLG-ENAB ---
+REM --- MECH-CLG-ENAB-PRG ---
 REM Mechanical cooling waits for the economizer to run out of capacity
 A = OAD > CFG-MECH-CLG-ENAB-POS
 B = OAD < CFG-MECH-CLG-DISB-POS
@@ -399,7 +402,7 @@ IF TIME-ON( B ) > CFG-MECH-CLG-DISB-TM * 1.667 THEN MECH-CLG-ENAB = 0
 """
 
 _PRG12_MECH_CLG_FLT = """\
-REM --- MECH-CLG-ENAB ---
+REM --- MECH-CLG-ENAB-PRG ---
 REM Mechanical cooling waits for the economizer to run out of capacity
 A = DMP-POS-CMD > CFG-MECH-CLG-ENAB-POS
 B = DMP-POS-CMD < CFG-MECH-CLG-DISB-POS
@@ -640,7 +643,7 @@ def build_uv_oad_mod():
         programs=[
             ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD, True,
                        "OA damper ASHRAE Cycle 1+2", exec_order=7),
-            ProgramDef(12, "MECH-CLG-ENAB", "PRG12-MECH-CLG-ENAB.bas", _PRG12_MECH_CLG, True,
+            ProgramDef(12, "MECH-CLG-ENAB-PRG", "PRG12-MECH-CLG-ENAB-PRG.bas", _PRG12_MECH_CLG, True,
                        "Mechanical cooling enable, latched on damper position", exec_order=4),
         ],
         requires=["uv-core"],
@@ -674,7 +677,7 @@ def build_uv_oad_flt():
         programs=[
             ProgramDef(7, "OAD-CTRL", "PRG07-OAD-CTRL.bas", _PRG07_OAD_FLT, True,
                        "OA damper floating Cycle 1+2", exec_order=7),
-            ProgramDef(12, "MECH-CLG-ENAB", "PRG12-MECH-CLG-ENAB.bas", _PRG12_MECH_CLG_FLT, True,
+            ProgramDef(12, "MECH-CLG-ENAB-PRG", "PRG12-MECH-CLG-ENAB-PRG.bas", _PRG12_MECH_CLG_FLT, True,
                        "Mechanical cooling enable, latched on damper position", exec_order=4),
         ],
         requires=["uv-core"],
@@ -976,7 +979,7 @@ def build_uv_freezestat():
             ValuePoint(55, "FRZ-TRIP-CNT",     "AV", 0.0,  "Trips In Current Window",    ""),
         ],
         # exec_order 0 — a safety runs before everything that consumes it.
-        programs=[ProgramDef(10, "FREEZESTAT", "PRG09-FREEZESTAT.bas", _PRG09_FREEZESTAT, True,
+        programs=[ProgramDef(10, "FREEZESTAT", "PRG10-FREEZESTAT.bas", _PRG09_FREEZESTAT, True,
                              "Freezestat trip, count-to-lockout, manual reset", exec_order=0)],
         requires=["uv-core"],
     )

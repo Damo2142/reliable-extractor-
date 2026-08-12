@@ -103,6 +103,28 @@ def main():
         if unresolved:
             fails.append(f"unresolved point refs: {unresolved}")
 
+        # A controller has ONE flat namespace: no program may reuse a point
+        # name. Neither the assembler nor all_configs_audit checked this
+        # before 2026-08-12 (program MECH-CLG-ENAB shadowed BV MECH-CLG-ENAB
+        # in all four OAD families).
+        collisions = sorted(p.name for p in cfg.programs if p.name in names)
+        if collisions:
+            fails.append(f"program name collides with point name: {collisions}")
+
+        # Full prefixed name must stay inside the RC Studio 31-char limit.
+        # compile_from_excel.py prepends "{device-name}-", so the budget is
+        # 31 - len(device name) - 1. DEVICE_BUDGET is the standard SBS device
+        # name length ("SBS-UV-701" = 10); a longer one such as
+        # "SBS-UV-705-FLT" (14) eats four more characters, so names close to
+        # the ceiling are still worth shortening.
+        DEVICE_BUDGET = 10
+        too_long = sorted(n for n in names if len(n) + DEVICE_BUDGET + 1 > 31)
+        if too_long:
+            fails.append(
+                f"prefixed name over the 31-char RC Studio limit with a "
+                f"{DEVICE_BUDGET}-char device name: "
+                + str([(n, len(n) + DEVICE_BUDGET + 1) for n in too_long]))
+
         # new points must exist
         for req in ("RMT-SP", "CFG-RMT-SP-DB"):
             if req not in names:
